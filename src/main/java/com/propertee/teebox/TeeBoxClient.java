@@ -74,13 +74,6 @@ public class TeeBoxClient {
         return postJson("/api/client/scripts/" + urlPath(scriptId) + "/runs", payload, 202);
     }
 
-    public Map<String, Object> submitRunByPath(String scriptPath, Map<String, Object> props) throws IOException {
-        Map<String, Object> payload = new LinkedHashMap<String, Object>();
-        payload.put("scriptPath", scriptPath);
-        payload.put("props", props != null ? props : new LinkedHashMap<String, Object>());
-        return postJson("/api/client/runs", payload, 202);
-    }
-
     public Map<String, Object> getRun(String runId) throws IOException {
         return getJsonMap("/api/client/runs/" + urlPath(runId), 200);
     }

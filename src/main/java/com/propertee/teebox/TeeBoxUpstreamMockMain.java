@@ -52,14 +52,10 @@ public class TeeBoxUpstreamMockMain {
             return;
         }
 
-        Map<String, Object> submitted;
-        if (!isBlank(config.scriptPath)) {
-            submitted = client.submitRunByPath(config.scriptPath, config.props);
-        } else if (!isBlank(config.scriptId)) {
-            submitted = client.submitRun(config.scriptId, config.version, config.props);
-        } else {
-            throw new IllegalArgumentException("scriptPath or scriptId is required when submit=true");
+        if (isBlank(config.scriptId)) {
+            throw new IllegalArgumentException("scriptId is required when submit=true");
         }
+        Map<String, Object> submitted = client.submitRun(config.scriptId, config.version, config.props);
 
         String runId = stringValue(submitted.get("runId"));
         out.println("SUBMITTED " + runId);
@@ -109,7 +105,6 @@ public class TeeBoxUpstreamMockMain {
         String clientApiToken;
         String publisherApiToken;
         String adminApiToken;
-        String scriptPath;
         String scriptId;
         String version;
         File scriptFile;
@@ -128,7 +123,6 @@ public class TeeBoxUpstreamMockMain {
             config.clientApiToken = firstNonBlank(optional("propertee.teebox.upstream.clientApiToken"), config.apiToken);
             config.publisherApiToken = firstNonBlank(optional("propertee.teebox.upstream.publisherApiToken"), config.apiToken);
             config.adminApiToken = firstNonBlank(optional("propertee.teebox.upstream.adminApiToken"), config.apiToken);
-            config.scriptPath = optional("propertee.teebox.upstream.scriptPath");
             config.scriptId = optional("propertee.teebox.upstream.scriptId");
             config.version = optional("propertee.teebox.upstream.version");
             config.description = optional("propertee.teebox.upstream.description");

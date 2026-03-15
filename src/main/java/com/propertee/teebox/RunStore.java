@@ -40,11 +40,19 @@ public class RunStore {
     }
 
     public synchronized void saveRunFile(RunInfo run) {
+        File target = fileFor(run.runId);
+        File tmp = new File(runsDir, run.runId + ".json.tmp");
         Writer writer = null;
         try {
-            writer = new OutputStreamWriter(new FileOutputStream(fileFor(run.runId)), "UTF-8");
+            writer = new OutputStreamWriter(new FileOutputStream(tmp), "UTF-8");
             gson.toJson(run, writer);
+            writer.close();
+            writer = null;
+            moveAtomically(tmp.toPath(), target.toPath());
         } catch (IOException e) {
+            if (tmp.exists()) {
+                tmp.delete();
+            }
             throw new RuntimeException("Failed to save run " + run.runId + ": " + e.getMessage(), e);
         } finally {
             if (writer != null) {

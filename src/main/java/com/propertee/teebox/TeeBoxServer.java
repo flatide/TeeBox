@@ -48,7 +48,7 @@ public class TeeBoxServer {
     }
 
     public void stop() {
-        server.stop(0);
+        server.stop(5);
         runManager.shutdown();
     }
 
@@ -59,6 +59,7 @@ public class TeeBoxServer {
     private void registerContexts() {
         server.createContext("/api", new ApiHandler());
         server.createContext("/admin", new AdminHandler());
+        server.createContext("/health", new HealthHandler());
         server.createContext("/", new RootHandler());
     }
 
@@ -66,6 +67,23 @@ public class TeeBoxServer {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             redirect(exchange, "/admin");
+        }
+    }
+
+    private class HealthHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equals(exchange.getRequestMethod())) {
+                writeJson(exchange, HttpURLConnection.HTTP_BAD_METHOD, errorMap("Use GET"));
+                return;
+            }
+            try {
+                HealthStatus health = runManager.getHealthStatus();
+                int status = health.healthy ? HttpURLConnection.HTTP_OK : 503;
+                writeJson(exchange, status, health);
+            } catch (Exception e) {
+                writeJson(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, errorMap(e.getMessage()));
+            }
         }
     }
 
@@ -82,7 +100,9 @@ public class TeeBoxServer {
                 if ("POST".equals(method) && "/admin/submit".equals(path)) {
                     Map<String, String> form = parseForm(exchange);
                     RunRequest request = new RunRequest();
-                    request.scriptPath = form.get("scriptPath");
+                    request.scriptId = form.get("scriptId");
+                    String version = form.get("version");
+                    request.version = (version != null && version.trim().length() > 0) ? version.trim() : null;
                     request.props = parsePropsJson(form.get("propsJson"));
                     request.maxIterations = parseInt(form.get("maxIterations"), 1000);
                     request.warnLoops = "on".equals(form.get("warnLoops")) || "true".equals(form.get("warnLoops"));
@@ -211,12 +231,6 @@ public class TeeBoxServer {
             writeJson(exchange, HttpURLConnection.HTTP_OK, payload);
             return;
         }
-        if ("POST".equals(method) && "/api/client/runs".equals(path)) {
-            RunRequest request = parseRunRequest(exchange);
-            RunInfo run = runManager.submit(request);
-            writeJson(exchange, HttpURLConnection.HTTP_ACCEPTED, buildClientRunSummary(run));
-            return;
-        }
         if ("GET".equals(method) && path.startsWith("/api/client/runs/")) {
             String suffix = path.substring("/api/client/runs/".length());
             if (suffix.endsWith("/status")) {
@@ -299,6 +313,12 @@ public class TeeBoxServer {
     }
 
     private void handleAdminApi(HttpExchange exchange, String method, String path) throws IOException {
+        if ("GET".equals(method) && "/api/admin/health".equals(path)) {
+            HealthStatus health = runManager.getHealthStatus();
+            int statusCode = health.healthy ? HttpURLConnection.HTTP_OK : 503;
+            writeJson(exchange, statusCode, health);
+            return;
+        }
         if ("GET".equals(method) && "/api/admin/system".equals(path)) {
             SystemInfo info = runManager.getSystemInfo();
             if (info == null) {
@@ -435,19 +455,6 @@ public class TeeBoxServer {
             return;
         }
         writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Not found"));
-    }
-
-    private RunRequest parseRunRequest(HttpExchange exchange) throws IOException {
-        Map<String, Object> raw = parseJsonBody(exchange);
-        RunRequest request = new RunRequest();
-        Object scriptPath = raw.get("scriptPath");
-        request.scriptPath = scriptPath instanceof String ? ((String) scriptPath).trim() : null;
-        Object scriptId = raw.get("scriptId");
-        request.scriptId = scriptId instanceof String ? ((String) scriptId).trim() : null;
-        Object version = raw.get("version");
-        request.version = version instanceof String ? ((String) version).trim() : null;
-        parseRunOptions(raw, request);
-        return request;
     }
 
     private RunRequest parseScriptRunRequest(HttpExchange exchange, String scriptId) throws IOException {
@@ -714,7 +721,6 @@ public class TeeBoxServer {
         summary.put("runId", run.runId);
         summary.put("scriptId", run.scriptId);
         summary.put("version", run.version);
-        summary.put("scriptPath", run.scriptPath);
         summary.put("status", run.status != null ? run.status.name() : null);
         summary.put("createdAt", Long.valueOf(run.createdAt));
         summary.put("startedAt", run.startedAt);

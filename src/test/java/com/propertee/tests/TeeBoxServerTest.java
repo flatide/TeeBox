@@ -36,7 +36,8 @@ public class TeeBoxServerTest {
     public void serverShouldExposeRunThreadsAndTasks() throws Exception {
         TestServer testServer = createServer();
         try {
-            writeScript(testServer.scriptsRoot, "multi_tasks.pt",
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("multi_tasks", "v1",
                 "function worker(name) do\n" +
                 "    taskId = START_TASK(\"sleep 2; echo \" + name)\n" +
                 "    return WAIT_TASK(taskId, 5000)\n" +
@@ -46,13 +47,10 @@ public class TeeBoxServerTest {
                 "    thread beta: worker(\"beta\")\n" +
                 "end\n\n" +
                 "PRINT(result.alpha.ok)\n" +
-                "PRINT(result.beta.ok)\n");
+                "PRINT(result.beta.ok)\n",
+                "multi tasks test", Arrays.asList("test"), true);
 
-            Map<String, Object> submit = new LinkedHashMap<String, Object>();
-            submit.put("scriptPath", "multi_tasks.pt");
-            submit.put("props", new LinkedHashMap<String, Object>());
-            Map<String, Object> created = postJson(testServer.baseUrl + "/api/client/runs", submit, 202);
-            String runId = (String) created.get("runId");
+            String runId = (String) client.submitRun("multi_tasks", null, new LinkedHashMap<String, Object>()).get("runId");
             Assert.assertNotNull(runId);
 
             Map<String, Object> detail = waitForRunWithTasks(testServer.baseUrl, runId, 2, 3, 8000L);
@@ -79,16 +77,14 @@ public class TeeBoxServerTest {
     public void serverShouldAllowKillingTaskFromAdminApi() throws Exception {
         TestServer testServer = createServer();
         try {
-            writeScript(testServer.scriptsRoot, "kill_task.pt",
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("kill_task", "v1",
                 "taskId = START_TASK(\"sleep 30\")\n" +
                 "result = WAIT_TASK(taskId, 60000)\n" +
-                "PRINT(result.status)\n");
+                "PRINT(result.status)\n",
+                "kill task test", Arrays.asList("test"), true);
 
-            Map<String, Object> submit = new LinkedHashMap<String, Object>();
-            submit.put("scriptPath", "kill_task.pt");
-            submit.put("props", new LinkedHashMap<String, Object>());
-            Map<String, Object> created = postJson(testServer.baseUrl + "/api/client/runs", submit, 202);
-            String runId = (String) created.get("runId");
+            String runId = (String) client.submitRun("kill_task", null, new LinkedHashMap<String, Object>()).get("runId");
             Assert.assertNotNull(runId);
 
             Map<String, Object> detail = waitForRunWithTasks(testServer.baseUrl, runId, 1, 1, 8000L);
@@ -112,21 +108,17 @@ public class TeeBoxServerTest {
     public void serverShouldExposeStructuredResultContract() throws Exception {
         TestServer testServer = createServer();
         try {
-            writeScript(testServer.scriptsRoot, "return_result.pt",
-                "return {\"ok\": true, \"value\": 42}\n");
-            writeScript(testServer.scriptsRoot, "variable_result.pt",
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("return_result", "v1",
+                "return {\"ok\": true, \"value\": 42}\n",
+                "return result test", Arrays.asList("test"), true);
+            client.registerScript("variable_result", "v1",
                 "value = 41\n" +
-                "result = {\"ok\": true, \"value\": value + 1}\n");
+                "result = {\"ok\": true, \"value\": value + 1}\n",
+                "variable result test", Arrays.asList("test"), true);
 
-            Map<String, Object> submitReturn = new LinkedHashMap<String, Object>();
-            submitReturn.put("scriptPath", "return_result.pt");
-            submitReturn.put("props", new LinkedHashMap<String, Object>());
-            String returnRunId = (String) postJson(testServer.baseUrl + "/api/client/runs", submitReturn, 202).get("runId");
-
-            Map<String, Object> submitVariable = new LinkedHashMap<String, Object>();
-            submitVariable.put("scriptPath", "variable_result.pt");
-            submitVariable.put("props", new LinkedHashMap<String, Object>());
-            String variableRunId = (String) postJson(testServer.baseUrl + "/api/client/runs", submitVariable, 202).get("runId");
+            String returnRunId = (String) client.submitRun("return_result", null, new LinkedHashMap<String, Object>()).get("runId");
+            String variableRunId = (String) client.submitRun("variable_result", null, new LinkedHashMap<String, Object>()).get("runId");
 
             Map<String, Object> returnDetail = waitForRunStatus(testServer.baseUrl, returnRunId, "COMPLETED", 8000L);
             @SuppressWarnings("unchecked")
@@ -154,18 +146,14 @@ public class TeeBoxServerTest {
     public void serverShouldRequireBearerTokenWhenConfigured() throws Exception {
         TestServer testServer = createServer("secret-token");
         try {
-            writeScript(testServer.scriptsRoot, "auth_result.pt",
-                "result = {\"ok\": true}\n");
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, "secret-token");
+            client.registerScript("auth_result", "v1",
+                "result = {\"ok\": true}\n",
+                "auth test", Arrays.asList("test"), true);
 
             assertStatus(testServer.baseUrl + "/api/client/runs", "GET", null, null, 401);
 
-            Map<String, Object> submit = new LinkedHashMap<String, Object>();
-            submit.put("scriptPath", "auth_result.pt");
-            submit.put("props", new LinkedHashMap<String, Object>());
-
-            assertStatus(testServer.baseUrl + "/api/client/runs", "POST", submit, null, 401);
-
-            Map<String, Object> created = postJson(testServer.baseUrl + "/api/client/runs", submit, 202, "secret-token");
+            Map<String, Object> created = client.submitRun("auth_result", null, new LinkedHashMap<String, Object>());
             String runId = (String) created.get("runId");
             Assert.assertNotNull(runId);
 
@@ -322,22 +310,18 @@ public class TeeBoxServerTest {
     public void serverShouldSupportRunAndTaskQueryParameters() throws Exception {
         TestServer testServer = createServer();
         try {
-            writeScript(testServer.scriptsRoot, "query_a.pt",
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("query_a", "v1",
                 "taskA = START_TASK(\"echo a1\")\n" +
                 "taskB = START_TASK(\"echo a2\")\n" +
-                "result = [WAIT_TASK(taskA, 5000), WAIT_TASK(taskB, 5000)]\n");
-            writeScript(testServer.scriptsRoot, "query_b.pt",
-                "result = {\"name\": \"b\"}\n");
+                "result = [WAIT_TASK(taskA, 5000), WAIT_TASK(taskB, 5000)]\n",
+                "query a", Arrays.asList("test"), true);
+            client.registerScript("query_b", "v1",
+                "result = {\"name\": \"b\"}\n",
+                "query b", Arrays.asList("test"), true);
 
-            Map<String, Object> submitA = new LinkedHashMap<String, Object>();
-            submitA.put("scriptPath", "query_a.pt");
-            submitA.put("props", new LinkedHashMap<String, Object>());
-            String runA = (String) postJson(testServer.baseUrl + "/api/client/runs", submitA, 202).get("runId");
-
-            Map<String, Object> submitB = new LinkedHashMap<String, Object>();
-            submitB.put("scriptPath", "query_b.pt");
-            submitB.put("props", new LinkedHashMap<String, Object>());
-            String runB = (String) postJson(testServer.baseUrl + "/api/client/runs", submitB, 202).get("runId");
+            String runA = (String) client.submitRun("query_a", null, new LinkedHashMap<String, Object>()).get("runId");
+            String runB = (String) client.submitRun("query_b", null, new LinkedHashMap<String, Object>()).get("runId");
 
             waitForRunStatus(testServer.baseUrl, runA, "COMPLETED", 8000L);
             waitForRunStatus(testServer.baseUrl, runB, "COMPLETED", 8000L);
@@ -366,14 +350,13 @@ public class TeeBoxServerTest {
     public void serverShouldExposeTimeoutExceededOnTask() throws Exception {
         TestServer testServer = createServer();
         try {
-            writeScript(testServer.scriptsRoot, "timeout_task.pt",
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("timeout_task", "v1",
                 "taskId = START_TASK(\"sleep 1\", {\"timeout\": 10})\n" +
-                "PRINT(taskId)\n");
+                "PRINT(taskId)\n",
+                "timeout task test", Arrays.asList("test"), true);
 
-            Map<String, Object> submit = new LinkedHashMap<String, Object>();
-            submit.put("scriptPath", "timeout_task.pt");
-            submit.put("props", new LinkedHashMap<String, Object>());
-            String runId = (String) postJson(testServer.baseUrl + "/api/client/runs", submit, 202).get("runId");
+            String runId = (String) client.submitRun("timeout_task", null, new LinkedHashMap<String, Object>()).get("runId");
 
             Map<String, Object> detail = waitForRunWithTasks(testServer.baseUrl, runId, 1, 1, 8000L);
             @SuppressWarnings("unchecked")
@@ -403,15 +386,14 @@ public class TeeBoxServerTest {
         try {
             TestServer testServer = createServer();
             try {
-                writeScript(testServer.scriptsRoot, "archive_run.pt",
+                TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+                client.registerScript("archive_run", "v1",
                     "PRINT(\"line1\")\n" +
                     "PRINT(\"line2\")\n" +
-                    "result = {\"ok\": true}\n");
+                    "result = {\"ok\": true}\n",
+                    "archive run test", Arrays.asList("test"), true);
 
-                Map<String, Object> submit = new LinkedHashMap<String, Object>();
-                submit.put("scriptPath", "archive_run.pt");
-                submit.put("props", new LinkedHashMap<String, Object>());
-                String runId = (String) postJson(testServer.baseUrl + "/api/client/runs", submit, 202).get("runId");
+                String runId = (String) client.submitRun("archive_run", null, new LinkedHashMap<String, Object>()).get("runId");
 
                 waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 8000L);
                 Map<String, Object> archivedDetail = waitForRunArchived(testServer.baseUrl, runId, 8000L);
@@ -442,13 +424,12 @@ public class TeeBoxServerTest {
         try {
             TestServer testServer = createServer();
             try {
-                writeScript(testServer.scriptsRoot, "purge_run.pt",
-                    "result = {\"ok\": true}\n");
+                TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+                client.registerScript("purge_run", "v1",
+                    "result = {\"ok\": true}\n",
+                    "purge run test", Arrays.asList("test"), true);
 
-                Map<String, Object> submit = new LinkedHashMap<String, Object>();
-                submit.put("scriptPath", "purge_run.pt");
-                submit.put("props", new LinkedHashMap<String, Object>());
-                String runId = (String) postJson(testServer.baseUrl + "/api/client/runs", submit, 202).get("runId");
+                String runId = (String) client.submitRun("purge_run", null, new LinkedHashMap<String, Object>()).get("runId");
 
                 waitForRunAbsentFromList(testServer.baseUrl, runId, 8000L);
             } finally {
@@ -464,15 +445,6 @@ public class TeeBoxServerTest {
     private boolean hasThreadName(List<Map<String, Object>> threads, String name) {
         for (Map<String, Object> thread : threads) {
             if (name.equals(thread.get("name"))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean hasTaskThread(List<Map<String, Object>> tasks, String threadName) {
-        for (Map<String, Object> task : tasks) {
-            if (threadName.equals(task.get("threadName"))) {
                 return true;
             }
         }
@@ -626,17 +598,7 @@ public class TeeBoxServerTest {
 
         TeeBoxServer server = new TeeBoxServer(config);
         server.start();
-        return new TestServer(server, scriptsRoot, "http://127.0.0.1:" + server.getPort());
-    }
-
-    private void writeScript(File scriptsRoot, String name, String content) throws IOException {
-        File target = new File(scriptsRoot, name);
-        OutputStream output = new FileOutputStream(target);
-        try {
-            output.write(content.getBytes(Charset.forName("UTF-8")));
-        } finally {
-            output.close();
-        }
+        return new TestServer(server, "http://127.0.0.1:" + server.getPort());
     }
 
     private Map<String, Object> postJson(String url, Map<String, Object> payload, int expectedStatus) throws IOException {
@@ -757,12 +719,10 @@ public class TeeBoxServerTest {
 
     private static class TestServer {
         private final TeeBoxServer server;
-        private final File scriptsRoot;
         private final String baseUrl;
 
-        private TestServer(TeeBoxServer server, File scriptsRoot, String baseUrl) {
+        private TestServer(TeeBoxServer server, String baseUrl) {
             this.server = server;
-            this.scriptsRoot = scriptsRoot;
             this.baseUrl = baseUrl;
         }
 

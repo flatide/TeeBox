@@ -3,7 +3,6 @@ package com.propertee.teebox;
 import com.propertee.runtime.TypeChecker;
 import com.propertee.scheduler.ThreadContext;
 import com.propertee.task.Task;
-import com.propertee.task.TaskEngine;
 import com.propertee.task.TaskInfo;
 import com.propertee.task.TaskObservation;
 
@@ -35,13 +34,15 @@ public class RunManager {
     private final File dataDir;
     private final RunRegistry runRegistry;
     private final ScriptRegistry scriptRegistry;
-    private final TaskEngine taskEngine;
+    private final ManagedTaskEngine managedTaskEngine;
     private final ThreadPoolExecutor runExecutor;
     private final ScriptExecutor scriptExecutor;
     private final SystemInfoCollector systemInfoCollector;
     private final ScheduledExecutorService maintenanceScheduler;
     private final long maintenanceIntervalMs;
     private final java.util.concurrent.ConcurrentHashMap<String, Future<?>> activeRuns = new java.util.concurrent.ConcurrentHashMap<String, Future<?>>();
+    private final long startTimeMs = System.currentTimeMillis();
+    private volatile boolean shutdownRequested = false;
 
     public RunManager(File scriptsRoot, File dataDir, int maxConcurrentRuns) {
         this(scriptsRoot, dataDir, maxConcurrentRuns, null);
@@ -60,9 +61,9 @@ public class RunManager {
         long runArchiveRetentionMs = parseDurationProperty("runArchiveRetentionMs", DEFAULT_RUN_ARCHIVE_RETENTION_MS);
         this.runRegistry = new RunRegistry(this.dataDir, MAX_LOG_LINES, ARCHIVED_STDOUT_LINES, ARCHIVED_STDERR_LINES, runRetentionMs, runArchiveRetentionMs);
         this.scriptRegistry = new ScriptRegistry(this.dataDir);
-        this.taskEngine = new TaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId());
-        this.taskEngine.init();
-        this.taskEngine.archiveExpiredTasks();
+        this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId());
+        this.managedTaskEngine.init();
+        this.managedTaskEngine.archiveExpiredTasks();
         this.scriptExecutor = new ScriptExecutor();
         this.systemInfoCollector = teeBoxConfig != null ? new SystemInfoCollector(teeBoxConfig) : null;
         this.maintenanceIntervalMs = parseDurationProperty("maintenanceIntervalMs", DEFAULT_MAINTENANCE_INTERVAL_MS);
@@ -161,33 +162,33 @@ public class RunManager {
     }
 
     public List<TaskInfo> listTasks(String runId, String status, int offset, int limit) {
-        return toInfoList(taskEngine.queryTasks(runId, status, offset, limit));
+        return toInfoList(managedTaskEngine.queryTasks(runId, status, offset, limit));
     }
 
     public TaskInfo getTask(String taskId) {
-        Task task = taskEngine.getTask(taskId);
+        Task task = managedTaskEngine.getTask(taskId);
         if (task == null) return null;
         return toInfo(task);
     }
 
     public TaskObservation observeTask(String taskId) {
-        return taskEngine.observe(taskId);
+        return managedTaskEngine.observe(taskId);
     }
 
     public String getTaskStdout(String taskId) {
-        return taskEngine.getStdout(taskId);
+        return managedTaskEngine.getStdout(taskId);
     }
 
     public String getTaskStderr(String taskId) {
-        return taskEngine.getStderr(taskId);
+        return managedTaskEngine.getStderr(taskId);
     }
 
     public boolean killTask(String taskId) {
-        return taskEngine.killTask(taskId);
+        return managedTaskEngine.killTask(taskId);
     }
 
     public int killRunTasks(String runId) {
-        return taskEngine.killRun(runId);
+        return managedTaskEngine.killRun(runId);
     }
 
     public int getQueuedCount() {
@@ -205,10 +206,44 @@ public class RunManager {
         return systemInfoCollector.collect();
     }
 
+    public HealthStatus getHealthStatus() {
+        HealthStatus health = new HealthStatus();
+        health.healthy = true;
+        health.uptimeMs = System.currentTimeMillis() - startTimeMs;
+        health.activeRuns = runExecutor.getActiveCount();
+        health.queuedRuns = runExecutor.getQueue().size();
+        health.maxConcurrentRuns = runExecutor.getMaximumPoolSize();
+        health.completedRuns = runExecutor.getCompletedTaskCount();
+
+        if (systemInfoCollector != null) {
+            try {
+                File dataDirFile = this.dataDir;
+                health.diskFreeMb = dataDirFile.getUsableSpace() / (1024L * 1024L);
+                if (health.diskFreeMb < 100) {
+                    health.healthy = false;
+                    health.reason = "Disk space low: " + health.diskFreeMb + " MB free";
+                }
+            } catch (Exception e) {
+                // ignore disk check failure
+            }
+        }
+        return health;
+    }
+
     public void shutdown() {
+        shutdownRequested = true;
         maintenanceScheduler.shutdownNow();
         runRegistry.flushDirty();
-        runExecutor.shutdownNow();
+        managedTaskEngine.shutdown();
+        runExecutor.shutdown();
+        try {
+            if (!runExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                runExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            runExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void startMaintenanceScheduler() {
@@ -245,7 +280,7 @@ public class RunManager {
                 run.maxIterations,
                 run.iterationLimitBehavior,
                 run.runId,
-                taskEngine,
+                managedTaskEngine,
                 new ScriptExecutor.Callbacks() {
                     @Override
                     public void onStdout(String line) {
@@ -325,47 +360,16 @@ public class RunManager {
 
     private ResolvedRunTarget resolveRunTarget(RunRequest request) {
         String scriptId = trimToNull(request != null ? request.scriptId : null);
-        String scriptPath = trimToNull(request != null ? request.scriptPath : null);
-        if (scriptId != null) {
-            ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolve(scriptId, trimToNull(request.version));
-            ResolvedRunTarget target = new ResolvedRunTarget();
-            target.scriptFile = resolved.file;
-            target.displayPath = resolved.displayPath;
-            target.scriptId = resolved.scriptId;
-            target.version = resolved.version;
-            return target;
+        if (scriptId == null) {
+            throw new IllegalArgumentException("scriptId is required");
         }
-
-        File resolvedPath = resolveScriptPath(scriptPath);
+        ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolve(scriptId, trimToNull(request.version));
         ResolvedRunTarget target = new ResolvedRunTarget();
-        target.scriptFile = resolvedPath;
-        target.displayPath = scriptPath;
+        target.scriptFile = resolved.file;
+        target.displayPath = resolved.displayPath;
+        target.scriptId = resolved.scriptId;
+        target.version = resolved.version;
         return target;
-    }
-
-    private File resolveScriptPath(String scriptPath) {
-        if (scriptPath == null || scriptPath.trim().length() == 0) {
-            throw new IllegalArgumentException("scriptPath is required");
-        }
-        if (scriptPath.indexOf('\u0000') >= 0) {
-            throw new IllegalArgumentException("scriptPath contains invalid characters");
-        }
-        try {
-            File root = scriptsRoot.getCanonicalFile();
-            File resolved = new File(root, scriptPath).getCanonicalFile();
-            if (!resolved.getPath().startsWith(root.getPath() + File.separator) && !resolved.equals(root)) {
-                throw new IllegalArgumentException("scriptPath must stay inside scriptsRoot");
-            }
-            if (!resolved.isFile()) {
-                throw new IllegalArgumentException("Script not found: " + scriptPath);
-            }
-            if (!resolved.getName().endsWith(".pt")) {
-                throw new IllegalArgumentException("Only .pt scripts are allowed");
-            }
-            return resolved;
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Failed to resolve scriptPath: " + e.getMessage(), e);
-        }
     }
 
     @SuppressWarnings("unchecked")
@@ -422,7 +426,7 @@ public class RunManager {
     }
 
     private TaskInfo toInfo(Task task) {
-        TaskObservation obs = taskEngine.observe(task.taskId);
+        TaskObservation obs = managedTaskEngine.observe(task.taskId);
         TaskInfo info = new TaskInfo();
         info.taskId = task.taskId;
         info.runId = task.runId;
@@ -447,7 +451,7 @@ public class RunManager {
     }
 
     private void maintainTasks() {
-        taskEngine.archiveExpiredTasks();
+        managedTaskEngine.archiveExpiredTasks();
     }
 
     private static class ResolvedRunTarget {

@@ -33,7 +33,8 @@ public class AdminPageRenderer {
         sb.append("<div class='card'>");
         sb.append("<h2>Run Script</h2>");
         sb.append("<form method='post' action='/admin/submit' class='form-grid'>");
-        sb.append("<div class='form-row'><label>Script Path</label><input type='text' name='scriptPath' placeholder='01_basic_run.pt'/></div>");
+        sb.append("<div class='form-row'><label>Script ID</label><input type='text' name='scriptId' placeholder='calc_sum'/></div>");
+        sb.append("<div class='form-row'><label>Version (blank = active)</label><input type='text' name='version' placeholder=''/></div>");
         sb.append("<div class='form-row'><label>Props (JSON)</label><input type='text' name='propsJson' value='{}'/></div>");
         sb.append("<div class='form-row-inline'>");
         sb.append("<div><label>Max Iterations</label><input type='text' name='maxIterations' value='1000' style='width:100px'/></div>");
@@ -55,7 +56,7 @@ public class AdminPageRenderer {
                     sb.append(" <span class='dim'>[archived]</span>");
                 }
                 sb.append("</td>");
-                sb.append("<td class='mono'>").append(escape(run.scriptPath)).append("</td>");
+                sb.append("<td class='mono'>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? " <span class='dim'>@" + escape(run.version) + "</span>" : "").append("</td>");
                 sb.append("<td>").append(statusBadge(run.status != null ? run.status.name() : "UNKNOWN")).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(run.createdAt))).append("</td>");
                 sb.append("<td class='dim'>").append(formatDuration(run.startedAt, run.endedAt)).append("</td>");
@@ -111,7 +112,7 @@ public class AdminPageRenderer {
         sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/kill-tasks'>");
         sb.append("<button type='submit' class='btn-danger btn-sm'>Kill All Tasks</button></form></div>");
         sb.append("<div class='detail-grid'>");
-        sb.append("<div class='detail-item'><div class='detail-label'>Script</div><div class='detail-value'><code>").append(escape(run.scriptPath)).append("</code></div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Script</div><div class='detail-value'><code>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? "@" + escape(run.version) : "").append("</code></div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(statusBadge(run.status != null ? run.status.name() : "UNKNOWN")).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Archived</div><div class='detail-value'>").append(run.archived ? statusBadge("YES") : statusBadge("NO")).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Created</div><div class='detail-value dim'>").append(escape(formatTime(run.createdAt))).append("</div></div>");

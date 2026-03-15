@@ -9,7 +9,7 @@ TeeBox is the ProperTee execution service module. It exposes an HTTP admin UI an
 - `/api/admin/*` for run/task inspection and control
 - namespaced `client`, `publisher`, and `admin` JSON APIs
 - `/admin` HTML UI for operators
-- external task tracking through `TaskEngine`
+- external task tracking through `ManagedTaskEngine`
 - persisted run/task indexes with archive and purge support
 
 ## Main Components
@@ -39,7 +39,7 @@ Open `http://127.0.0.1:18080/admin`.
 ## API Namespaces
 
 - `client`
-  - submit runs by `scriptId/version` or `scriptPath`
+  - submit runs by `scriptId/version` via `/api/client/scripts/{scriptId}/runs`
   - poll run status and fetch results
 - `publisher`
   - register script versions and activate the default version
@@ -77,7 +77,6 @@ Useful settings:
 - `propertee.teebox.upstream.scriptId`
 - `propertee.teebox.upstream.version`
 - `propertee.teebox.upstream.scriptFile`
-- `propertee.teebox.upstream.scriptPath`
 - `propertee.teebox.upstream.propsJson`
 - `propertee.teebox.upstream.submit`
 - `propertee.teebox.upstream.wait`

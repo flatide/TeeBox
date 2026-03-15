@@ -46,14 +46,15 @@ ProperTee TeeBox is an HTTP API and admin UI service for remote ProperTee script
 
 ### Key Classes
 
-- **`TeeBoxServer`** — Routes requests across 3 API namespaces (`/api/client`, `/api/publisher`, `/api/admin`) with independent Bearer token auth, plus `/admin` HTML UI. Largest class (~37KB).
-- **`RunManager`** — Central coordinator. Receives `RunRequest`, resolves script (file path or registry), submits to `ThreadPoolExecutor`, tracks state via `RunRegistry` (in-memory) + `RunStore` (disk). Background `ScheduledExecutorService` handles flush (2s) and maintenance/retention (60s).
+- **`TeeBoxServer`** — Routes requests across 3 API namespaces (`/api/client`, `/api/publisher`, `/api/admin`) with independent Bearer token auth, plus `/admin` HTML UI and `/health` endpoint.
+- **`RunManager`** — Central coordinator. Receives `RunRequest`, resolves script via registry, submits to `ThreadPoolExecutor`, tracks state via `RunRegistry` (in-memory) + `RunStore` (disk). Background `ScheduledExecutorService` handles flush (2s) and maintenance/retention (60s).
+- **`ManagedTaskEngine`** — Implements `TaskRunner`, wraps `DefaultTaskRunner` (from core) with disk persistence, indexing, archival, multi-instance ownership (Java 17 ProcessHandle), and querying. Control plane layer over core's lightweight process execution.
 - **`ScriptRegistry`** — Version-controlled script store in `dataDir/script-registry/`. Validates IDs, parses syntax, computes SHA-256.
-- **`ScriptExecutor`** — Stateless. Parses script → creates interpreter with builtins → runs scheduler → collects result. Uses callback interface for stdout/stderr/thread events.
+- **`ScriptExecutor`** — Stateless. Parses script → creates interpreter with builtins → runs scheduler → collects result. Receives `TaskRunner` interface (not concrete type).
 - **`RunRegistry`** — In-memory `ConcurrentHashMap` cache with ring buffers (max 200 lines stdout/stderr). Retention: active (<24h), archived (24h-7d, compressed logs), purged (>7d, deleted).
 - **`RunStore`** — File-based persistence (`dataDir/runs/`). Atomic writes via temp file + rename. Synchronized methods.
-- **`AdminPageRenderer`** — Server-rendered HTML via string concatenation (~42KB). Dashboard, script list, run/task detail pages.
-- **`TeeBoxClient`** — Java HTTP client wrapper for all API endpoints.
+- **`AdminPageRenderer`** — Server-rendered HTML via string concatenation. Dashboard, script list, run/task detail pages.
+- **`TeeBoxClient`** — Java HTTP client wrapper for API endpoints. Submits runs via `/api/client/scripts/{scriptId}/runs`.
 
 ### 3 API Namespaces
 
@@ -71,7 +72,7 @@ All properties prefixed `propertee.teebox.*`: `bind`, `port` (default 18080), `s
 
 ## Dependencies
 
-- `com.propertee:propertee-core:0.3.0` — ProperTee interpreter (ScriptParser, builtins, scheduler)
+- `com.propertee:propertee-core:0.4.0` — ProperTee interpreter (ScriptParser, builtins, scheduler, TaskRunner)
 - `com.google.code.gson:gson:2.11.0` — JSON serialization
 - `junit:junit:4.13.2` — Tests
 
@@ -79,11 +80,9 @@ All properties prefixed `propertee.teebox.*`: `bind`, `port` (default 18080), `s
 
 Tests are in `src/test/java/com/propertee/tests/`. Integration tests (`TeeBoxServerTest`) start a live server with temp directories. Config tests (`TeeBoxConfigTest`) test property loading and token fallback.
 
-## Known Issues
+## Run Submission
 
-See `ANALYSIS.md` for details:
-1. **`TeeBoxClient.submitRun()` uses wrong endpoint** — sends to `/api/client/runs` but server expects `/api/client/scripts/{scriptId}/runs`
-2. **Archive/purge tests timeout** — maintenance interval is 60s but test timeout is 8s
+Runs are submitted exclusively via the script registry: `POST /api/client/scripts/{scriptId}/runs`. The legacy `POST /api/client/runs` (scriptPath-based) endpoint has been removed. All scripts must be registered via the publisher API first.
 
 ## Concurrency Model
 

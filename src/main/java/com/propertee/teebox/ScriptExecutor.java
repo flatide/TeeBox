@@ -8,7 +8,7 @@ import com.propertee.runtime.TypeChecker;
 import com.propertee.scheduler.Scheduler;
 import com.propertee.scheduler.SchedulerListener;
 import com.propertee.scheduler.ThreadContext;
-import com.propertee.task.TaskEngine;
+import com.propertee.task.TaskRunner;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -25,7 +25,7 @@ public class ScriptExecutor {
                                    int maxIterations,
                                    String iterationLimitBehavior,
                                    String runId,
-                                   TaskEngine taskEngine,
+                                   TaskRunner taskRunner,
                                    final Callbacks callbacks) {
         ProperTeeInterpreter visitor = null;
         try {
@@ -53,7 +53,7 @@ public class ScriptExecutor {
                 }
             };
 
-            BuiltinFunctions builtins = new BuiltinFunctions(stdout, stderr, runId, taskEngine);
+            BuiltinFunctions builtins = new BuiltinFunctions(stdout, stderr, runId, taskRunner);
             visitor = new ProperTeeInterpreter(properties, stdout, stderr, maxIterations, iterationLimitBehavior, builtins);
             Scheduler scheduler = new Scheduler(visitor, callbacks != null ? new CallbackSchedulerListener(callbacks) : null);
             ProperTeeInterpreter.RootStepper mainStepper = visitor.createRootStepper(tree);
