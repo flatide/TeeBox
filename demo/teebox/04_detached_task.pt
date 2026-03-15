@@ -1,0 +1,7 @@
+// Detached task demo: run finishes quickly while the external process keeps running
+PRINT("starting detached task")
+taskId = START_TASK("sleep 120; echo detached_task_done")
+PRINT("detached task id", taskId)
+status = TASK_STATUS(taskId)
+PRINT("detached status", status.status, status.alive)
+PRINT("run exits now; task should remain visible in admin task list")

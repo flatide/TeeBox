@@ -1,0 +1,8 @@
+// Long-running external task: use admin page or API to kill the task while WAIT_TASK is pending
+PRINT("starting long task")
+taskId = START_TASK("sleep 300; echo should_not_print")
+PRINT("taskId", taskId)
+status1 = TASK_STATUS(taskId)
+PRINT("initial status", status1.status, status1.alive)
+result = WAIT_TASK(taskId, 600000)
+PRINT("final result", result)

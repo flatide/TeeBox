@@ -1,0 +1,21 @@
+// Multi-thread demo: thread states and result collection
+function worker(name, delay) do
+    PRINT("worker start", name)
+    SLEEP(delay)
+    PRINT("worker mid", name)
+    SLEEP(delay)
+    PRINT("worker end", name)
+    return name + "-done"
+end
+
+multi result do
+    thread alpha: worker("alpha", 800)
+    thread beta: worker("beta", 1200)
+    thread gamma: worker("gamma", 400)
+monitor 300
+    PRINT("monitor tick", result)
+end
+
+PRINT("alpha=", result.alpha.value)
+PRINT("beta=", result.beta.value)
+PRINT("gamma=", result.gamma.value)

@@ -1,0 +1,6 @@
+// Basic run: quick success path for /admin and /api/runs
+PRINT("basic run start")
+name = "propertee"
+version = 1
+PRINT("hello", name, version)
+PRINT("basic run end")

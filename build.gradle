@@ -1,0 +1,92 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.propertee'
+version = '0.1.0'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.propertee:propertee-core:0.3.0'
+    implementation 'com.google.code.gson:gson:2.11.0'
+    testImplementation 'junit:junit:4.13.2'
+}
+
+application {
+    mainClass = 'com.propertee.teebox.TeeBoxMain'
+}
+
+run {
+    standardInput = System.in
+    systemProperties System.properties.findAll { key, value ->
+        key.startsWith('propertee.teebox.') || key.startsWith('propertee.task.')
+    }
+}
+
+tasks.withType(Test).configureEach {
+    testLogging {
+        events "passed", "failed", "skipped"
+        exceptionFormat "full"
+    }
+}
+
+task runTeeBoxUpstream(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.propertee.teebox.TeeBoxUpstreamMockMain'
+    standardInput = System.in
+    systemProperties System.properties.findAll { key, value ->
+        key.startsWith('propertee.teebox.upstream.')
+    }
+}
+
+task teeBoxJar(type: Jar) {
+    dependsOn classes
+    archiveBaseName = 'propertee-teebox'
+    manifest {
+        attributes 'Main-Class': 'com.propertee.teebox.TeeBoxMain'
+    }
+    from sourceSets.main.output
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+task teeBoxDist(type: Copy) {
+    dependsOn teeBoxJar
+    into "${buildDir}/teebox-dist"
+    from(teeBoxJar.archiveFile) {
+        into 'lib'
+    }
+    from('deploy/teebox/teebox.properties') {
+        into 'conf'
+    }
+    from('deploy/teebox/run-teebox.sh') {
+        into 'bin'
+    }
+    from('deploy/teebox/README.md') {
+        into '.'
+    }
+    description = 'Build a deployable ProperTee TeeBox directory'
+    group = 'distribution'
+}
+
+task teeBoxZip(type: Zip) {
+    dependsOn teeBoxDist
+    archiveBaseName = 'propertee-teebox'
+    archiveClassifier = 'dist'
+    destinationDirectory = file("${buildDir}/distributions")
+    from("${buildDir}/teebox-dist")
+    description = 'Build a deployable ProperTee TeeBox zip archive'
+    group = 'distribution'
+}

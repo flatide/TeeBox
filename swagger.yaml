@@ -1,0 +1,1146 @@
+openapi: 3.0.3
+info:
+  title: TeeBox API
+  description: |
+    HTTP API for remote ProperTee script execution, run management, task monitoring, and script registry.
+
+    TeeBox provides three API namespaces, each with independent Bearer token authentication:
+    - **Client** — run submission and result polling
+    - **Admin** — inspection, control, and system monitoring
+    - **Publisher** — script registration and version management
+
+    The admin HTML dashboard is served at `/admin` (not covered in this spec).
+  version: 0.3.0
+  contact:
+    name: Flatide
+    url: https://github.com/flatide/propertee-java
+
+servers:
+  - url: http://127.0.0.1:18080
+    description: Local development
+
+tags:
+  - name: Client
+    description: Run submission and result polling
+  - name: Admin
+    description: Run/task inspection and control
+  - name: Publisher
+    description: Script registration and version management
+
+security:
+  - BearerAuth: []
+
+paths:
+  # ── Client API ──────────────────────────────────────────────
+
+  /api/client/runs:
+    get:
+      tags: [Client]
+      summary: List runs
+      operationId: clientListRuns
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Array of run summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClientRunSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Client]
+      summary: Submit a script by file path
+      operationId: clientSubmitRun
+      security:
+        - ClientToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunRequest'
+      responses:
+        '202':
+          description: Run accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRunSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/client/scripts/{scriptId}/runs:
+    get:
+      tags: [Client]
+      summary: List runs for a registered script
+      operationId: clientListScriptRuns
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/ScriptId'
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Array of run summaries for the script
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClientRunSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Client]
+      summary: Submit a registered script for execution
+      operationId: clientSubmitScriptRun
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/ScriptId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScriptRunRequest'
+      responses:
+        '202':
+          description: Run accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRunSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/client/runs/{runId}:
+    get:
+      tags: [Client]
+      summary: Get run detail
+      operationId: clientGetRun
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Run summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRunSummary'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/client/runs/{runId}/status:
+    get:
+      tags: [Client]
+      summary: Get run status
+      operationId: clientGetRunStatus
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Run status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRunStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/client/runs/{runId}/result:
+    get:
+      tags: [Client]
+      summary: Get run result
+      operationId: clientGetRunResult
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Run result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRunResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/client/runs/{runId}/tasks-summary:
+    get:
+      tags: [Client]
+      summary: Get task summary for a run
+      operationId: clientGetTasksSummary
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Task count breakdown by status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientTaskSummary'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Admin API ───────────────────────────────────────────────
+
+  /api/admin/system:
+    get:
+      tags: [Admin]
+      summary: Get system info
+      description: Returns JVM, memory, disk, data directory sizes, and server configuration.
+      operationId: adminGetSystemInfo
+      security:
+        - AdminToken: []
+      responses:
+        '200':
+          description: System information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/admin/runs:
+    get:
+      tags: [Admin]
+      summary: List runs (full detail)
+      operationId: adminListRuns
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Array of full RunInfo objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RunInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/admin/runs/{runId}:
+    get:
+      tags: [Admin]
+      summary: Get run detail with threads and tasks
+      operationId: adminGetRun
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Run detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminRunDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/admin/runs/{runId}/threads:
+    get:
+      tags: [Admin]
+      summary: List threads for a run
+      operationId: adminListRunThreads
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Array of thread snapshots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RunThreadInfo'
+
+  /api/admin/runs/{runId}/tasks:
+    get:
+      tags: [Admin]
+      summary: List tasks for a run
+      operationId: adminListRunTasks
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Array of task info objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskInfo'
+
+  /api/admin/runs/{runId}/kill-tasks:
+    post:
+      tags: [Admin]
+      summary: Kill all tasks for a run
+      operationId: adminKillRunTasks
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Kill result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runId:
+                    type: string
+                  killed:
+                    type: integer
+                    description: Number of tasks killed
+
+  /api/admin/tasks:
+    get:
+      tags: [Admin]
+      summary: List tasks
+      operationId: adminListTasks
+      security:
+        - AdminToken: []
+      parameters:
+        - name: runId
+          in: query
+          schema:
+            type: string
+          description: Filter by run ID
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Filter by task status
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Tasks and detached tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TaskInfo'
+                  detached:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TaskInfo'
+                    description: Detached tasks (only included when no filters applied)
+
+  /api/admin/tasks/{taskId}:
+    get:
+      tags: [Admin]
+      summary: Get task detail
+      operationId: adminGetTask
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Task detail with observation and output tails
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminTaskDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/admin/tasks/{taskId}/kill:
+    post:
+      tags: [Admin]
+      summary: Kill a task
+      operationId: adminKillTask
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: Kill result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  taskId:
+                    type: string
+                  killed:
+                    type: boolean
+                    description: Whether the task was successfully killed
+
+  # ── Publisher API ───────────────────────────────────────────
+
+  /api/publisher/scripts:
+    get:
+      tags: [Publisher]
+      summary: List all registered scripts
+      operationId: publisherListScripts
+      security:
+        - PublisherToken: []
+      responses:
+        '200':
+          description: Array of script info
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ScriptInfo'
+
+    post:
+      tags: [Publisher]
+      summary: Register a new script version
+      operationId: publisherRegisterScript
+      security:
+        - PublisherToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScriptPublishRequest'
+      responses:
+        '201':
+          description: Script version registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/publisher/scripts/{scriptId}:
+    get:
+      tags: [Publisher]
+      summary: Get script info
+      operationId: publisherGetScript
+      security:
+        - PublisherToken: []
+      parameters:
+        - $ref: '#/components/parameters/ScriptId'
+      responses:
+        '200':
+          description: Script info with version history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInfo'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/publisher/scripts/{scriptId}/versions:
+    post:
+      tags: [Publisher]
+      summary: Register a version for a specific script
+      operationId: publisherRegisterVersion
+      security:
+        - PublisherToken: []
+      parameters:
+        - $ref: '#/components/parameters/ScriptId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScriptPublishRequest'
+      responses:
+        '201':
+          description: Version registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/publisher/scripts/{scriptId}/activate:
+    post:
+      tags: [Publisher]
+      summary: Activate a script version
+      operationId: publisherActivateVersion
+      security:
+        - PublisherToken: []
+      parameters:
+        - $ref: '#/components/parameters/ScriptId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version:
+                  type: string
+                  description: Version to activate
+      responses:
+        '200':
+          description: Version activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+# ══════════════════════════════════════════════════════════════
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Default API token (`propertee.teebox.apiToken`)
+    ClientToken:
+      type: http
+      scheme: bearer
+      description: Client API token (`propertee.teebox.clientApiToken`, falls back to `apiToken`)
+    AdminToken:
+      type: http
+      scheme: bearer
+      description: Admin API token (`propertee.teebox.adminApiToken`, falls back to `apiToken`)
+    PublisherToken:
+      type: http
+      scheme: bearer
+      description: Publisher API token (`propertee.teebox.publisherApiToken`, falls back to `apiToken`)
+
+  parameters:
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: run-20260312-143022-001-a1b2
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: task-1
+    ScriptId:
+      name: scriptId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: my-script
+    StatusFilter:
+      name: status
+      in: query
+      schema:
+        type: string
+      description: Filter by status (e.g. RUNNING, COMPLETED, FAILED)
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        default: 0
+      description: Pagination offset
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: -1
+      description: Max items to return (-1 for unlimited)
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid Bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    # ── Common ──
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      example:
+        error: "Run not found"
+
+    # ── Run ──
+
+    RunRequest:
+      type: object
+      description: Request to submit a script by file path.
+      required: [scriptPath]
+      properties:
+        scriptPath:
+          type: string
+          description: Relative path to .pt script (under scriptsRoot)
+          example: "01_hello.pt"
+        props:
+          type: object
+          additionalProperties: true
+          description: Built-in properties passed to the script
+          example: {"width": 100, "name": "test"}
+        maxIterations:
+          type: integer
+          default: 1000
+          description: Maximum loop iterations before error/warning
+        warnLoops:
+          type: boolean
+          default: false
+          description: Warn instead of error on loop iteration limit
+
+    ScriptRunRequest:
+      type: object
+      description: Request to submit a registered script for execution. The scriptId comes from the URL path.
+      properties:
+        version:
+          type: string
+          description: Script version (defaults to active version if omitted)
+        props:
+          type: object
+          additionalProperties: true
+          description: Built-in properties passed to the script
+          example: {"width": 100, "name": "test"}
+        maxIterations:
+          type: integer
+          default: 1000
+          description: Maximum loop iterations before error/warning
+        warnLoops:
+          type: boolean
+          default: false
+          description: Warn instead of error on loop iteration limit
+
+    RunInfo:
+      type: object
+      description: Full run execution details
+      properties:
+        runId:
+          type: string
+        scriptPath:
+          type: string
+        scriptId:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        scriptAbsolutePath:
+          type: string
+        status:
+          $ref: '#/components/schemas/RunStatus'
+        archived:
+          type: boolean
+        createdAt:
+          type: integer
+          format: int64
+          description: Epoch milliseconds
+        startedAt:
+          type: integer
+          format: int64
+          nullable: true
+        endedAt:
+          type: integer
+          format: int64
+          nullable: true
+        maxIterations:
+          type: integer
+        iterationLimitBehavior:
+          type: string
+          enum: [error, warn]
+        hasExplicitReturn:
+          type: boolean
+        resultData:
+          description: Script return value (any JSON type)
+          nullable: true
+        resultSummary:
+          type: string
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        properties:
+          type: object
+          additionalProperties: true
+        threads:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunThreadInfo'
+        stdoutLines:
+          type: array
+          items:
+            type: string
+          description: Ring buffer of stdout (max 200 lines)
+        stderrLines:
+          type: array
+          items:
+            type: string
+          description: Ring buffer of stderr (max 200 lines)
+
+    RunStatus:
+      type: string
+      enum: [QUEUED, RUNNING, COMPLETED, FAILED, SERVER_RESTARTED]
+
+    RunThreadInfo:
+      type: object
+      description: Per-thread execution state snapshot
+      properties:
+        threadId:
+          type: integer
+          description: "Thread ID (0=main, -1=monitor)"
+        name:
+          type: string
+        state:
+          type: string
+          enum: [READY, RUNNING, SLEEPING, BLOCKED, WAITING, COMPLETED, ERROR]
+        parentId:
+          type: integer
+          nullable: true
+        inThreadContext:
+          type: boolean
+          description: True if spawned inside a multi block
+        sleepUntil:
+          type: integer
+          format: int64
+          nullable: true
+        asyncPending:
+          type: boolean
+        resultKeyName:
+          type: string
+          nullable: true
+        resultSummary:
+          type: string
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+        updatedAt:
+          type: integer
+          format: int64
+
+    # ── Client-specific response shapes ──
+
+    ClientRunSummary:
+      type: object
+      properties:
+        runId:
+          type: string
+        scriptId:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        scriptPath:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+        startedAt:
+          type: integer
+          format: int64
+          nullable: true
+        endedAt:
+          type: integer
+          format: int64
+          nullable: true
+        hasExplicitReturn:
+          type: boolean
+        resultSummary:
+          type: string
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+
+    ClientRunStatus:
+      type: object
+      properties:
+        runId:
+          type: string
+        scriptId:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        status:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+        startedAt:
+          type: integer
+          format: int64
+          nullable: true
+        endedAt:
+          type: integer
+          format: int64
+          nullable: true
+        hasExplicitReturn:
+          type: boolean
+        errorMessage:
+          type: string
+          nullable: true
+
+    ClientRunResult:
+      type: object
+      properties:
+        runId:
+          type: string
+        scriptId:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        status:
+          type: string
+        hasExplicitReturn:
+          type: boolean
+        resultData:
+          description: Script return value (any JSON type)
+          nullable: true
+        errorMessage:
+          type: string
+          nullable: true
+
+    ClientTaskSummary:
+      type: object
+      properties:
+        runId:
+          type: string
+        total:
+          type: integer
+        running:
+          type: integer
+        completed:
+          type: integer
+        failed:
+          type: integer
+        killed:
+          type: integer
+        other:
+          type: integer
+
+    # ── Admin-specific response shapes ──
+
+    AdminRunDetail:
+      type: object
+      properties:
+        run:
+          $ref: '#/components/schemas/RunInfo'
+        threads:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunThreadInfo'
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskInfo'
+
+    AdminTaskDetail:
+      type: object
+      properties:
+        task:
+          $ref: '#/components/schemas/TaskInfo'
+        observation:
+          $ref: '#/components/schemas/TaskObservation'
+        stdoutTail:
+          type: string
+          description: Last 4000 characters of stdout
+        stderrTail:
+          type: string
+          description: Last 4000 characters of stderr
+
+    # ── Task ──
+
+    TaskInfo:
+      type: object
+      description: Task (external process) state with computed fields
+      properties:
+        taskId:
+          type: string
+        runId:
+          type: string
+          nullable: true
+        threadId:
+          type: integer
+          nullable: true
+        threadName:
+          type: string
+          nullable: true
+        command:
+          type: string
+        pid:
+          type: integer
+        pgid:
+          type: integer
+        status:
+          type: string
+          description: "One of: starting, running, completed, failed, killed, detached, lost"
+        alive:
+          type: boolean
+        archived:
+          type: boolean
+        elapsedMs:
+          type: integer
+          format: int64
+        lastStdoutAt:
+          type: integer
+          format: int64
+          nullable: true
+        lastStderrAt:
+          type: integer
+          format: int64
+          nullable: true
+        lastOutputAgeMs:
+          type: integer
+          format: int64
+          nullable: true
+        timeoutExceeded:
+          type: boolean
+        exitCode:
+          type: integer
+          nullable: true
+        cwd:
+          type: string
+          nullable: true
+        hostInstanceId:
+          type: string
+        healthHints:
+          type: array
+          items:
+            type: string
+          description: "Diagnostic hints: TIMEOUT_EXCEEDED, PROCESS_NOT_FOUND, IDENTITY_UNVERIFIED"
+
+    TaskObservation:
+      type: object
+      description: Task state snapshot at observation time
+      properties:
+        taskId:
+          type: string
+        status:
+          type: string
+        alive:
+          type: boolean
+        elapsedMs:
+          type: integer
+          format: int64
+        lastStdoutAt:
+          type: integer
+          format: int64
+          nullable: true
+        lastStderrAt:
+          type: integer
+          format: int64
+          nullable: true
+        lastOutputAgeMs:
+          type: integer
+          format: int64
+          nullable: true
+        timeoutExceeded:
+          type: boolean
+        healthHints:
+          type: array
+          items:
+            type: string
+
+    # ── Script Registry ──
+
+    ScriptInfo:
+      type: object
+      description: Registered script with version history
+      properties:
+        scriptId:
+          type: string
+        activeVersion:
+          type: string
+          nullable: true
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScriptVersionInfo'
+
+    ScriptVersionInfo:
+      type: object
+      properties:
+        version:
+          type: string
+        description:
+          type: string
+          nullable: true
+        labels:
+          type: array
+          items:
+            type: string
+        sha256:
+          type: string
+          description: SHA-256 hash of script content
+        createdAt:
+          type: integer
+          format: int64
+        active:
+          type: boolean
+
+    ScriptPublishRequest:
+      type: object
+      required: [scriptId, version, content]
+      properties:
+        scriptId:
+          type: string
+          description: Script identifier
+        version:
+          type: string
+          description: Version string
+        content:
+          type: string
+          description: ProperTee script source code
+        description:
+          type: string
+          nullable: true
+        labels:
+          type: array
+          items:
+            type: string
+        activate:
+          type: boolean
+          default: false
+          description: Whether to immediately activate this version
+
+    # ── System ──
+
+    SystemInfo:
+      type: object
+      description: Server runtime and system metrics
+      properties:
+        heapUsed:
+          type: integer
+          format: int64
+          description: JVM heap memory used (bytes)
+        heapMax:
+          type: integer
+          format: int64
+          description: JVM heap memory maximum (bytes)
+        nonHeapUsed:
+          type: integer
+          format: int64
+          description: JVM non-heap memory used (bytes)
+        nonHeapCommitted:
+          type: integer
+          format: int64
+          description: JVM non-heap memory committed (bytes)
+        diskTotal:
+          type: integer
+          format: int64
+          description: Filesystem total capacity (bytes)
+        diskFree:
+          type: integer
+          format: int64
+          description: Filesystem free space (bytes)
+        diskUsable:
+          type: integer
+          format: int64
+          description: Filesystem usable space (bytes)
+        runsDirSize:
+          type: integer
+          format: int64
+          description: "Size of runs/ directory (bytes)"
+        tasksDirSize:
+          type: integer
+          format: int64
+          description: "Size of tasks/ directory (bytes)"
+        scriptRegistryDirSize:
+          type: integer
+          format: int64
+          description: "Size of script-registry/ directory (bytes)"
+        totalDataSize:
+          type: integer
+          format: int64
+          description: Total data directory size (bytes)
+        javaVersion:
+          type: string
+        javaVendor:
+          type: string
+        osName:
+          type: string
+        osArch:
+          type: string
+        uptimeMs:
+          type: integer
+          format: int64
+          description: Server uptime (milliseconds)
+        availableProcessors:
+          type: integer
+          description: Number of CPU cores
+        scriptsRootPath:
+          type: string
+        dataDirPath:
+          type: string
+        maxConcurrentRuns:
+          type: integer
+        bindAddress:
+          type: string
+        port:
+          type: integer
