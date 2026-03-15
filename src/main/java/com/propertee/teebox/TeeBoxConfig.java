@@ -9,7 +9,6 @@ import java.util.Properties;
 public class TeeBoxConfig {
     public String bindAddress = "127.0.0.1";
     public int port = 18080;
-    public File scriptsRoot;
     public File dataDir;
     public int maxConcurrentRuns = 4;
     public String apiToken;
@@ -37,10 +36,6 @@ public class TeeBoxConfig {
         if (port != null && port.trim().length() > 0) {
             config.port = Integer.parseInt(port.trim());
         }
-        String scriptsRoot = getSetting("scriptsRoot", fileProps);
-        if (scriptsRoot == null || scriptsRoot.trim().length() == 0) {
-            throw new IllegalArgumentException("TeeBox setting propertee.teebox.scriptsRoot is required");
-        }
         String dataDir = getSetting("dataDir", fileProps);
         if (dataDir == null || dataDir.trim().length() == 0) {
             throw new IllegalArgumentException("TeeBox setting propertee.teebox.dataDir is required");
@@ -65,7 +60,6 @@ public class TeeBoxConfig {
         if (adminApiToken != null && adminApiToken.trim().length() > 0) {
             config.adminApiToken = adminApiToken.trim();
         }
-        config.scriptsRoot = canonicalFile(new File(scriptsRoot.trim()));
         config.dataDir = canonicalFile(new File(dataDir.trim()));
         return config;
     }

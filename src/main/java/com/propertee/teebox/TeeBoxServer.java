@@ -36,7 +36,7 @@ public class TeeBoxServer {
 
     public TeeBoxServer(TeeBoxConfig config) throws IOException {
         this.config = config;
-        this.runManager = new RunManager(config.scriptsRoot, config.dataDir, config.maxConcurrentRuns, config);
+        this.runManager = new RunManager(config.dataDir, config.maxConcurrentRuns, config);
         this.pageRenderer = new AdminPageRenderer(config, runManager, gson);
         this.server = HttpServer.create(new InetSocketAddress(config.bindAddress, config.port), 0);
         this.server.setExecutor(Executors.newCachedThreadPool());
@@ -112,6 +112,26 @@ public class TeeBoxServer {
                 }
                 if ("GET".equals(method) && "/admin/scripts".equals(path)) {
                     writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderScriptsPage());
+                    return;
+                }
+                if ("POST".equals(method) && "/admin/scripts/register".equals(path)) {
+                    Map<String, String> form = parseForm(exchange);
+                    String scriptId = form.get("scriptId");
+                    String version = form.get("version");
+                    String content = form.get("content");
+                    String description = form.get("description");
+                    boolean activate = "on".equals(form.get("activate")) || "true".equals(form.get("activate"));
+                    if (scriptId == null || scriptId.trim().length() == 0) {
+                        throw new IllegalArgumentException("Script ID is required");
+                    }
+                    if (version == null || version.trim().length() == 0) {
+                        throw new IllegalArgumentException("Version is required");
+                    }
+                    if (content == null || content.trim().length() == 0) {
+                        throw new IllegalArgumentException("Script content is required");
+                    }
+                    runManager.registerScriptVersion(scriptId.trim(), version.trim(), content, description, new ArrayList<String>(), activate);
+                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                     return;
                 }
                 if ("GET".equals(method) && path.startsWith("/admin/scripts/")) {

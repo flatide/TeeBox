@@ -582,13 +582,11 @@ public class TeeBoxServerTest {
                                     String clientApiToken,
                                     String publisherApiToken,
                                     String adminApiToken) throws Exception {
-        File scriptsRoot = Files.createTempDirectory("propertee-teebox-scripts").toFile();
         File dataDir = Files.createTempDirectory("propertee-teebox-data").toFile();
 
         TeeBoxConfig config = new TeeBoxConfig();
         config.bindAddress = "127.0.0.1";
         config.port = 0;
-        config.scriptsRoot = scriptsRoot;
         config.dataDir = dataDir;
         config.maxConcurrentRuns = 2;
         config.apiToken = apiToken;

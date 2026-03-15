@@ -18,29 +18,30 @@ public class AdminPageRenderer {
         this.gson = gson;
     }
 
+    private String renderTopNav(String activePage) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<div class='top-nav'>");
+        sb.append("<a href='/admin' class='top-nav-brand'>TeeBox</a>");
+        sb.append("<div class='top-nav-links'>");
+        sb.append("<a href='/admin' class='top-nav-link").append("dashboard".equals(activePage) ? " active" : "").append("'>Dashboard</a>");
+        sb.append("<a href='/admin/scripts' class='top-nav-link").append("scripts".equals(activePage) ? " active" : "").append("'>Scripts</a>");
+        sb.append("<a href='/health' class='top-nav-link'>Health</a>");
+        sb.append("<a href='/api/admin/system' class='top-nav-link'>System API</a>");
+        sb.append("</div>");
+        sb.append("<div class='top-nav-meta'>");
+        sb.append("<span class='tag tag-nav'>active ").append(runManager.getActiveCount()).append("</span> ");
+        sb.append("<span class='tag tag-nav'>queued ").append(runManager.getQueuedCount()).append("</span>");
+        sb.append("</div>");
+        sb.append("</div>");
+        return sb.toString();
+    }
+
     public String renderIndexPage() {
         List<RunInfo> runs = runManager.listRuns();
         List<TaskInfo> detached = runManager.listDetachedTasks();
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("TeeBox Admin"));
-        sb.append("<div class='header'><h1>TeeBox Admin</h1>");
-        sb.append("<div class='header-meta'>");
-        sb.append("<span class='tag'>active ").append(runManager.getActiveCount()).append("</span> ");
-        sb.append("<span class='tag'>queued ").append(runManager.getQueuedCount()).append("</span> ");
-        sb.append("<a href='/admin/scripts' class='tag'>scripts ").append(runManager.listScripts().size()).append("</a>");
-        sb.append("</div></div>");
-
-        sb.append("<div class='card'>");
-        sb.append("<h2>Run Script</h2>");
-        sb.append("<form method='post' action='/admin/submit' class='form-grid'>");
-        sb.append("<div class='form-row'><label>Script ID</label><input type='text' name='scriptId' placeholder='calc_sum'/></div>");
-        sb.append("<div class='form-row'><label>Version (blank = active)</label><input type='text' name='version' placeholder=''/></div>");
-        sb.append("<div class='form-row'><label>Props (JSON)</label><input type='text' name='propsJson' value='{}'/></div>");
-        sb.append("<div class='form-row-inline'>");
-        sb.append("<div><label>Max Iterations</label><input type='text' name='maxIterations' value='1000' style='width:100px'/></div>");
-        sb.append("<label class='checkbox-label'><input type='checkbox' name='warnLoops'/> Warn Loops</label>");
-        sb.append("<button type='submit'>Run</button>");
-        sb.append("</div></form></div>");
+        sb.append(renderTopNav("dashboard"));
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Runs</h2>");
@@ -81,7 +82,6 @@ public class AdminPageRenderer {
         }
 
         sb.append("<div class='footer'>");
-        sb.append("<span class='dim'>scriptsRoot: ").append(escape(config.scriptsRoot.getAbsolutePath())).append("</span><br/>");
         sb.append("<span class='dim'>dataDir: ").append(escape(config.dataDir.getAbsolutePath())).append("</span>");
         sb.append("</div>");
 
@@ -98,6 +98,7 @@ public class AdminPageRenderer {
         List<TaskInfo> tasks = runManager.listTasksForRun(runId);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Run " + runId));
+        sb.append(renderTopNav(""));
 
         sb.append("<div class='nav'>");
         sb.append("<a href='/admin'>Dashboard</a>");
@@ -160,6 +161,7 @@ public class AdminPageRenderer {
         TaskObservation obs = runManager.observeTask(taskId);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Task " + taskId));
+        sb.append(renderTopNav(""));
 
         sb.append("<div class='nav'>");
         sb.append("<a href='/admin'>Dashboard</a>");
@@ -222,13 +224,30 @@ public class AdminPageRenderer {
         List<ScriptInfo> scripts = runManager.listScripts();
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Scripts - TeeBox Admin"));
+        sb.append(renderTopNav("scripts"));
 
-        sb.append("<div class='nav'>");
-        sb.append("<a href='/admin'>Dashboard</a>");
-        sb.append("<span class='nav-sep'>/</span>");
-        sb.append("<span>Scripts</span>");
-        sb.append("<span class='nav-sep'>|</span>");
-        sb.append("<a href='/api/publisher/scripts' class='link-subtle'>JSON</a>");
+        sb.append("<div class='card'>");
+        sb.append("<h2>Register Script</h2>");
+        sb.append("<form method='post' action='/admin/scripts/register' class='form-grid' id='register-form'>");
+        sb.append("<div class='form-row'><label>Script ID</label><input type='text' name='scriptId' placeholder='calc_sum' required/></div>");
+        sb.append("<div class='form-row'><label>Version</label><input type='text' name='version' placeholder='v1' required/></div>");
+        sb.append("<div class='form-row'><label>Description</label><input type='text' name='description' placeholder=''/></div>");
+        sb.append("<div class='form-row'><label>Script File</label>");
+        sb.append("<input type='file' id='script-file' accept='.pt,.txt' style='font-size:13px;'/>");
+        sb.append("</div>");
+        sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='script-content' rows='8' style='font-family:monospace;font-size:13px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;' placeholder='return {\"ok\": true}'></textarea></div>");
+        sb.append("<div class='form-row-inline'>");
+        sb.append("<label class='checkbox-label'><input type='checkbox' name='activate' checked/> Activate</label>");
+        sb.append("<button type='submit'>Register</button>");
+        sb.append("</div></form>");
+        sb.append("<script>");
+        sb.append("document.getElementById('script-file').addEventListener('change',function(e){");
+        sb.append("var file=e.target.files[0];if(!file)return;");
+        sb.append("var reader=new FileReader();");
+        sb.append("reader.onload=function(ev){document.getElementById('script-content').value=ev.target.result;};");
+        sb.append("reader.readAsText(file);");
+        sb.append("});");
+        sb.append("</script>");
         sb.append("</div>");
 
         sb.append("<div class='card'>");
@@ -237,7 +256,7 @@ public class AdminPageRenderer {
             sb.append("<p class='empty'>No scripts registered</p>");
         } else {
             sb.append("<div class='table-wrap'><table><thead><tr>");
-            sb.append("<th>Script ID</th><th>Active Version</th><th>Versions</th><th>Created</th><th>Updated</th>");
+            sb.append("<th>Script ID</th><th>Active Version</th><th>Versions</th><th>Created</th><th>Updated</th><th></th>");
             sb.append("</tr></thead><tbody>");
             for (ScriptInfo script : scripts) {
                 sb.append("<tr>");
@@ -252,6 +271,7 @@ public class AdminPageRenderer {
                 sb.append("<td class='center'>").append(script.versions.size()).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.createdAt))).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.updatedAt))).append("</td>");
+                sb.append("<td><a href='/admin/scripts/").append(urlPath(script.scriptId)).append("#run' class='btn btn-sm'>Run</a></td>");
                 sb.append("</tr>");
             }
             sb.append("</tbody></table></div>");
@@ -269,10 +289,9 @@ public class AdminPageRenderer {
         }
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Script " + scriptId));
+        sb.append(renderTopNav("scripts"));
 
         sb.append("<div class='nav'>");
-        sb.append("<a href='/admin'>Dashboard</a>");
-        sb.append("<span class='nav-sep'>/</span>");
         sb.append("<a href='/admin/scripts'>Scripts</a>");
         sb.append("<span class='nav-sep'>/</span>");
         sb.append("<span>").append(escape(scriptId)).append("</span>");
@@ -349,6 +368,23 @@ public class AdminPageRenderer {
             }
         }
 
+        sb.append("<div class='card'>");
+        sb.append("<h2>Run Script</h2>");
+        sb.append("<form method='post' action='/admin/submit' class='form-grid'>");
+        sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
+        sb.append("<div class='form-row'><label>Version (blank = active)</label><select name='version' style='padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;'>");
+        sb.append("<option value=''>active (").append(escape(script.activeVersion)).append(")</option>");
+        for (ScriptVersionInfo version : script.versions) {
+            sb.append("<option value='").append(escape(version.version)).append("'>").append(escape(version.version)).append("</option>");
+        }
+        sb.append("</select></div>");
+        sb.append("<div class='form-row'><label>Props (JSON)</label><input type='text' name='propsJson' value='{}'/></div>");
+        sb.append("<div class='form-row-inline'>");
+        sb.append("<div><label>Max Iterations</label><input type='text' name='maxIterations' value='1000' style='width:100px'/></div>");
+        sb.append("<label class='checkbox-label'><input type='checkbox' name='warnLoops'/> Warn Loops</label>");
+        sb.append("<button type='submit'>Run</button>");
+        sb.append("</div></form></div>");
+
         sb.append(pageEnd());
         return sb.toString();
     }
@@ -356,7 +392,8 @@ public class AdminPageRenderer {
     public String renderErrorPage(String title, String message) {
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart(title));
-        sb.append("<div class='nav'><a href='/admin'>Dashboard</a><span class='nav-sep'>/</span><span>Error</span></div>");
+        sb.append(renderTopNav(""));
+        sb.append("<div class='nav'><span>Error</span></div>");
         sb.append("<div class='card'>");
         sb.append("<h2>").append(escape(title)).append("</h2>");
         sb.append("<pre>").append(escape(message)).append("</pre>");
@@ -412,7 +449,6 @@ public class AdminPageRenderer {
 
         sb.append("<div class='sys-section'><div class='sys-section-title'>Configuration</div>");
         sb.append("<div class='detail-grid'>");
-        sb.append("<div class='detail-item'><div class='detail-label'>scriptsRoot</div><div class='detail-value'><code>").append(escape(info.scriptsRootPath)).append("</code></div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>dataDir</div><div class='detail-value'><code>").append(escape(info.dataDirPath)).append("</code></div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Bind</div><div class='detail-value'>").append(escape(info.bindAddress)).append(":").append(info.port).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Max Concurrent Runs</div><div class='detail-value'>").append(info.maxConcurrentRuns).append("</div></div>");
@@ -591,6 +627,15 @@ public class AdminPageRenderer {
         sb.append("background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;} ");
         sb.append(".sys-section{margin-bottom:16px;} .sys-section:last-child{margin-bottom:0;} ");
         sb.append(".sys-section-title{font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #f1f5f9;} ");
+        sb.append(".top-nav{display:flex;align-items:center;gap:16px;padding:12px 20px;background:#1e293b;border-radius:8px;margin-bottom:20px;flex-wrap:wrap;} ");
+        sb.append(".top-nav-brand{color:#fff;font-weight:700;font-size:16px;letter-spacing:0.5px;text-decoration:none;} ");
+        sb.append(".top-nav-brand:hover{text-decoration:none;color:#93c5fd;} ");
+        sb.append(".top-nav-links{display:flex;gap:4px;} ");
+        sb.append(".top-nav-link{color:#94a3b8;font-size:13px;font-weight:500;padding:6px 12px;border-radius:6px;text-decoration:none;transition:background 0.15s,color 0.15s;} ");
+        sb.append(".top-nav-link:hover{background:#334155;color:#e2e8f0;text-decoration:none;} ");
+        sb.append(".top-nav-link.active{background:#334155;color:#fff;} ");
+        sb.append(".top-nav-meta{margin-left:auto;display:flex;gap:8px;} ");
+        sb.append(".tag-nav{background:#334155;color:#94a3b8;font-size:11px;} ");
         sb.append("</style></head><body>");
         return sb.toString();
     }

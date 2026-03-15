@@ -19,7 +19,6 @@ public class TeeBoxConfigTest {
         write(configFile,
             "propertee.teebox.bind=0.0.0.0\n" +
             "propertee.teebox.port=19090\n" +
-            "propertee.teebox.scriptsRoot=" + new File(root, "scripts").getAbsolutePath() + "\n" +
             "propertee.teebox.dataDir=" + new File(root, "data").getAbsolutePath() + "\n" +
             "propertee.teebox.maxRuns=7\n" +
             "propertee.teebox.apiToken=test-token\n");
@@ -34,7 +33,6 @@ public class TeeBoxConfigTest {
             Assert.assertEquals(19090, config.port);
             Assert.assertEquals(7, config.maxConcurrentRuns);
             Assert.assertEquals("test-token", config.apiToken);
-            Assert.assertEquals(new File(root, "scripts").getCanonicalPath(), config.scriptsRoot.getCanonicalPath());
             Assert.assertEquals(new File(root, "data").getCanonicalPath(), config.dataDir.getCanonicalPath());
         } finally {
             restoreProperty("propertee.teebox.config", oldConfig);
@@ -47,7 +45,6 @@ public class TeeBoxConfigTest {
         File root = Files.createTempDirectory("propertee-teebox-config-override").toFile();
         File configFile = new File(root, "teebox.properties");
         write(configFile,
-            "propertee.teebox.scriptsRoot=" + new File(root, "scripts").getAbsolutePath() + "\n" +
             "propertee.teebox.dataDir=" + new File(root, "data").getAbsolutePath() + "\n" +
             "propertee.teebox.port=18080\n");
 
@@ -69,7 +66,6 @@ public class TeeBoxConfigTest {
         File root = Files.createTempDirectory("propertee-teebox-config-tokens").toFile();
         File configFile = new File(root, "teebox.properties");
         write(configFile,
-            "propertee.teebox.scriptsRoot=" + new File(root, "scripts").getAbsolutePath() + "\n" +
             "propertee.teebox.dataDir=" + new File(root, "data").getAbsolutePath() + "\n" +
             "propertee.teebox.apiToken=default-token\n" +
             "propertee.teebox.clientApiToken=client-token\n" +

@@ -19,7 +19,7 @@ build/distributions/propertee-teebox-dist.zip
 1. Copy `propertee-teebox-dist.zip` to the target server.
 2. Unzip it.
 3. Edit `conf/teebox.properties`.
-4. Create the configured `scriptsRoot` and `dataDir` directories.
+4. Create the configured `dataDir` directory.
 5. Start the server:
 
 ```bash

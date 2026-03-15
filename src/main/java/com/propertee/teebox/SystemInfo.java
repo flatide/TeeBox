@@ -18,7 +18,6 @@ public class SystemInfo {
     public String osArch;
     public long uptimeMs;
     public int availableProcessors;
-    public String scriptsRootPath;
     public String dataDirPath;
     public int maxConcurrentRuns;
     public String bindAddress;

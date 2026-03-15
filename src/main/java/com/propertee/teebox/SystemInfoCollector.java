@@ -49,7 +49,6 @@ public class SystemInfoCollector {
         info.totalDataSize = info.runsDirSize + info.tasksDirSize + info.scriptRegistryDirSize;
 
         // Paths and config
-        info.scriptsRootPath = config.scriptsRoot.getAbsolutePath();
         info.dataDirPath = config.dataDir.getAbsolutePath();
         info.maxConcurrentRuns = config.maxConcurrentRuns;
         info.bindAddress = config.bindAddress;

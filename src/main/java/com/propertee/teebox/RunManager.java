@@ -30,7 +30,6 @@ public class RunManager {
     private static final long FLUSH_INTERVAL_MS = 2000L;
     private static final long DEFAULT_MAINTENANCE_INTERVAL_MS = 60L * 1000L;
 
-    private final File scriptsRoot;
     private final File dataDir;
     private final RunRegistry runRegistry;
     private final ScriptRegistry scriptRegistry;
@@ -44,16 +43,12 @@ public class RunManager {
     private final long startTimeMs = System.currentTimeMillis();
     private volatile boolean shutdownRequested = false;
 
-    public RunManager(File scriptsRoot, File dataDir, int maxConcurrentRuns) {
-        this(scriptsRoot, dataDir, maxConcurrentRuns, null);
+    public RunManager(File dataDir, int maxConcurrentRuns) {
+        this(dataDir, maxConcurrentRuns, null);
     }
 
-    public RunManager(File scriptsRoot, File dataDir, int maxConcurrentRuns, TeeBoxConfig teeBoxConfig) {
-        this.scriptsRoot = scriptsRoot;
+    public RunManager(File dataDir, int maxConcurrentRuns, TeeBoxConfig teeBoxConfig) {
         this.dataDir = dataDir;
-        if (!this.scriptsRoot.exists() || !this.scriptsRoot.isDirectory()) {
-            throw new IllegalArgumentException("scriptsRoot must be an existing directory: " + this.scriptsRoot.getAbsolutePath());
-        }
         if (!this.dataDir.exists()) {
             this.dataDir.mkdirs();
         }
