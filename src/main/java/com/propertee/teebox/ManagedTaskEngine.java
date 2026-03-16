@@ -10,6 +10,7 @@ import com.propertee.task.TaskRunner;
 import com.propertee.task.TaskStatus;
 
 import java.io.ByteArrayOutputStream;
+import java.util.Locale;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
@@ -35,6 +36,8 @@ import java.util.Map;
  * indexing, archival, multi-instance management, and querying.
  */
 public class ManagedTaskEngine implements TaskRunner {
+    private static final boolean IS_WINDOWS =
+            System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("win");
     private static final long DEFAULT_RETENTION_MS = 24L * 60L * 60L * 1000L;
     private static final long DEFAULT_ARCHIVE_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L;
 
@@ -453,6 +456,9 @@ public class ManagedTaskEngine implements TaskRunner {
     }
 
     private boolean isProcessAlive(int pid) {
+        if (IS_WINDOWS) {
+            return ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false);
+        }
         try {
             Process process = new ProcessBuilder("kill", "-0", String.valueOf(pid)).start();
             boolean alive = process.waitFor() == 0;
@@ -466,6 +472,16 @@ public class ManagedTaskEngine implements TaskRunner {
     }
 
     private void sendSignal(int pid, String signal) {
+        if (IS_WINDOWS) {
+            ProcessHandle.of(pid).ifPresent(h -> {
+                if ("KILL".equals(signal)) {
+                    h.destroyForcibly();
+                } else {
+                    h.destroy();
+                }
+            });
+            return;
+        }
         try {
             Process process = new ProcessBuilder("kill", "-" + signal, String.valueOf(pid)).start();
             process.waitFor();
@@ -478,6 +494,24 @@ public class ManagedTaskEngine implements TaskRunner {
     }
 
     private void sendSignalToGroup(int pgid, String signal) {
+        if (IS_WINDOWS) {
+            // Windows has no process groups; emulate by killing the leader and its descendants
+            ProcessHandle.of(pgid).ifPresent(h -> {
+                h.descendants().forEach(d -> {
+                    if ("KILL".equals(signal)) {
+                        d.destroyForcibly();
+                    } else {
+                        d.destroy();
+                    }
+                });
+                if ("KILL".equals(signal)) {
+                    h.destroyForcibly();
+                } else {
+                    h.destroy();
+                }
+            });
+            return;
+        }
         try {
             Process process = new ProcessBuilder("kill", "-" + signal, "-" + pgid).start();
             process.waitFor();

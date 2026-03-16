@@ -6,15 +6,21 @@ import com.propertee.task.TaskStatus;
 import com.propertee.teebox.ManagedTaskEngine;
 
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.util.Locale;
 
 public class ManagedTaskEngineTest {
 
+    private static final boolean IS_WINDOWS =
+            System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("win");
+
     @Test
     public void killAfterRestartShouldTerminateProcess() throws Exception {
+        Assume.assumeFalse("Skipped on Windows: requires Unix process control", IS_WINDOWS);
         File baseDir = Files.createTempDirectory("managed-task-kill").toFile();
         String hostId = "host-restart-kill";
 
@@ -53,6 +59,7 @@ public class ManagedTaskEngineTest {
 
     @Test
     public void killAfterRestartShouldTerminateChildProcesses() throws Exception {
+        Assume.assumeFalse("Skipped on Windows: requires Unix shell syntax", IS_WINDOWS);
         File baseDir = Files.createTempDirectory("managed-task-kill-children").toFile();
         File childPidFile = new File(baseDir, "child.pid");
         String hostId = "host-restart-kill-children";
@@ -87,6 +94,7 @@ public class ManagedTaskEngineTest {
 
     @Test
     public void initShouldRecoverRunningTaskFromDisk() throws Exception {
+        Assume.assumeFalse("Skipped on Windows: requires Unix process control", IS_WINDOWS);
         File baseDir = Files.createTempDirectory("managed-task-init").toFile();
         String hostId = "host-init-test";
 
@@ -114,6 +122,9 @@ public class ManagedTaskEngineTest {
     }
 
     private static boolean isProcessAlive(int pid) {
+        if (IS_WINDOWS) {
+            return ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false);
+        }
         try {
             Process process = new ProcessBuilder("kill", "-0", String.valueOf(pid)).start();
             boolean alive = process.waitFor() == 0;
