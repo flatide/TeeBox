@@ -26,7 +26,13 @@ build/distributions/propertee-teebox-dist.zip
 ./bin/run-teebox.sh
 ```
 
-The script accepts extra CLI arguments and respects:
+On Windows:
+
+```cmd
+bin\run-teebox.bat
+```
+
+The scripts accept extra CLI arguments and respect:
 
 - `PROPERTEE_TEEBOX_CONFIG`
 - `JAVA_HOME`

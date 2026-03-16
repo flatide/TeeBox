@@ -74,6 +74,9 @@ task teeBoxDist(type: Copy) {
     from('deploy/teebox/run-teebox.sh') {
         into 'bin'
     }
+    from('deploy/teebox/run-teebox.bat') {
+        into 'bin'
+    }
     from('deploy/teebox/README.md') {
         into '.'
     }
