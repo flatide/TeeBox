@@ -26,8 +26,8 @@ public class ScriptRegistry {
 
     public ScriptRegistry(File dataDir) {
         this.registryDir = new File(dataDir, "script-registry");
-        if (!registryDir.exists()) {
-            registryDir.mkdirs();
+        if (!registryDir.exists() && !registryDir.mkdirs()) {
+            throw new IllegalStateException("Failed to create script registry directory: " + registryDir.getAbsolutePath());
         }
     }
 

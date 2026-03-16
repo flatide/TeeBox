@@ -27,8 +27,8 @@ public class RunStore {
 
     public RunStore(File dataDir) {
         this.runsDir = new File(dataDir, "runs");
-        if (!runsDir.exists()) {
-            runsDir.mkdirs();
+        if (!runsDir.exists() && !runsDir.mkdirs()) {
+            throw new IllegalStateException("Failed to create runs directory: " + runsDir.getAbsolutePath());
         }
         this.indexFile = new File(runsDir, "index.json");
         this.indexTmpFile = new File(runsDir, "index.json.tmp");
@@ -238,7 +238,7 @@ public class RunStore {
             writer = null;
             moveAtomically(indexTmpFile.toPath(), indexFile.toPath());
         } catch (IOException e) {
-            throw new RuntimeException("Failed to write run index: " + e.getMessage(), e);
+            System.err.println("[RunStore] Failed to write run index: " + e.getMessage());
         } finally {
             if (writer != null) {
                 try {

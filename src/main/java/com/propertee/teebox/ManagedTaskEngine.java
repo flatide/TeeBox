@@ -56,8 +56,8 @@ public class ManagedTaskEngine implements TaskRunner {
         this.taskBaseDir = new File(baseDir);
         this.tasksDir = new File(taskBaseDir, "tasks");
         this.hostInstanceId = hostInstanceId;
-        if (!tasksDir.exists()) {
-            tasksDir.mkdirs();
+        if (!tasksDir.exists() && !tasksDir.mkdirs()) {
+            throw new IllegalStateException("Failed to create tasks directory: " + tasksDir.getAbsolutePath());
         }
         this.indexFile = new File(tasksDir, "index.json");
         this.indexTmpFile = new File(tasksDir, "index.json.tmp");
@@ -153,6 +153,11 @@ public class ManagedTaskEngine implements TaskRunner {
         if (killed) {
             Task task = runner.getTask(taskId);
             if (task != null) {
+                task.status = TaskStatus.KILLED;
+                task.alive = false;
+                if (task.endTime == null) {
+                    task.endTime = Long.valueOf(System.currentTimeMillis());
+                }
                 saveMeta(task);
             }
             return true;
@@ -659,7 +664,7 @@ public class ManagedTaskEngine implements TaskRunner {
             writer = null;
             moveAtomically(indexTmpFile.toPath(), indexFile.toPath());
         } catch (IOException e) {
-            throw new RuntimeException("Failed to write task index: " + e.getMessage(), e);
+            System.err.println("[ManagedTaskEngine] Failed to write task index: " + e.getMessage());
         } finally {
             closeQuietly(writer);
         }

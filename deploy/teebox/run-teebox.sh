@@ -16,4 +16,10 @@ if [ ! -f "$CONF_FILE" ]; then
     exit 1
 fi
 
+# Ensure dataDir exists
+DATA_DIR=$(grep -E '^\s*propertee\.teebox\.dataDir\s*=' "$CONF_FILE" | sed 's/^[^=]*=\s*//' | tr -d '[:space:]')
+if [ -n "$DATA_DIR" ] && [ ! -d "$DATA_DIR" ]; then
+    mkdir -p "$DATA_DIR" || { echo "Failed to create dataDir: $DATA_DIR" 1>&2; exit 1; }
+fi
+
 exec "$JAVA_BIN" ${JAVA_OPTS:-} -jar "$JAR_FILE" --config "$CONF_FILE" "$@"

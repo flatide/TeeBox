@@ -49,8 +49,8 @@ public class RunManager {
 
     public RunManager(File dataDir, int maxConcurrentRuns, TeeBoxConfig teeBoxConfig) {
         this.dataDir = dataDir;
-        if (!this.dataDir.exists()) {
-            this.dataDir.mkdirs();
+        if (!this.dataDir.exists() && !this.dataDir.mkdirs()) {
+            throw new IllegalStateException("Failed to create data directory: " + this.dataDir.getAbsolutePath());
         }
         long runRetentionMs = parseDurationProperty("runRetentionMs", DEFAULT_RUN_RETENTION_MS);
         long runArchiveRetentionMs = parseDurationProperty("runArchiveRetentionMs", DEFAULT_RUN_ARCHIVE_RETENTION_MS);
