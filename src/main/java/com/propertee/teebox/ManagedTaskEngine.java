@@ -2,12 +2,17 @@ package com.propertee.teebox;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import com.propertee.task.DefaultTaskRunner;
 import com.propertee.task.Task;
 import com.propertee.task.TaskObservation;
 import com.propertee.task.TaskRequest;
 import com.propertee.task.TaskRunner;
 import com.propertee.task.TaskStatus;
+import com.propertee.teebox.lifecycle.TaskLifecycle;
+import com.propertee.teebox.lifecycle.TaskLossReason;
+import com.propertee.teebox.lifecycle.TaskPhase;
+import com.propertee.teebox.lifecycle.TaskTerminalState;
 
 import java.io.ByteArrayOutputStream;
 import java.util.Locale;
@@ -30,10 +35,15 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * Managed task engine that wraps a DefaultTaskRunner and adds persistence,
- * indexing, archival, multi-instance management, and querying.
+ * indexing, archival, and querying.
+ *
+ * Task lifecycle is managed via TaskLifecycle (4-axis model) as the single
+ * source of truth. The core Task.status field is derived from lifecycle state.
  */
 public class ManagedTaskEngine implements TaskRunner {
     private static final boolean IS_WINDOWS =
@@ -52,6 +62,9 @@ public class ManagedTaskEngine implements TaskRunner {
     private final long retentionMs;
     private final long archiveRetentionMs;
 
+    private final ConcurrentHashMap<String, TaskLifecycle> lifecycles = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Object> taskLocks = new ConcurrentHashMap<>();
+
     public ManagedTaskEngine(String baseDir, String hostInstanceId) {
         this.taskBaseDir = new File(baseDir);
         this.tasksDir = new File(taskBaseDir, "tasks");
@@ -66,13 +79,79 @@ public class ManagedTaskEngine implements TaskRunner {
         this.runner = new DefaultTaskRunner(baseDir);
     }
 
+    // ---- Per-task locking ----
+
+    private <T> T withTaskLock(String taskId, Supplier<T> action) {
+        Object lock = taskLocks.computeIfAbsent(taskId, k -> new Object());
+        synchronized (lock) {
+            return action.get();
+        }
+    }
+
+    private void withTaskLockVoid(String taskId, Runnable action) {
+        Object lock = taskLocks.computeIfAbsent(taskId, k -> new Object());
+        synchronized (lock) {
+            action.run();
+        }
+    }
+
+    // ---- Lifecycle <-> Task status sync ----
+
+    private void syncStatusFromLifecycle(Task task) {
+        TaskLifecycle lc = lifecycles.get(task.taskId);
+        if (lc == null) return;
+        String legacyStatus = lc.deriveLegacyStatus();
+        task.status = statusFromString(legacyStatus);
+        if (lc.isTerminal()) {
+            task.alive = false;
+        }
+    }
+
+    /**
+     * For in-memory tasks: if the runner shows the task as dead but our
+     * lifecycle is still ACTIVE, finalize the lifecycle and persist.
+     */
+    private void ensureLifecycleSynced(Task task) {
+        if (task == null) return;
+        TaskLifecycle lc = lifecycles.get(task.taskId);
+        if (lc != null && !task.alive && lc.isActive()) {
+            withTaskLockVoid(task.taskId, () -> {
+                // Re-check under lock
+                TaskLifecycle lcInner = lifecycles.get(task.taskId);
+                if (lcInner != null && lcInner.isActive()) {
+                    finalizeInMemoryTask(task);
+                    saveMeta(task);
+                }
+            });
+        } else if (lc != null) {
+            syncStatusFromLifecycle(task);
+        }
+    }
+
+    private TaskStatus statusFromString(String value) {
+        if (value == null) return null;
+        switch (value) {
+            case "starting":
+            case "running": return TaskStatus.RUNNING;
+            case "completed": return TaskStatus.COMPLETED;
+            case "failed": return TaskStatus.FAILED;
+            case "killed": return TaskStatus.KILLED;
+            case "lost": return TaskStatus.LOST;
+            default: return null;
+        }
+    }
+
+    public TaskLifecycle getLifecycle(String taskId) {
+        return taskId != null ? lifecycles.get(taskId) : null;
+    }
+
     // ---- TaskRunner interface methods ----
 
     @Override
     public Task execute(TaskRequest request) {
         Task task = runner.execute(request);
         task.hostInstanceId = hostInstanceId;
-        // Record pidStartTime via ProcessHandle for future init() ownership verification
+        // Record pidStartTime via ProcessHandle for future init() identity verification
         if (task.pid > 0) {
             try {
                 java.util.Optional<ProcessHandle> handle = ProcessHandle.of(task.pid);
@@ -86,6 +165,9 @@ public class ManagedTaskEngine implements TaskRunner {
                 // best-effort
             }
         }
+        TaskLifecycle lc = TaskLifecycle.normalizeFromRunner(task);
+        lifecycles.put(task.taskId, lc);
+        syncStatusFromLifecycle(task);
         saveMeta(task);
         return task;
     }
@@ -95,6 +177,7 @@ public class ManagedTaskEngine implements TaskRunner {
         // First check in-memory (runner)
         Task task = runner.getTask(taskId);
         if (task != null) {
+            ensureLifecycleSynced(task);
             return task;
         }
         // Fallback to disk
@@ -111,7 +194,10 @@ public class ManagedTaskEngine implements TaskRunner {
         if (inMemory != null) {
             Task task = runner.waitForCompletion(taskId, timeoutMs);
             if (task != null && !task.alive) {
-                saveMeta(task);
+                withTaskLockVoid(taskId, () -> {
+                    finalizeInMemoryTask(task);
+                    saveMeta(task);
+                });
             }
             return task;
         }
@@ -127,9 +213,13 @@ public class ManagedTaskEngine implements TaskRunner {
             if (task == null) {
                 return null;
             }
-            refreshDiskTask(task);
+            withTaskLockVoid(taskId, () -> {
+                refreshDiskTask(task);
+                if (!task.alive) {
+                    saveMeta(task);
+                }
+            });
             if (!task.alive) {
-                saveMeta(task);
                 return task;
             }
             if (timeoutMs > 0 && (System.currentTimeMillis() - start) > timeoutMs) {
@@ -148,37 +238,85 @@ public class ManagedTaskEngine implements TaskRunner {
 
     @Override
     public boolean killTask(String taskId) {
-        // Try runner first (in-memory tasks from current session)
-        boolean killed = runner.killTask(taskId);
-        if (killed) {
-            Task task = runner.getTask(taskId);
-            if (task != null) {
-                task.status = TaskStatus.KILLED;
-                task.alive = false;
-                if (task.endTime == null) {
-                    task.endTime = Long.valueOf(System.currentTimeMillis());
-                }
-                saveMeta(task);
+        return withTaskLock(taskId, () -> {
+            // Check lifecycle first — already KILLED means success
+            TaskLifecycle lc = lifecycles.get(taskId);
+            if (lc != null && lc.isTerminal() && lc.getTerminalState() == TaskTerminalState.KILLED) {
+                return true;
             }
+
+            // Try runner first (in-memory tasks from current session)
+            boolean killed = runner.killTask(taskId);
+            if (killed) {
+                Task task = runner.getTask(taskId);
+                if (task != null) {
+                    lc = lifecycles.get(taskId);
+                    if (lc == null) {
+                        lc = TaskLifecycle.normalizeFromRunner(task);
+                        lifecycles.put(taskId, lc);
+                    }
+                    lc.tryTransitionToKilled();
+                    syncStatusFromLifecycle(task);
+                    task.alive = false;
+                    if (task.endTime == null) {
+                        task.endTime = Long.valueOf(System.currentTimeMillis());
+                    }
+                    saveMeta(task);
+                }
+                return true;
+            }
+
+            // Check if already terminal via lifecycle
+            lc = lifecycles.get(taskId);
+            if (lc != null && lc.isTerminal()) {
+                // Already terminal but not KILLED — try kill-wins override (pre-persist)
+                if (lc.tryTransitionToKilled()) {
+                    Task task = runner.getTask(taskId);
+                    if (task == null) task = getTaskFromDisk(taskId);
+                    if (task != null) {
+                        syncStatusFromLifecycle(task);
+                        task.alive = false;
+                        if (task.endTime == null) {
+                            task.endTime = Long.valueOf(System.currentTimeMillis());
+                        }
+                        saveMeta(task);
+                    }
+                    return true;
+                }
+                // persisted terminal — can't override
+                return lc.getTerminalState() == TaskTerminalState.KILLED;
+            }
+
+            // Fallback: disk-loaded task (restored by init() after restart)
+            Task task = getTaskFromDisk(taskId);
+            if (task == null || !task.alive) {
+                // Check if disk task is already killed
+                if (task != null) {
+                    lc = lifecycles.get(taskId);
+                    if (lc != null && lc.getTerminalState() == TaskTerminalState.KILLED) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            if (task.pid > 0) {
+                terminateRestoredTask(task);
+            }
+
+            lc = lifecycles.get(taskId);
+            if (lc == null) {
+                lc = TaskLifecycle.normalizeFromRunner(task);
+                lifecycles.put(taskId, lc);
+            }
+            lc.tryTransitionToKilled();
+            syncStatusFromLifecycle(task);
+            task.alive = false;
+            task.exitCode = Integer.valueOf(-9);
+            task.endTime = Long.valueOf(System.currentTimeMillis());
+            saveMeta(task);
             return true;
-        }
-
-        // Fallback: disk-loaded task (restored by init() after restart)
-        Task task = getTaskFromDisk(taskId);
-        if (task == null || !task.alive) {
-            return false;
-        }
-
-        if (task.pid > 0) {
-            terminateRestoredTask(task);
-        }
-
-        task.status = TaskStatus.KILLED;
-        task.alive = false;
-        task.exitCode = Integer.valueOf(-9);
-        task.endTime = Long.valueOf(System.currentTimeMillis());
-        saveMeta(task);
-        return true;
+        });
     }
 
     @Override
@@ -186,16 +324,27 @@ public class ManagedTaskEngine implements TaskRunner {
         // Try in-memory first
         TaskObservation obs = runner.observe(taskId);
         if (obs != null) {
+            Task task = runner.getTask(taskId);
+            if (task != null) {
+                TaskLifecycle lc = lifecycles.get(taskId);
+                if (lc != null) {
+                    ensureLifecycleSynced(task);
+                    return toObservation(task);
+                }
+            }
             return obs;
         }
         // Fallback to disk
         Task task = getTask(taskId);
         if (task == null) return null;
-        TaskStatus before = task.status;
-        refreshDiskTask(task);
-        if (task.status != before) {
-            saveMeta(task);
-        }
+        withTaskLockVoid(taskId, () -> {
+            String before = deriveLegacyStatusForTask(task);
+            refreshDiskTask(task);
+            String after = deriveLegacyStatusForTask(task);
+            if (!equalsValue(before, after)) {
+                saveMeta(task);
+            }
+        });
         return toObservation(task);
     }
 
@@ -251,7 +400,8 @@ public class ManagedTaskEngine implements TaskRunner {
     public Integer getExitCode(String taskId) {
         Task inMemory = runner.getTask(taskId);
         if (inMemory != null) {
-            return runner.getExitCode(taskId);
+            ensureLifecycleSynced(inMemory);
+            return inMemory.exitCode;
         }
         Task task = getTaskFromDisk(taskId);
         if (task == null) return null;
@@ -262,15 +412,33 @@ public class ManagedTaskEngine implements TaskRunner {
     public Map<String, Object> getStatusMap(String taskId) {
         Task inMemory = runner.getTask(taskId);
         if (inMemory != null) {
+            TaskLifecycle lc = lifecycles.get(taskId);
+            if (lc != null) {
+                ensureLifecycleSynced(inMemory);
+                TaskObservation observation = toObservation(inMemory);
+                Map<String, Object> map = observation.toMap();
+                map.put("runId", inMemory.runId);
+                map.put("threadId", inMemory.threadId);
+                map.put("threadName", inMemory.threadName);
+                map.put("pid", Integer.valueOf(inMemory.pid));
+                map.put("pgid", Integer.valueOf(inMemory.pgid));
+                map.put("exitCode", inMemory.exitCode);
+                map.put("cwd", inMemory.cwd);
+                map.put("hostInstanceId", inMemory.hostInstanceId);
+                return map;
+            }
             return runner.getStatusMap(taskId);
         }
         Task task = getTaskFromDisk(taskId);
         if (task == null) return null;
-        TaskStatus before = task.status;
-        refreshDiskTask(task);
-        if (task.status != before) {
-            saveMeta(task);
-        }
+        withTaskLockVoid(taskId, () -> {
+            String before = deriveLegacyStatusForTask(task);
+            refreshDiskTask(task);
+            String after = deriveLegacyStatusForTask(task);
+            if (!equalsValue(before, after)) {
+                saveMeta(task);
+            }
+        });
         TaskObservation observation = toObservation(task);
         Map<String, Object> map = observation.toMap();
         map.put("runId", task.runId);
@@ -294,65 +462,63 @@ public class ManagedTaskEngine implements TaskRunner {
     public void init() {
         for (Task task : loadAllTasks()) {
             if (!isTransientStatus(task.status)) {
+                // For terminal tasks loaded from disk, restore lifecycle
+                TaskLifecycle lc = lifecycles.get(task.taskId);
+                if (lc == null) {
+                    lc = TaskLifecycle.normalizeFromRunner(task);
+                    lc.markPersisted();
+                    lifecycles.put(task.taskId, lc);
+                }
                 continue;
             }
 
-            refreshOutputTimestamps(task);
+            withTaskLockVoid(task.taskId, () -> {
+                refreshOutputTimestamps(task);
 
-            if (task.pid > 0) {
-                java.util.Optional<ProcessHandle> handleOpt = ProcessHandle.of(task.pid);
-                if (handleOpt.isPresent()) {
-                    ProcessHandle handle = handleOpt.get();
-                    if (handle.isAlive()) {
-                        java.util.Optional<Instant> startInstantOpt = handle.info().startInstant();
-                        if (startInstantOpt.isPresent()) {
+                // Ensure lifecycle exists (migrate if needed)
+                TaskLifecycle lc = lifecycles.get(task.taskId);
+                if (lc == null) {
+                    lc = TaskLifecycle.normalizeFromRunner(task);
+                    lifecycles.put(task.taskId, lc);
+                }
+
+                if (task.pid > 0) {
+                    java.util.Optional<ProcessHandle> handleOpt = ProcessHandle.of(task.pid);
+                    if (handleOpt.isPresent() && handleOpt.get().isAlive()) {
+                        // Process is alive — verify identity via pidStartTime
+                        java.util.Optional<Instant> startInstantOpt = handleOpt.get().info().startInstant();
+                        if (startInstantOpt.isPresent() && task.pidStartTime > 0) {
                             long currentStartMs = startInstantOpt.get().toEpochMilli();
-                            if (task.pidStartTime > 0 && Math.abs(currentStartMs - task.pidStartTime) < 1000) {
-                                // startInstant matches
-                                if (task.hostInstanceId != null && task.hostInstanceId.equals(hostInstanceId)) {
-                                    task.status = TaskStatus.RUNNING;
-                                } else {
-                                    task.status = TaskStatus.DETACHED;
-                                }
+                            if (Math.abs(currentStartMs - task.pidStartTime) < 1000) {
+                                // Identity confirmed
+                                syncStatusFromLifecycle(task);
                                 task.alive = true;
                             } else {
-                                // startInstant mismatch -- PID reuse detected
-                                task.status = TaskStatus.LOST;
+                                // PID reuse detected
+                                lc.tryTransitionToLost(TaskLossReason.PID_REUSED);
+                                syncStatusFromLifecycle(task);
                                 task.alive = false;
                                 if (task.endTime == null) {
                                     task.endTime = Long.valueOf(System.currentTimeMillis());
                                 }
                             }
                         } else {
-                            // startInstant unavailable but process alive
-                            if (task.hostInstanceId != null && task.hostInstanceId.equals(hostInstanceId)) {
-                                task.status = TaskStatus.RUNNING;
-                                task.alive = true;
-                            } else if (task.hostInstanceId != null) {
-                                task.status = TaskStatus.DETACHED;
-                                task.alive = true;
-                            } else {
-                                // no hostInstanceId recorded
-                                task.status = TaskStatus.LOST;
-                                task.alive = false;
-                                if (task.endTime == null) {
-                                    task.endTime = Long.valueOf(System.currentTimeMillis());
-                                }
-                            }
+                            // pidStartTime absent or startInstant unavailable — cannot verify identity,
+                            // but process is alive. Treat as RUNNING (unverified) rather than LOST,
+                            // since false-LOST (losing visibility) is costlier than false-RUNNING.
+                            syncStatusFromLifecycle(task);
+                            task.alive = true;
                         }
                     } else {
                         // Process dead
                         finalizeExitedTask(task);
                     }
                 } else {
-                    // ProcessHandle not found -- process dead
+                    // No PID recorded
                     finalizeExitedTask(task);
                 }
-            } else {
-                // No PID recorded
-                finalizeExitedTask(task);
-            }
-            saveMeta(task);
+                saveMeta(task);
+            });
         }
     }
 
@@ -386,11 +552,14 @@ public class ManagedTaskEngine implements TaskRunner {
             }
             // Refresh disk-loaded tasks that may have stale status
             if (runner.getTask(entry.taskId) == null) {
-                TaskStatus before = task.status;
-                refreshDiskTask(task);
-                if (task.status != before) {
-                    saveMeta(task);
-                }
+                withTaskLockVoid(entry.taskId, () -> {
+                    String before = deriveLegacyStatusForTask(task);
+                    refreshDiskTask(task);
+                    String after = deriveLegacyStatusForTask(task);
+                    if (!equalsValue(before, after)) {
+                        saveMeta(task);
+                    }
+                });
             }
             tasks.add(task);
         }
@@ -399,10 +568,6 @@ public class ManagedTaskEngine implements TaskRunner {
 
     public List<Task> listTasks() {
         return queryTasks(null, null, 0, -1);
-    }
-
-    public List<Task> listDetachedTasks() {
-        return queryTasks(null, "detached", 0, -1);
     }
 
     public int killRun(String runId) {
@@ -547,10 +712,19 @@ public class ManagedTaskEngine implements TaskRunner {
             File taskDir = new File(tasksDir, "task-" + task.taskId);
             task.bindFiles(taskDir);
         }
+        // Mark persisted before writing so the JSON on disk reflects the true state.
+        // If the write fails we throw RuntimeException, so a stale in-memory flag
+        // is the safer direction (blocks kill-wins rather than allowing it).
+        TaskLifecycle lc = lifecycles.get(task.taskId);
+        if (lc != null && lc.isTerminal() && !lc.isPersisted()) {
+            lc.markPersisted();
+        }
         Writer writer = null;
         try {
             writer = new OutputStreamWriter(new FileOutputStream(task.metaFile), "UTF-8");
-            gson.toJson(task, writer);
+            JsonObject obj = gson.toJsonTree(task).getAsJsonObject();
+            if (lc != null) lc.writeToJson(obj);
+            gson.toJson(obj, writer);
         } catch (IOException e) {
             throw new RuntimeException("Failed to write task metadata: " + e.getMessage(), e);
         } finally {
@@ -565,7 +739,7 @@ public class ManagedTaskEngine implements TaskRunner {
         }
         synchronized (indexLock) {
             List<TaskIndexEntry> entries = loadTaskIndexEntriesLocked();
-            TaskIndexEntry updated = TaskIndexEntry.fromTask(task);
+            TaskIndexEntry updated = TaskIndexEntry.fromTask(task, lifecycles.get(task.taskId));
             boolean replaced = false;
             for (int i = 0; i < entries.size(); i++) {
                 if (equalsValue(entries.get(i).taskId, task.taskId)) {
@@ -634,7 +808,7 @@ public class ManagedTaskEngine implements TaskRunner {
     private List<TaskIndexEntry> rebuildTaskIndexLocked() {
         List<TaskIndexEntry> entries = new ArrayList<>();
         for (Task task : loadAllTasks()) {
-            entries.add(TaskIndexEntry.fromTask(task));
+            entries.add(TaskIndexEntry.fromTask(task, lifecycles.get(task.taskId)));
         }
         sortTaskIndexEntries(entries);
         writeTaskIndexLocked(entries);
@@ -732,6 +906,29 @@ public class ManagedTaskEngine implements TaskRunner {
             if (!metaFile.exists() && archiveFile.exists()) {
                 task.archived = true;
             }
+            // Parse lifecycle from JSON (if present) or migrate from task status
+            try {
+                JsonObject obj = gson.fromJson(json, JsonObject.class);
+                TaskLifecycle lc = TaskLifecycle.readFromJson(obj);
+                if (lc != null) {
+                    lifecycles.put(task.taskId, lc);
+                } else if (!lifecycles.containsKey(task.taskId)) {
+                    lc = TaskLifecycle.normalizeFromRunner(task);
+                    if (!isTransientStatus(task.status)) {
+                        lc.markPersisted();
+                    }
+                    lifecycles.put(task.taskId, lc);
+                }
+            } catch (Exception e) {
+                // best-effort lifecycle parse
+                if (!lifecycles.containsKey(task.taskId)) {
+                    TaskLifecycle lc = TaskLifecycle.normalizeFromRunner(task);
+                    if (!isTransientStatus(task.status)) {
+                        lc.markPersisted();
+                    }
+                    lifecycles.put(task.taskId, lc);
+                }
+            }
             return task;
         } catch (Exception e) {
             return null;
@@ -761,7 +958,10 @@ public class ManagedTaskEngine implements TaskRunner {
         Writer writer = null;
         try {
             writer = new OutputStreamWriter(new FileOutputStream(task.archiveFile), "UTF-8");
-            gson.toJson(task, writer);
+            JsonObject obj = gson.toJsonTree(task).getAsJsonObject();
+            TaskLifecycle lc = lifecycles.get(task.taskId);
+            if (lc != null) lc.writeToJson(obj);
+            gson.toJson(obj, writer);
         } catch (IOException e) {
             throw new RuntimeException("Failed to archive task " + task.taskId + ": " + e.getMessage(), e);
         } finally {
@@ -782,6 +982,8 @@ public class ManagedTaskEngine implements TaskRunner {
             return;
         }
         removeTaskIndex(task.taskId);
+        lifecycles.remove(task.taskId);
+        taskLocks.remove(task.taskId);
         deleteQuietly(task.archiveFile);
         deleteQuietly(task.metaFile);
         deleteQuietly(task.stdoutFile);
@@ -795,6 +997,11 @@ public class ManagedTaskEngine implements TaskRunner {
     // ---- Task refresh for disk-loaded tasks ----
 
     private void refreshDiskTask(Task task) {
+        TaskLifecycle lc = lifecycles.get(task.taskId);
+        if (lc != null && lc.isTerminal()) {
+            syncStatusFromLifecycle(task);
+            return;
+        }
         if (!task.alive && task.status != TaskStatus.STARTING && task.status != TaskStatus.RUNNING) {
             return;
         }
@@ -804,7 +1011,9 @@ public class ManagedTaskEngine implements TaskRunner {
             java.util.Optional<ProcessHandle> handleOpt = ProcessHandle.of(task.pid);
             if (handleOpt.isPresent() && handleOpt.get().isAlive()) {
                 task.alive = true;
-                if (task.status == TaskStatus.STARTING) {
+                if (lc != null) {
+                    syncStatusFromLifecycle(task);
+                } else {
                     task.status = TaskStatus.RUNNING;
                 }
                 return;
@@ -814,14 +1023,71 @@ public class ManagedTaskEngine implements TaskRunner {
         finalizeExitedTask(task);
     }
 
+    /**
+     * Sync lifecycle for an in-memory task whose runner has already finalized it
+     * (alive=false, exitCode/status set). Unlike finalizeExitedTask(), does not
+     * try to read exit code from disk — the runner already has the authoritative state.
+     */
+    /**
+     * Sync lifecycle for an in-memory task whose runner has already finalized it
+     * (alive=false, status/exitCode set). The runner's status is authoritative
+     * for in-memory tasks since it manages the process directly.
+     */
+    private void finalizeInMemoryTask(Task task) {
+        TaskLifecycle lc = lifecycles.get(task.taskId);
+        if (lc == null) {
+            lc = TaskLifecycle.normalizeFromRunner(task);
+            lifecycles.put(task.taskId, lc);
+            return;
+        }
+        if (lc.isTerminal()) {
+            syncStatusFromLifecycle(task);
+            return;
+        }
+        if (task.endTime == null) {
+            task.endTime = Long.valueOf(System.currentTimeMillis());
+        }
+        // The runner has already determined the terminal status — use it directly.
+        // For LOST, attempt exit code recovery with a grace period before accepting.
+        if (task.status == TaskStatus.COMPLETED) {
+            lc.tryTransitionToCompleted();
+        } else if (task.status == TaskStatus.FAILED) {
+            lc.tryTransitionToFailed();
+        } else if (task.status == TaskStatus.KILLED) {
+            lc.tryTransitionToKilled();
+        } else {
+            // Runner returned LOST or unknown — try to read exit code ourselves
+            Integer exitCode = task.exitCode;
+            if (exitCode == null) {
+                exitCode = readExitCodeWithGrace(task, 500L);
+                if (exitCode != null) {
+                    task.exitCode = exitCode;
+                }
+            }
+            if (exitCode != null) {
+                if (exitCode.intValue() == 0) {
+                    lc.tryTransitionToCompleted();
+                } else {
+                    lc.tryTransitionToFailed();
+                }
+            } else {
+                lc.tryTransitionToLost(TaskLossReason.PROCESS_MISSING);
+            }
+        }
+        syncStatusFromLifecycle(task);
+    }
+
     private void finalizeExitedTask(Task task) {
         task.alive = false;
         refreshOutputTimestamps(task);
 
-        if (task.status == TaskStatus.KILLED) {
+        TaskLifecycle lc = lifecycles.get(task.taskId);
+        if (lc != null && lc.isTerminal()) {
+            // Already terminal (e.g. KILLED) — preserve
             if (task.endTime == null) {
                 task.endTime = Long.valueOf(System.currentTimeMillis());
             }
+            syncStatusFromLifecycle(task);
             return;
         }
 
@@ -831,14 +1097,28 @@ public class ManagedTaskEngine implements TaskRunner {
             if (task.endTime == null) {
                 task.endTime = Long.valueOf(System.currentTimeMillis());
             }
-            task.status = exitCode.intValue() == 0 ? TaskStatus.COMPLETED : TaskStatus.FAILED;
+            if (lc != null) {
+                if (exitCode.intValue() == 0) {
+                    lc.tryTransitionToCompleted();
+                } else {
+                    lc.tryTransitionToFailed();
+                }
+                syncStatusFromLifecycle(task);
+            } else {
+                task.status = exitCode.intValue() == 0 ? TaskStatus.COMPLETED : TaskStatus.FAILED;
+            }
             return;
         }
 
         if (task.endTime == null) {
             task.endTime = Long.valueOf(System.currentTimeMillis());
         }
-        task.status = TaskStatus.LOST;
+        if (lc != null) {
+            lc.tryTransitionToLost(TaskLossReason.PROCESS_MISSING);
+            syncStatusFromLifecycle(task);
+        } else {
+            task.status = TaskStatus.LOST;
+        }
     }
 
     private void refreshOutputTimestamps(Task task) {
@@ -883,7 +1163,10 @@ public class ManagedTaskEngine implements TaskRunner {
     private TaskObservation toObservation(Task task) {
         TaskObservation observation = new TaskObservation();
         observation.taskId = task.taskId;
-        observation.status = task.status != null ? task.status.value() : null;
+        // Use lifecycle-derived status when available
+        TaskLifecycle lc = lifecycles.get(task.taskId);
+        observation.status = lc != null ? lc.deriveLegacyStatus()
+                : (task.status != null ? task.status.value() : null);
         observation.alive = task.alive;
         observation.elapsedMs = (task.endTime != null ? task.endTime.longValue() : System.currentTimeMillis()) - task.startTime;
         observation.lastStdoutAt = task.lastStdoutAt;
@@ -894,7 +1177,9 @@ public class ManagedTaskEngine implements TaskRunner {
         if (observation.timeoutExceeded) {
             observation.healthHints.add("TIMEOUT_EXCEEDED");
         }
-        if (task.status == TaskStatus.LOST) {
+        if (lc != null && lc.getTerminalState() == TaskTerminalState.LOST) {
+            observation.healthHints.add("PROCESS_NOT_FOUND");
+        } else if (lc == null && task.status == TaskStatus.LOST) {
             observation.healthHints.add("PROCESS_NOT_FOUND");
         }
         if (task.alive && task.pidStartTime <= 0) {
@@ -931,6 +1216,12 @@ public class ManagedTaskEngine implements TaskRunner {
 
     private boolean isTransientStatus(TaskStatus status) {
         return status != null && status.isTransient();
+    }
+
+    private String deriveLegacyStatusForTask(Task task) {
+        TaskLifecycle lc = lifecycles.get(task.taskId);
+        if (lc != null) return lc.deriveLegacyStatus();
+        return task.status != null ? task.status.value() : null;
     }
 
     private boolean equalsValue(String a, String b) {
@@ -1031,11 +1322,12 @@ public class ManagedTaskEngine implements TaskRunner {
         Long endTime;
         boolean archived;
 
-        static TaskIndexEntry fromTask(Task task) {
+        static TaskIndexEntry fromTask(Task task, TaskLifecycle lifecycle) {
             TaskIndexEntry entry = new TaskIndexEntry();
             entry.taskId = task.taskId;
             entry.runId = task.runId;
-            entry.status = task.status != null ? task.status.value() : null;
+            entry.status = lifecycle != null ? lifecycle.deriveLegacyStatus()
+                    : (task.status != null ? task.status.value() : null);
             entry.startTime = task.startTime;
             entry.endTime = task.endTime;
             entry.archived = task.archived;

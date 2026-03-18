@@ -5,6 +5,7 @@ import com.propertee.scheduler.ThreadContext;
 import com.propertee.task.Task;
 import com.propertee.task.TaskInfo;
 import com.propertee.task.TaskObservation;
+import com.propertee.teebox.lifecycle.TaskLifecycle;
 
 import java.io.File;
 import java.io.IOException;
@@ -150,10 +151,6 @@ public class RunManager {
 
     public List<TaskInfo> listAllTasks() {
         return listTasks(null, null, 0, -1);
-    }
-
-    public List<TaskInfo> listDetachedTasks() {
-        return listTasks(null, "detached", 0, -1);
     }
 
     public List<TaskInfo> listTasks(String runId, String status, int offset, int limit) {
@@ -422,7 +419,7 @@ public class RunManager {
 
     private TaskInfo toInfo(Task task) {
         TaskObservation obs = managedTaskEngine.observe(task.taskId);
-        TaskInfo info = new TaskInfo();
+        TeeBoxTaskInfo info = new TeeBoxTaskInfo();
         info.taskId = task.taskId;
         info.runId = task.runId;
         info.threadId = task.threadId;
@@ -442,6 +439,12 @@ public class RunManager {
         info.cwd = task.cwd;
         info.hostInstanceId = task.hostInstanceId;
         info.healthHints = obs != null ? obs.healthHints : new ArrayList<String>();
+        // Populate lifecycle fields
+        TaskLifecycle lc = managedTaskEngine.getLifecycle(task.taskId);
+        if (lc != null) {
+            info.phase = lc.getPhase() != null ? lc.getPhase().name() : null;
+            info.lossReason = lc.getLossReason() != null ? lc.getLossReason().name() : null;
+        }
         return info;
     }
 

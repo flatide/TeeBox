@@ -105,6 +105,40 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void serverShouldKeepKilledStatusAfterRepeatedKillRequests() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("kill_task_repeat", "v1",
+                "taskId = START_TASK(\"sleep 30\")\n" +
+                "result = WAIT_TASK(taskId, 60000)\n" +
+                "PRINT(result.status)\n",
+                "repeat kill task test", Arrays.asList("test"), true);
+
+            String runId = (String) client.submitRun("kill_task_repeat", null, new LinkedHashMap<String, Object>()).get("runId");
+            Assert.assertNotNull(runId);
+
+            Map<String, Object> detail = waitForRunWithTasks(testServer.baseUrl, runId, 1, 1, 8000L);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> tasks = (List<Map<String, Object>>) detail.get("tasks");
+            String taskId = (String) tasks.get(0).get("taskId");
+
+            Map<String, Object> firstKillResult = postJson(testServer.baseUrl + "/api/admin/tasks/" + taskId + "/kill", new LinkedHashMap<String, Object>(), 200);
+            Assert.assertEquals(Boolean.TRUE, firstKillResult.get("killed"));
+
+            Map<String, Object> secondKillResult = postJson(testServer.baseUrl + "/api/admin/tasks/" + taskId + "/kill", new LinkedHashMap<String, Object>(), 200);
+            Assert.assertEquals(Boolean.TRUE, secondKillResult.get("killed"));
+
+            Map<String, Object> taskDetail = waitForTaskStatus(testServer.baseUrl, taskId, "killed", 8000L);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> taskInfo = (Map<String, Object>) taskDetail.get("task");
+            Assert.assertEquals("killed", taskInfo.get("status"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void serverShouldExposeStructuredResultContract() throws Exception {
         TestServer testServer = createServer();
         try {
@@ -335,10 +369,8 @@ public class TeeBoxServerTest {
             Map<String, Object> filteredTasks = getJsonMap(testServer.baseUrl + "/api/admin/tasks?runId=" + runA + "&status=completed&offset=0&limit=1", 200);
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> tasks = (List<Map<String, Object>>) filteredTasks.get("tasks");
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> detached = (List<Map<String, Object>>) filteredTasks.get("detached");
             Assert.assertEquals(1, tasks.size());
-            Assert.assertTrue(detached.isEmpty());
+            Assert.assertNull("detached field should no longer exist", filteredTasks.get("detached"));
             Assert.assertEquals(runA, tasks.get(0).get("runId"));
             Assert.assertEquals("completed", tasks.get(0).get("status"));
         } finally {

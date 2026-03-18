@@ -351,7 +351,7 @@ paths:
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
-          description: Tasks and detached tasks
+          description: Tasks list
           content:
             application/json:
               schema:
@@ -361,11 +361,6 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/TaskInfo'
-                  detached:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/TaskInfo'
-                    description: Detached tasks (only included when no filters applied)
 
   /api/admin/tasks/{taskId}:
     get:
@@ -933,7 +928,7 @@ components:
           type: integer
         status:
           type: string
-          description: "One of: starting, running, completed, failed, killed, detached, lost"
+          description: "One of: running, completed, failed, killed, lost"
         alive:
           type: boolean
         archived:

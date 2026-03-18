@@ -25,10 +25,11 @@ public class AdminPageRenderer {
         sb.append("<div class='top-nav-links'>");
         sb.append("<a href='/admin' class='top-nav-link").append("dashboard".equals(activePage) ? " active" : "").append("'>Dashboard</a>");
         sb.append("<a href='/admin/scripts' class='top-nav-link").append("scripts".equals(activePage) ? " active" : "").append("'>Scripts</a>");
+        sb.append("<a href='/admin/runs' class='top-nav-link").append("runs".equals(activePage) ? " active" : "").append("'>Runs</a>");
         sb.append("<a href='/health' class='top-nav-link'>Health</a>");
         sb.append("<a href='/api/admin/system' class='top-nav-link'>System API</a>");
         sb.append("</div>");
-        sb.append("<div class='top-nav-meta'>");
+        sb.append("<div class='top-nav-meta' id='nav-counts'>");
         sb.append("<span class='tag tag-nav'>active ").append(runManager.getActiveCount()).append("</span> ");
         sb.append("<span class='tag tag-nav'>queued ").append(runManager.getQueuedCount()).append("</span>");
         sb.append("</div>");
@@ -37,55 +38,207 @@ public class AdminPageRenderer {
     }
 
     public String renderIndexPage() {
-        List<RunInfo> runs = runManager.listRuns();
-        List<TaskInfo> detached = runManager.listDetachedTasks();
+        List<RunInfo> running = runManager.listRuns("RUNNING", 0, -1);
+        List<RunInfo> queued = runManager.listRuns("QUEUED", 0, -1);
+        List<RunInfo> activeRuns = new java.util.ArrayList<RunInfo>(running);
+        activeRuns.addAll(queued);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("TeeBox Admin"));
         sb.append(renderTopNav("dashboard"));
 
         sb.append("<div class='card'>");
-        sb.append("<div class='card-header'><h2>Runs</h2>");
-        sb.append("<div class='card-actions'><a href='/api/admin/runs' class='link-subtle'>Runs API</a> <a href='/api/admin/tasks' class='link-subtle'>Tasks API</a></div></div>");
-        if (runs.isEmpty()) {
-            sb.append("<p class='empty'>No runs yet</p>");
-        } else {
-            sb.append("<div class='table-wrap'><table><thead><tr><th>Run ID</th><th>Script</th><th>Status</th><th>Created</th><th>Duration</th><th>Threads</th><th>Tasks</th></tr></thead><tbody>");
-            for (RunInfo run : runs) {
-                sb.append("<tr>");
-                sb.append("<td><a href='/admin/runs/").append(urlPath(run.runId)).append("' class='mono'>").append(escape(run.runId)).append("</a>");
-                if (run.archived) {
-                    sb.append(" <span class='dim'>[archived]</span>");
-                }
-                sb.append("</td>");
-                sb.append("<td class='mono'>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? " <span class='dim'>@" + escape(run.version) + "</span>" : "").append("</td>");
-                sb.append("<td>").append(statusBadge(run.status != null ? run.status.name() : "UNKNOWN")).append("</td>");
-                sb.append("<td class='dim'>").append(escape(formatTime(run.createdAt))).append("</td>");
-                sb.append("<td class='dim'>").append(formatDuration(run.startedAt, run.endedAt)).append("</td>");
-                sb.append("<td class='center'>").append(run.threads != null ? run.threads.size() : 0).append("</td>");
-                sb.append("<td class='center'>").append(runManager.listTasksForRun(run.runId).size()).append("</td>");
-                sb.append("</tr>");
-            }
-            sb.append("</tbody></table></div>");
-        }
+        sb.append("<div class='card-header'><h2>Active Runs</h2>");
+        sb.append("<div class='card-actions'>");
+        sb.append("<a href='/admin/runs' class='link-subtle'>View All Runs</a> ");
+        sb.append("<button class='btn-refresh' onclick='refreshRuns()'>Refresh</button>");
+        sb.append("</div></div>");
+        sb.append("<div id='dashboard-runs-content'>");
+        sb.append(renderRunsTableFragment(activeRuns));
         sb.append("</div>");
-
-        if (!detached.isEmpty()) {
-            sb.append("<div class='card'>");
-            sb.append("<h2>Detached Tasks</h2>");
-            sb.append(renderTaskTable(detached, false));
-            sb.append("</div>");
-        }
+        sb.append("</div>");
 
         SystemInfo sysInfo = runManager.getSystemInfo();
         if (sysInfo != null) {
-            sb.append(renderSystemInfoCard(sysInfo));
+            sb.append("<div class='card'>");
+            sb.append("<div class='card-header'><h2>System Info</h2>");
+            sb.append("<div class='card-actions'><a href='/api/admin/system' class='link-subtle'>JSON</a> ");
+            sb.append("<button class='btn-refresh' onclick='refreshSystemInfo()'>Refresh</button>");
+            sb.append("</div></div>");
+            sb.append("<div id='dashboard-sysinfo-content'>");
+            sb.append(renderSystemInfoFragment());
+            sb.append("</div>");
+            sb.append("</div>");
         }
 
         sb.append("<div class='footer'>");
+        sb.append("<label class='auto-toggle'><input type='checkbox' id='auto-refresh-toggle'/> Auto-refresh</label> ");
         sb.append("<span class='dim'>dataDir: ").append(escape(config.dataDir.getAbsolutePath())).append("</span>");
         sb.append("</div>");
 
-        sb.append(pageEnd(true));
+        sb.append(pageEnd(false));
+        sb.append("<script>");
+        sb.append("(function(){");
+        sb.append("function fetchFragment(url,targetId){");
+        sb.append("var xhr=new XMLHttpRequest();");
+        sb.append("xhr.open('GET',url,true);");
+        sb.append("xhr.onreadystatechange=function(){");
+        sb.append("if(xhr.readyState===4&&xhr.status===200){");
+        sb.append("var el=document.getElementById(targetId);");
+        sb.append("if(el)el.innerHTML=xhr.responseText;");
+        sb.append("}};xhr.send();}");
+        sb.append("window.refreshRuns=function(){");
+        sb.append("fetchFragment('/admin/fragments/dashboard-runs','dashboard-runs-content');");
+        sb.append("fetchFragment('/admin/fragments/nav-counts','nav-counts');");
+        sb.append("};");
+        sb.append("window.refreshSystemInfo=function(){");
+        sb.append("fetchFragment('/admin/fragments/dashboard-sysinfo','dashboard-sysinfo-content');");
+        sb.append("};");
+        sb.append("var interval=null;");
+        sb.append("var toggle=document.getElementById('auto-refresh-toggle');");
+        sb.append("if(toggle){toggle.addEventListener('change',function(){");
+        sb.append("if(this.checked){interval=setInterval(function(){refreshRuns();refreshSystemInfo();},5000);}");
+        sb.append("else{if(interval)clearInterval(interval);interval=null;}");
+        sb.append("});}");
+        sb.append("})();");
+        sb.append("</script></body></html>");
+        return sb.toString();
+    }
+
+    public String renderRunsTableFragment(List<RunInfo> runs) {
+        if (runs.isEmpty()) {
+            return "<p class='empty'>No runs</p>";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("<div class='table-wrap'><table><thead><tr><th>Run ID</th><th>Script</th><th>Status</th><th>Created</th><th>Duration</th><th>Threads</th><th>Tasks</th></tr></thead><tbody>");
+        for (RunInfo run : runs) {
+            sb.append("<tr>");
+            sb.append("<td><a href='/admin/runs/").append(urlPath(run.runId)).append("' class='mono'>").append(escape(run.runId)).append("</a>");
+            if (run.archived) {
+                sb.append(" <span class='dim'>[archived]</span>");
+            }
+            sb.append("</td>");
+            sb.append("<td class='mono'>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? " <span class='dim'>@" + escape(run.version) + "</span>" : "").append("</td>");
+            sb.append("<td>").append(statusBadge(run.status != null ? run.status.name() : "UNKNOWN")).append("</td>");
+            sb.append("<td class='dim'>").append(escape(formatTime(run.createdAt))).append("</td>");
+            sb.append("<td class='dim'>").append(formatDuration(run.startedAt, run.endedAt)).append("</td>");
+            sb.append("<td class='center'>").append(run.threads != null ? run.threads.size() : 0).append("</td>");
+            sb.append("<td class='center'>").append(runManager.listTasksForRun(run.runId).size()).append("</td>");
+            sb.append("</tr>");
+        }
+        sb.append("</tbody></table></div>");
+        return sb.toString();
+    }
+
+    public String renderSystemInfoFragment() {
+        SystemInfo info = runManager.getSystemInfo();
+        if (info == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("<div class='sys-section'><div class='sys-section-title'>JVM</div>");
+        sb.append("<div class='detail-grid'>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Java</div><div class='detail-value'>").append(escape(info.javaVersion)).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Vendor</div><div class='detail-value'>").append(escape(info.javaVendor)).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>OS</div><div class='detail-value'>").append(escape(info.osName)).append(" ").append(escape(info.osArch)).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>CPUs</div><div class='detail-value'>").append(info.availableProcessors).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Uptime</div><div class='detail-value'>").append(formatUptime(info.uptimeMs)).append("</div></div>");
+        sb.append("</div></div>");
+
+        sb.append("<div class='sys-section'><div class='sys-section-title'>Memory</div>");
+        sb.append("<div class='detail-grid'>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Heap</div><div class='detail-value'>")
+            .append(formatBytes(info.heapUsed)).append(" / ").append(formatBytes(info.heapMax))
+            .append("</div>").append(renderUsageBar(info.heapUsed, info.heapMax)).append("</div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Non-Heap</div><div class='detail-value'>")
+            .append(formatBytes(info.nonHeapUsed)).append(" / ").append(formatBytes(info.nonHeapCommitted))
+            .append("</div></div>");
+        sb.append("</div></div>");
+
+        long diskUsed = info.diskTotal - info.diskFree;
+        sb.append("<div class='sys-section'><div class='sys-section-title'>Disk</div>");
+        sb.append("<div class='detail-grid'>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Partition</div><div class='detail-value'>")
+            .append(formatBytes(diskUsed)).append(" used / ").append(formatBytes(info.diskTotal)).append(" total")
+            .append("</div>").append(renderUsageBar(diskUsed, info.diskTotal)).append("</div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Free</div><div class='detail-value'>")
+            .append(formatBytes(info.diskFree)).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Usable</div><div class='detail-value'>")
+            .append(formatBytes(info.diskUsable)).append("</div></div>");
+        sb.append("</div></div>");
+
+        sb.append("<div class='sys-section'><div class='sys-section-title'>Data Directories</div>");
+        sb.append("<div class='detail-grid'>");
+        sb.append("<div class='detail-item'><div class='detail-label'>runs/</div><div class='detail-value'>").append(formatBytes(info.runsDirSize)).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>tasks/</div><div class='detail-value'>").append(formatBytes(info.tasksDirSize)).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>script-registry/</div><div class='detail-value'>").append(formatBytes(info.scriptRegistryDirSize)).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Total</div><div class='detail-value'>").append(formatBytes(info.totalDataSize)).append("</div></div>");
+        sb.append("</div></div>");
+
+        sb.append("<div class='sys-section'><div class='sys-section-title'>Configuration</div>");
+        sb.append("<div class='detail-grid'>");
+        sb.append("<div class='detail-item'><div class='detail-label'>dataDir</div><div class='detail-value'><code>").append(escape(info.dataDirPath)).append("</code></div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Bind</div><div class='detail-value'>").append(escape(info.bindAddress)).append(":").append(info.port).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Max Concurrent Runs</div><div class='detail-value'>").append(info.maxConcurrentRuns).append("</div></div>");
+        sb.append("</div></div>");
+
+        return sb.toString();
+    }
+
+
+
+    public String renderNavCountsFragment() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<span class='tag tag-nav'>active ").append(runManager.getActiveCount()).append("</span> ");
+        sb.append("<span class='tag tag-nav'>queued ").append(runManager.getQueuedCount()).append("</span>");
+        return sb.toString();
+    }
+
+    public String renderRunsPage() {
+        List<RunInfo> runs = runManager.listRuns();
+        StringBuilder sb = new StringBuilder();
+        sb.append(pageStart("Runs - TeeBox Admin"));
+        sb.append(renderTopNav("runs"));
+
+        sb.append("<div class='card'>");
+        sb.append("<div class='card-header'><h2>All Runs</h2>");
+        sb.append("<div class='card-actions'>");
+        sb.append("<button class='btn-refresh' onclick='refreshRunsPage()'>Refresh</button>");
+        sb.append("</div></div>");
+        sb.append("<div class='filter-bar'>");
+        sb.append("<label style='font-size:13px;color:#64748b;'>Status:</label>");
+        sb.append("<select id='status-filter' onchange='filterRuns()'>");
+        sb.append("<option value=''>All</option>");
+        sb.append("<option value='QUEUED'>QUEUED</option>");
+        sb.append("<option value='RUNNING'>RUNNING</option>");
+        sb.append("<option value='COMPLETED'>COMPLETED</option>");
+        sb.append("<option value='FAILED'>FAILED</option>");
+        sb.append("<option value='SERVER_RESTARTED'>SERVER_RESTARTED</option>");
+        sb.append("</select></div>");
+        sb.append("<div id='runs-table-content'>");
+        sb.append(renderRunsTableFragment(runs));
+        sb.append("</div>");
+        sb.append("</div>");
+
+        sb.append(pageEnd(false));
+        sb.append("<script>");
+        sb.append("(function(){");
+        sb.append("function fetchFragment(url,targetId){");
+        sb.append("var xhr=new XMLHttpRequest();");
+        sb.append("xhr.open('GET',url,true);");
+        sb.append("xhr.onreadystatechange=function(){");
+        sb.append("if(xhr.readyState===4&&xhr.status===200){");
+        sb.append("var el=document.getElementById(targetId);");
+        sb.append("if(el)el.innerHTML=xhr.responseText;");
+        sb.append("}};xhr.send();}");
+        sb.append("window.refreshRunsPage=function(){");
+        sb.append("var status=document.getElementById('status-filter').value;");
+        sb.append("var url='/admin/fragments/all-runs'+(status?'?status='+encodeURIComponent(status):'');");
+        sb.append("fetchFragment(url,'runs-table-content');");
+        sb.append("};");
+        sb.append("window.filterRuns=window.refreshRunsPage;");
+        sb.append("})();");
+        sb.append("</script></body></html>");
         return sb.toString();
     }
 
@@ -149,7 +302,7 @@ public class AdminPageRenderer {
             sb.append("<div class='card'><h2>Stderr</h2><pre>").append(escape(stderr)).append("</pre></div>");
         }
 
-        sb.append(pageEnd(true));
+        sb.append(pageEnd(false));
         return sb.toString();
     }
 
@@ -195,6 +348,15 @@ public class AdminPageRenderer {
         sb.append("<div class='detail-item'><div class='detail-label'>Alive</div><div class='detail-value'>").append(info.alive ? statusBadge("RUNNING") : statusBadge("DONE")).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Timeout Exceeded</div><div class='detail-value'>").append(info.timeoutExceeded ? statusBadge("YES") : statusBadge("NO")).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Last Output Age</div><div class='detail-value'>").append(formatNullableElapsed(info.lastOutputAgeMs)).append("</div></div>");
+        if (info instanceof TeeBoxTaskInfo) {
+            TeeBoxTaskInfo tbInfo = (TeeBoxTaskInfo) info;
+            if (tbInfo.phase != null) {
+                sb.append("<div class='detail-item'><div class='detail-label'>Phase</div><div class='detail-value'>").append(statusBadge(tbInfo.phase)).append("</div></div>");
+            }
+            if (tbInfo.lossReason != null) {
+                sb.append("<div class='detail-item'><div class='detail-label'>Loss Reason</div><div class='detail-value'>").append(statusBadge(tbInfo.lossReason)).append("</div></div>");
+            }
+        }
         sb.append("</div>");
         sb.append("<div class='detail-grid'>");
         sb.append("<div class='detail-item'><div class='detail-label'>CWD</div><div class='detail-value'><code>").append(escape(info.cwd)).append("</code></div></div>");
@@ -216,7 +378,7 @@ public class AdminPageRenderer {
             sb.append("<div class='card'><h2>Stderr</h2><pre>").append(escape(stderrTail)).append("</pre></div>");
         }
 
-        sb.append(pageEnd(true));
+        sb.append(pageEnd(false));
         return sb.toString();
     }
 
@@ -602,6 +764,8 @@ public class AdminPageRenderer {
         sb.append(".badge-ready{background:#e0f2fe;color:#0369a1;} ");
         sb.append(".badge-sleeping{background:#fef9c3;color:#854d0e;} ");
         sb.append(".badge-lost{background:#fecaca;color:#991b1b;} ");
+        sb.append(".badge-active{background:#dbeafe;color:#1e40af;} ");
+        sb.append(".badge-terminal{background:#f1f5f9;color:#475569;} ");
         sb.append("button,.btn{padding:8px 16px;background:#2563eb;color:#fff;border:none;border-radius:6px;");
         sb.append("font-size:13px;font-weight:500;cursor:pointer;transition:background 0.15s;} ");
         sb.append("button:hover,.btn:hover{background:#1d4ed8;} ");
@@ -636,6 +800,11 @@ public class AdminPageRenderer {
         sb.append(".top-nav-link.active{background:#334155;color:#fff;} ");
         sb.append(".top-nav-meta{margin-left:auto;display:flex;gap:8px;} ");
         sb.append(".tag-nav{background:#334155;color:#94a3b8;font-size:11px;} ");
+        sb.append(".btn-refresh{background:transparent;border:1px solid #cbd5e1;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;} ");
+        sb.append(".btn-refresh:hover{background:#f1f5f9;} ");
+        sb.append(".filter-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;} ");
+        sb.append(".filter-bar select{padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;} ");
+        sb.append(".auto-toggle{font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:4px;} ");
         sb.append("</style></head><body>");
         return sb.toString();
     }
@@ -677,6 +846,8 @@ public class AdminPageRenderer {
             else if ("ready".equals(lower)) css = "badge badge-ready";
             else if ("sleeping".equals(lower)) css = "badge badge-sleeping";
             else if ("lost".equals(lower)) css = "badge badge-lost";
+            else if ("active".equals(lower)) css = "badge badge-active";
+            else if ("terminal".equals(lower)) css = "badge badge-terminal";
         }
         return "<span class='" + css + "'>" + escape(status) + "</span>";
     }

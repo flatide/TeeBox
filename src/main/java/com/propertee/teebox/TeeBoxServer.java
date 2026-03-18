@@ -134,6 +134,14 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                     return;
                 }
+                if ("GET".equals(method) && "/admin/runs".equals(path)) {
+                    writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderRunsPage());
+                    return;
+                }
+                if ("GET".equals(method) && path.startsWith("/admin/fragments/")) {
+                    handleAdminFragment(exchange, path);
+                    return;
+                }
                 if ("GET".equals(method) && path.startsWith("/admin/scripts/")) {
                     String scriptId = path.substring("/admin/scripts/".length());
                     writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderScriptPage(scriptId));
@@ -181,6 +189,35 @@ public class TeeBoxServer {
                 writeHtml(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, pageRenderer.renderErrorPage("Server error", e.getMessage()));
             }
         }
+    }
+
+    private void handleAdminFragment(HttpExchange exchange, String path) throws IOException {
+        String fragment = path.substring("/admin/fragments/".length());
+        String html;
+        if ("dashboard-runs".equals(fragment)) {
+            List<RunInfo> running = runManager.listRuns("RUNNING", 0, -1);
+            List<RunInfo> queued = runManager.listRuns("QUEUED", 0, -1);
+            List<RunInfo> active = new ArrayList<RunInfo>(running);
+            active.addAll(queued);
+            html = pageRenderer.renderRunsTableFragment(active);
+        } else if ("dashboard-sysinfo".equals(fragment)) {
+            html = pageRenderer.renderSystemInfoFragment();
+        } else if ("nav-counts".equals(fragment)) {
+            html = pageRenderer.renderNavCountsFragment();
+        } else if (fragment.startsWith("all-runs")) {
+            String status = null;
+            String rawQuery = exchange.getRequestURI().getRawQuery();
+            if (rawQuery != null) {
+                Map<String, String> query = parseQuery(exchange);
+                status = trimToNull(query.get("status"));
+            }
+            List<RunInfo> runs = runManager.listRuns(status, 0, -1);
+            html = pageRenderer.renderRunsTableFragment(runs);
+        } else {
+            writeText(exchange, HttpURLConnection.HTTP_NOT_FOUND, "Not found");
+            return;
+        }
+        writeHtml(exchange, HttpURLConnection.HTTP_OK, html);
     }
 
     private class ApiHandler implements HttpHandler {
@@ -390,13 +427,9 @@ public class TeeBoxServer {
             String status = trimToNull(query.get("status"));
             int offset = parseInt(query.get("offset"), 0);
             int limit = parseInt(query.get("limit"), -1);
+            List<TaskInfo> tasks = runManager.listTasks(runId, status, offset, limit);
             Map<String, Object> payload = new LinkedHashMap<String, Object>();
-            payload.put("tasks", runManager.listTasks(runId, status, offset, limit));
-            if (runId == null && status == null && offset == 0 && limit <= 0) {
-                payload.put("detached", runManager.listDetachedTasks());
-            } else {
-                payload.put("detached", new ArrayList<TaskInfo>());
-            }
+            payload.put("tasks", tasks);
             writeJson(exchange, HttpURLConnection.HTTP_OK, payload);
             return;
         }
