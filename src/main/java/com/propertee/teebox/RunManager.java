@@ -57,7 +57,10 @@ public class RunManager {
         long runArchiveRetentionMs = parseDurationProperty("runArchiveRetentionMs", DEFAULT_RUN_ARCHIVE_RETENTION_MS);
         this.runRegistry = new RunRegistry(this.dataDir, MAX_LOG_LINES, ARCHIVED_STDOUT_LINES, ARCHIVED_STDERR_LINES, runRetentionMs, runArchiveRetentionMs);
         this.scriptRegistry = new ScriptRegistry(this.dataDir);
-        this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId());
+        CommandGuard guard = teeBoxConfig != null
+                ? CommandGuard.fromConfig(teeBoxConfig.commandGuardMode, teeBoxConfig.commandGuardExtraPatterns, teeBoxConfig.commandGuardPatternsFile)
+                : CommandGuard.fromConfig(null, null, null);
+        this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId(), guard);
         this.managedTaskEngine.init();
         this.managedTaskEngine.archiveExpiredTasks();
         this.scriptExecutor = new ScriptExecutor();
