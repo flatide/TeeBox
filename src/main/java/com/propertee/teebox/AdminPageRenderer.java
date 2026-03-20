@@ -33,6 +33,7 @@ public class AdminPageRenderer {
         sb.append("<span class='tag tag-nav'>active ").append(runManager.getActiveCount()).append("</span> ");
         sb.append("<span class='tag tag-nav'>queued ").append(runManager.getQueuedCount()).append("</span>");
         sb.append("</div>");
+        sb.append("<label class='auto-toggle'><input type='checkbox' id='auto-refresh-toggle'/> Auto-refresh</label>");
         sb.append("</div>");
         return sb.toString();
     }
@@ -70,12 +71,6 @@ public class AdminPageRenderer {
             sb.append("</div>");
         }
 
-        sb.append("<div class='footer'>");
-        sb.append("<label class='auto-toggle'><input type='checkbox' id='auto-refresh-toggle'/> Auto-refresh</label> ");
-        sb.append("<span class='dim'>dataDir: ").append(escape(config.dataDir.getAbsolutePath())).append("</span>");
-        sb.append("</div>");
-
-        sb.append(pageEnd(false));
         sb.append("<script>");
         sb.append("(function(){");
         sb.append("function fetchFragment(url,targetId){");
@@ -93,14 +88,10 @@ public class AdminPageRenderer {
         sb.append("window.refreshSystemInfo=function(){");
         sb.append("fetchFragment('/admin/fragments/dashboard-sysinfo','dashboard-sysinfo-content');");
         sb.append("};");
-        sb.append("var interval=null;");
-        sb.append("var toggle=document.getElementById('auto-refresh-toggle');");
-        sb.append("if(toggle){toggle.addEventListener('change',function(){");
-        sb.append("if(this.checked){interval=setInterval(function(){refreshRuns();refreshSystemInfo();},5000);}");
-        sb.append("else{if(interval)clearInterval(interval);interval=null;}");
-        sb.append("});}");
+        sb.append("window.refreshPage=function(){refreshRuns();refreshSystemInfo();};");
         sb.append("})();");
-        sb.append("</script></body></html>");
+        sb.append("</script>");
+        sb.append(pageEnd());
         return sb.toString();
     }
 
@@ -220,7 +211,6 @@ public class AdminPageRenderer {
         sb.append("</div>");
         sb.append("</div>");
 
-        sb.append(pageEnd(false));
         sb.append("<script>");
         sb.append("(function(){");
         sb.append("function fetchFragment(url,targetId){");
@@ -235,10 +225,13 @@ public class AdminPageRenderer {
         sb.append("var status=document.getElementById('status-filter').value;");
         sb.append("var url='/admin/fragments/all-runs'+(status?'?status='+encodeURIComponent(status):'');");
         sb.append("fetchFragment(url,'runs-table-content');");
+        sb.append("fetchFragment('/admin/fragments/nav-counts','nav-counts');");
         sb.append("};");
         sb.append("window.filterRuns=window.refreshRunsPage;");
+        sb.append("window.refreshPage=window.refreshRunsPage;");
         sb.append("})();");
-        sb.append("</script></body></html>");
+        sb.append("</script>");
+        sb.append(pageEnd());
         return sb.toString();
     }
 
@@ -247,8 +240,6 @@ public class AdminPageRenderer {
         if (run == null) {
             return renderErrorPage("Run not found", runId);
         }
-        List<RunThreadInfo> threads = runManager.listThreads(runId);
-        List<TaskInfo> tasks = runManager.listTasksForRun(runId);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Run " + runId));
         sb.append(renderTopNav(""));
@@ -260,6 +251,37 @@ public class AdminPageRenderer {
         sb.append("<span class='nav-sep'>|</span>");
         sb.append("<a href='/api/admin/runs/").append(urlPath(runId)).append("' class='link-subtle'>JSON</a>");
         sb.append("</div>");
+
+        sb.append("<div id='run-detail-content'>");
+        sb.append(renderRunDetailFragment(runId));
+        sb.append("</div>");
+
+        sb.append("<script>");
+        sb.append("(function(){");
+        sb.append("function fetchFragment(url,targetId){");
+        sb.append("var xhr=new XMLHttpRequest();");
+        sb.append("xhr.open('GET',url,true);");
+        sb.append("xhr.onreadystatechange=function(){");
+        sb.append("if(xhr.readyState===4&&xhr.status===200){");
+        sb.append("var el=document.getElementById(targetId);");
+        sb.append("if(el)el.innerHTML=xhr.responseText;");
+        sb.append("}};xhr.send();}");
+        sb.append("window.refreshPage=function(){");
+        sb.append("fetchFragment('/admin/fragments/run-detail/").append(urlPath(runId)).append("','run-detail-content');");
+        sb.append("fetchFragment('/admin/fragments/nav-counts','nav-counts');");
+        sb.append("};");
+        sb.append("})();");
+        sb.append("</script>");
+        sb.append(pageEnd());
+        return sb.toString();
+    }
+
+    public String renderRunDetailFragment(String runId) {
+        RunInfo run = runManager.getRun(runId);
+        if (run == null) return "<p class='empty'>Run not found</p>";
+        List<RunThreadInfo> threads = runManager.listThreads(runId);
+        List<TaskInfo> tasks = runManager.listTasksForRun(runId);
+        StringBuilder sb = new StringBuilder();
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>").append(escape(runId)).append("</h2>");
@@ -301,8 +323,6 @@ public class AdminPageRenderer {
         if (stderr.length() > 0) {
             sb.append("<div class='card'><h2>Stderr</h2><pre>").append(escape(stderr)).append("</pre></div>");
         }
-
-        sb.append(pageEnd(false));
         return sb.toString();
     }
 
@@ -311,7 +331,6 @@ public class AdminPageRenderer {
         if (info == null) {
             return renderErrorPage("Task not found", taskId);
         }
-        TaskObservation obs = runManager.observeTask(taskId);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Task " + taskId));
         sb.append(renderTopNav(""));
@@ -327,6 +346,36 @@ public class AdminPageRenderer {
         sb.append("<span class='nav-sep'>|</span>");
         sb.append("<a href='/api/admin/tasks/").append(urlPath(taskId)).append("' class='link-subtle'>JSON</a>");
         sb.append("</div>");
+
+        sb.append("<div id='task-detail-content'>");
+        sb.append(renderTaskDetailFragment(taskId));
+        sb.append("</div>");
+
+        sb.append("<script>");
+        sb.append("(function(){");
+        sb.append("function fetchFragment(url,targetId){");
+        sb.append("var xhr=new XMLHttpRequest();");
+        sb.append("xhr.open('GET',url,true);");
+        sb.append("xhr.onreadystatechange=function(){");
+        sb.append("if(xhr.readyState===4&&xhr.status===200){");
+        sb.append("var el=document.getElementById(targetId);");
+        sb.append("if(el)el.innerHTML=xhr.responseText;");
+        sb.append("}};xhr.send();}");
+        sb.append("window.refreshPage=function(){");
+        sb.append("fetchFragment('/admin/fragments/task-detail/").append(urlPath(taskId)).append("','task-detail-content');");
+        sb.append("fetchFragment('/admin/fragments/nav-counts','nav-counts');");
+        sb.append("};");
+        sb.append("})();");
+        sb.append("</script>");
+        sb.append(pageEnd());
+        return sb.toString();
+    }
+
+    public String renderTaskDetailFragment(String taskId) {
+        TaskInfo info = runManager.getTask(taskId);
+        if (info == null) return "<p class='empty'>Task not found</p>";
+        TaskObservation obs = runManager.observeTask(taskId);
+        StringBuilder sb = new StringBuilder();
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>").append(escape(taskId)).append("</h2>");
@@ -377,8 +426,6 @@ public class AdminPageRenderer {
         if (stderrTail.length() > 0) {
             sb.append("<div class='card'><h2>Stderr</h2><pre>").append(escape(stderrTail)).append("</pre></div>");
         }
-
-        sb.append(pageEnd(false));
         return sb.toString();
     }
 
@@ -804,29 +851,27 @@ public class AdminPageRenderer {
         sb.append(".btn-refresh:hover{background:#f1f5f9;} ");
         sb.append(".filter-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;} ");
         sb.append(".filter-bar select{padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;} ");
-        sb.append(".auto-toggle{font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:4px;} ");
+        sb.append(".auto-toggle{font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:4px;margin-left:12px;cursor:pointer;} ");
         sb.append("</style></head><body>");
         return sb.toString();
     }
 
     private String pageEnd() {
-        return pageEnd(false);
-    }
-
-    private String pageEnd(boolean autoRefresh) {
-        if (!autoRefresh) {
-            return "</body></html>";
-        }
         StringBuilder sb = new StringBuilder();
         sb.append("<script>");
         sb.append("(function(){");
-        sb.append("var formFocused=false;");
-        sb.append("var els=document.querySelectorAll('input,button,select,textarea');");
-        sb.append("for(var i=0;i<els.length;i++){");
-        sb.append("els[i].addEventListener('focus',function(){formFocused=true;});");
-        sb.append("els[i].addEventListener('blur',function(){formFocused=false;});");
-        sb.append("}");
-        sb.append("setInterval(function(){if(!formFocused){location.reload();}},2000);");
+        sb.append("var KEY='teebox-auto-refresh';");
+        sb.append("var interval=null;");
+        sb.append("var toggle=document.getElementById('auto-refresh-toggle');");
+        sb.append("if(!toggle)return;");
+        sb.append("function start(){if(typeof window.refreshPage!=='function')return;");
+        sb.append("interval=setInterval(function(){window.refreshPage();},5000);}");
+        sb.append("function stop(){if(interval){clearInterval(interval);interval=null;}}");
+        sb.append("toggle.addEventListener('change',function(){");
+        sb.append("if(this.checked){localStorage.setItem(KEY,'1');start();}");
+        sb.append("else{localStorage.removeItem(KEY);stop();}");
+        sb.append("});");
+        sb.append("if(localStorage.getItem(KEY)==='1'){toggle.checked=true;start();}");
         sb.append("})();");
         sb.append("</script>");
         sb.append("</body></html>");

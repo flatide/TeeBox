@@ -213,6 +213,12 @@ public class TeeBoxServer {
             }
             List<RunInfo> runs = runManager.listRuns(status, 0, -1);
             html = pageRenderer.renderRunsTableFragment(runs);
+        } else if (fragment.startsWith("run-detail/")) {
+            String runId = fragment.substring("run-detail/".length());
+            html = pageRenderer.renderRunDetailFragment(runId);
+        } else if (fragment.startsWith("task-detail/")) {
+            String taskId = fragment.substring("task-detail/".length());
+            html = pageRenderer.renderTaskDetailFragment(taskId);
         } else {
             writeText(exchange, HttpURLConnection.HTTP_NOT_FOUND, "Not found");
             return;

@@ -474,6 +474,43 @@ public class TeeBoxServerTest {
         }
     }
 
+    @Test
+    public void serverShouldServeFragmentEndpoints() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("frag_test", "v1",
+                "taskId = START_TASK(\"sleep 2\")\n" +
+                "result = WAIT_TASK(taskId, 10000)\n",
+                "fragment test", Arrays.asList("test"), true);
+
+            String runId = (String) client.submitRun("frag_test", null, new LinkedHashMap<String, Object>()).get("runId");
+
+            Map<String, Object> detail = waitForRunWithTasks(testServer.baseUrl, runId, 1, 1, 8000L);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> tasks = (List<Map<String, Object>>) detail.get("tasks");
+            String taskId = (String) tasks.get(0).get("taskId");
+
+            // nav-counts fragment
+            String navCounts = getHtml(testServer.baseUrl + "/admin/fragments/nav-counts", 200);
+            Assert.assertTrue("nav-counts should contain active count", navCounts.contains("active"));
+            Assert.assertTrue("nav-counts should contain queued count", navCounts.contains("queued"));
+
+            // run-detail fragment
+            String runDetail = getHtml(testServer.baseUrl + "/admin/fragments/run-detail/" + runId, 200);
+            Assert.assertTrue("run-detail should contain runId", runDetail.contains(runId));
+
+            // task-detail fragment
+            String taskDetail = getHtml(testServer.baseUrl + "/admin/fragments/task-detail/" + taskId, 200);
+            Assert.assertTrue("task-detail should contain taskId", taskDetail.contains(taskId));
+
+            // unknown fragment should 404
+            assertStatus(testServer.baseUrl + "/admin/fragments/nonexistent", "GET", null, null, 404);
+        } finally {
+            testServer.close();
+        }
+    }
+
     private boolean hasThreadName(List<Map<String, Object>> threads, String name) {
         for (Map<String, Object> thread : threads) {
             if (name.equals(thread.get("name"))) {
@@ -713,6 +750,20 @@ public class TeeBoxServerTest {
             }
         }
         conn.disconnect();
+    }
+
+    private String getHtml(String url, int expectedStatus) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestMethod("GET");
+        int status = conn.getResponseCode();
+        Assert.assertEquals(expectedStatus, status);
+        InputStream input = conn.getInputStream();
+        try {
+            return readAll(input);
+        } finally {
+            input.close();
+            conn.disconnect();
+        }
     }
 
     private Map<String, Object> readJsonMap(HttpURLConnection conn) throws IOException {
