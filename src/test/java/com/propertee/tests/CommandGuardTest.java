@@ -13,264 +13,155 @@ import java.nio.file.Files;
 
 public class CommandGuardTest {
 
-    // ---- Block mode: destructive commands should be blocked ----
+    // ---- Bare commands should be blocked ----
 
     @Test(expected = CommandGuardException.class)
-    public void shouldBlockRmRfRoot() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("rm -rf /");
+    public void shouldBlockBareRm() {
+        new CommandGuard().validate("rm -rf /tmp/build", null);
     }
 
     @Test(expected = CommandGuardException.class)
-    public void shouldBlockRmRfRootWithTrailingSpace() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("rm -rf / ");
+    public void shouldBlockBareEcho() {
+        new CommandGuard().validate("echo hello", null);
     }
 
     @Test(expected = CommandGuardException.class)
-    public void shouldBlockRmRfEtc() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("rm -rf /etc");
+    public void shouldBlockBareSleep() {
+        new CommandGuard().validate("sleep 5", null);
     }
 
     @Test(expected = CommandGuardException.class)
-    public void shouldBlockRmRfVar() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("rm -rf /var/");
+    public void shouldBlockBarePython() {
+        new CommandGuard().validate("python3 script.py", null);
     }
 
     @Test(expected = CommandGuardException.class)
-    public void shouldBlockRmRfUsr() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("rm -rf /usr");
+    public void shouldBlockBareShutdown() {
+        new CommandGuard().validate("shutdown -h now", null);
     }
 
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockRmFrRoot() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("rm -fr /");
-    }
-
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockMkfs() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("mkfs.ext4 /dev/sda1");
-    }
-
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockDdToDevice() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("dd if=/dev/zero of=/dev/sda bs=4M");
-    }
-
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockShutdown() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("shutdown -h now");
-    }
-
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockReboot() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("reboot");
-    }
-
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockPoweroff() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("poweroff");
-    }
-
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockHalt() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("halt");
-    }
-
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockForkBomb() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate(":(){ :|:& };:");
-    }
-
-    // ---- Safe commands should NOT be blocked ----
+    // ---- Shell operators should be blocked ----
 
     @Test
-    public void shouldAllowRmRfTmpBuild() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("rm -rf /tmp/build");
+    public void shouldBlockSemicolon() throws Exception {
+        File script = createScript("semi");
+        assertShellOperatorBlocked(script.getAbsolutePath() + "; rm -rf /");
     }
 
     @Test
-    public void shouldAllowDdToFile() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("dd if=input.bin of=/tmp/output.bin bs=1M");
+    public void shouldBlockPipe() throws Exception {
+        File script = createScript("pipe");
+        assertShellOperatorBlocked(script.getAbsolutePath() + " | cat");
     }
 
     @Test
-    public void shouldAllowEchoReboot() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("echo reboot scheduled for later");
+    public void shouldBlockAmpersand() throws Exception {
+        File script = createScript("amp");
+        assertShellOperatorBlocked(script.getAbsolutePath() + " && echo done");
     }
 
     @Test
-    public void shouldAllowSleep() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("sleep 5");
+    public void shouldBlockRedirect() throws Exception {
+        File script = createScript("redir");
+        assertShellOperatorBlocked(script.getAbsolutePath() + " > /tmp/out");
     }
 
     @Test
-    public void shouldAllowEcho() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("echo hello world");
+    public void shouldBlockCommandSubstitution() throws Exception {
+        File script = createScript("sub");
+        assertShellOperatorBlocked(script.getAbsolutePath() + " $(whoami)");
     }
 
     @Test
-    public void shouldAllowLs() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("ls -la /tmp");
+    public void shouldBlockBacktick() throws Exception {
+        File script = createScript("bt");
+        assertShellOperatorBlocked(script.getAbsolutePath() + " `whoami`");
+    }
+
+    // ---- Operators inside quotes should be allowed ----
+
+    @Test
+    public void shouldAllowOperatorsInDoubleQuotes() throws Exception {
+        File script = createScript("dq");
+        new CommandGuard().validate(script.getAbsolutePath() + " \"arg;with|operators\"", null);
     }
 
     @Test
-    public void shouldAllowRmSingleFile() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("rm /tmp/test.txt");
+    public void shouldAllowOperatorsInSingleQuotes() throws Exception {
+        File script = createScript("sq");
+        new CommandGuard().validate(script.getAbsolutePath() + " 'arg;with|operators'", null);
+    }
+
+    // ---- Script file paths should be allowed ----
+
+    @Test
+    public void shouldAllowAbsoluteScriptPath() throws Exception {
+        File script = createScript("abs");
+        new CommandGuard().validate(script.getAbsolutePath(), null);
     }
 
     @Test
-    public void shouldAllowRmRfSubdir() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate("rm -rf /home/user/project/build");
+    public void shouldAllowRelativeScriptWithCwd() throws Exception {
+        File tmpDir = Files.createTempDirectory("guard-rel").toFile();
+        writeFile(new File(tmpDir, "run.sh"), "#!/bin/sh\necho ok\n");
+        new CommandGuard().validate("./run.sh", tmpDir.getAbsolutePath());
     }
-
-    // ---- Warn mode: should not throw ----
 
     @Test
-    public void warnModeShouldNotThrow() {
-        CommandGuard guard = CommandGuard.fromConfig("warn", null, null);
-        guard.validate("rm -rf /");
-        guard.validate("shutdown -h now");
-        guard.validate("mkfs.ext4 /dev/sda1");
+    public void shouldAllowScriptWithArgs() throws Exception {
+        File script = createScript("args");
+        new CommandGuard().validate(script.getAbsolutePath() + " arg1 arg2 --flag", null);
     }
 
-    // ---- Off mode: should not throw ----
-
-    @Test
-    public void offModeShouldNotThrow() {
-        CommandGuard guard = CommandGuard.fromConfig("off", null, null);
-        guard.validate("rm -rf /");
-        guard.validate("shutdown -h now");
-    }
-
-    // ---- Default mode is block ----
+    // ---- Missing script file should be blocked ----
 
     @Test(expected = CommandGuardException.class)
-    public void defaultModeIsBlock() {
-        CommandGuard guard = CommandGuard.fromConfig(null, null, null);
-        guard.validate("rm -rf /");
-    }
-
-    // ---- Extra patterns ----
-
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockExtraPattern() {
-        CommandGuard guard = CommandGuard.fromConfig("block", "\\bdangerous_cmd\\b", null);
-        guard.validate("dangerous_cmd --force");
-    }
-
-    @Test
-    public void extraPatternsShouldNotAffectDefaults() {
-        CommandGuard guard = CommandGuard.fromConfig("block", "\\bdangerous_cmd\\b", null);
-        guard.validate("echo safe");
+    public void shouldBlockMissingFile() {
+        new CommandGuard().validate("/nonexistent/script.sh", null);
     }
 
     @Test(expected = CommandGuardException.class)
-    public void extraPatternsAddToDefaults() {
-        CommandGuard guard = CommandGuard.fromConfig("block", "\\bdangerous_cmd\\b", null);
-        // default patterns still work
-        guard.validate("rm -rf /etc");
-    }
-
-    @Test(expected = CommandGuardException.class)
-    public void multipleExtraPatterns() {
-        CommandGuard guard = CommandGuard.fromConfig("block", "\\bfoo\\b,\\bbar\\b", null);
-        guard.validate("bar --delete");
-    }
-
-    // ---- Patterns file replaces defaults ----
-
-    @Test
-    public void patternsFileShouldReplaceDefaults() throws Exception {
-        File tmpDir = Files.createTempDirectory("guard-test").toFile();
-        File patternsFile = new File(tmpDir, "patterns.txt");
-        writeFile(patternsFile, "# comment\n\\bcustom_block\\b\n");
-
-        CommandGuard guard = CommandGuard.fromConfig("block", null, patternsFile.getAbsolutePath());
-
-        // custom pattern blocks
-        try {
-            guard.validate("custom_block now");
-            Assert.fail("Expected CommandGuardException");
-        } catch (CommandGuardException e) {
-            // expected
-        }
-
-        // default pattern no longer blocks (replaced by file)
-        guard.validate("rm -rf /");
-    }
-
-    @Test(expected = CommandGuardException.class)
-    public void patternsFileWithExtraPatterns() throws Exception {
-        File tmpDir = Files.createTempDirectory("guard-test-extra").toFile();
-        File patternsFile = new File(tmpDir, "patterns.txt");
-        writeFile(patternsFile, "\\bbase_block\\b\n");
-
-        CommandGuard guard = CommandGuard.fromConfig("block", "\\bextra_block\\b", patternsFile.getAbsolutePath());
-        guard.validate("extra_block now");
+    public void shouldBlockMissingRelativeFile() throws Exception {
+        File tmpDir = Files.createTempDirectory("guard-miss").toFile();
+        new CommandGuard().validate("./missing.sh", tmpDir.getAbsolutePath());
     }
 
     // ---- Null command should not throw ----
 
     @Test
     public void nullCommandShouldNotThrow() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
-        guard.validate(null);
-    }
-
-    // ---- Invalid patterns should be skipped ----
-
-    @Test
-    public void invalidPatternShouldBeSkipped() {
-        CommandGuard guard = CommandGuard.fromConfig("block", "[invalid(", null);
-        // should still work with default patterns
-        try {
-            guard.validate("rm -rf /");
-            Assert.fail("Expected CommandGuardException");
-        } catch (CommandGuardException e) {
-            // expected
-        }
+        new CommandGuard().validate(null, null);
     }
 
     // ---- Exception carries info ----
 
     @Test
     public void exceptionShouldCarryCommandAndPattern() {
-        CommandGuard guard = CommandGuard.fromConfig("block", null, null);
         try {
-            guard.validate("rm -rf /etc");
+            new CommandGuard().validate("rm -rf /etc", null);
             Assert.fail("Expected CommandGuardException");
         } catch (CommandGuardException e) {
             Assert.assertEquals("rm -rf /etc", e.getCommand());
-            Assert.assertNotNull(e.getMatchedPattern());
-            Assert.assertTrue(e.getMessage().contains("rm -rf /etc"));
+            Assert.assertTrue(e.getMatchedPattern().startsWith("bare-command:"));
         }
     }
 
-    // ---- Missing patterns file should throw IllegalArgumentException ----
+    // ---- Helpers ----
 
-    @Test(expected = IllegalArgumentException.class)
-    public void missingPatternsFileShouldThrow() {
-        CommandGuard.fromConfig("block", null, "/nonexistent/patterns.txt");
+    private static void assertShellOperatorBlocked(String command) {
+        try {
+            new CommandGuard().validate(command, null);
+            Assert.fail("Expected CommandGuardException for: " + command);
+        } catch (CommandGuardException e) {
+            Assert.assertTrue(e.getMatchedPattern().startsWith("shell-operator:"));
+        }
+    }
+
+    private static File createScript(String name) throws Exception {
+        File tmpDir = Files.createTempDirectory("guard-" + name).toFile();
+        File script = new File(tmpDir, name + ".sh");
+        writeFile(script, "#!/bin/sh\necho ok\n");
+        return script;
     }
 
     private static void writeFile(File file, String content) throws Exception {

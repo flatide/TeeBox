@@ -39,7 +39,7 @@ public class TeeBoxServerTest {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("multi_tasks", "v1",
                 "function worker(name) do\n" +
-                "    taskId = START_TASK(\"sleep 2; echo \" + name)\n" +
+                "    taskId = START_TASK(\"" + testServer.script("sleep_echo") + " \" + name)\n" +
                 "    return WAIT_TASK(taskId, 5000)\n" +
                 "end\n\n" +
                 "multi result do\n" +
@@ -79,7 +79,7 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("kill_task", "v1",
-                "taskId = START_TASK(\"sleep 30\")\n" +
+                "taskId = START_TASK(\"" + testServer.script("sleep30") + "\")\n" +
                 "result = WAIT_TASK(taskId, 60000)\n" +
                 "PRINT(result.status)\n",
                 "kill task test", Arrays.asList("test"), true);
@@ -110,7 +110,7 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("kill_task_repeat", "v1",
-                "taskId = START_TASK(\"sleep 30\")\n" +
+                "taskId = START_TASK(\"" + testServer.script("sleep30") + "\")\n" +
                 "result = WAIT_TASK(taskId, 60000)\n" +
                 "PRINT(result.status)\n",
                 "repeat kill task test", Arrays.asList("test"), true);
@@ -346,8 +346,8 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("query_a", "v1",
-                "taskA = START_TASK(\"echo a1\")\n" +
-                "taskB = START_TASK(\"echo a2\")\n" +
+                "taskA = START_TASK(\"" + testServer.script("echo_args") + " a1\")\n" +
+                "taskB = START_TASK(\"" + testServer.script("echo_args") + " a2\")\n" +
                 "result = [WAIT_TASK(taskA, 5000), WAIT_TASK(taskB, 5000)]\n",
                 "query a", Arrays.asList("test"), true);
             client.registerScript("query_b", "v1",
@@ -384,7 +384,7 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("timeout_task", "v1",
-                "taskId = START_TASK(\"sleep 1\", {\"timeout\": 10})\n" +
+                "taskId = START_TASK(\"" + testServer.script("sleep1") + "\", {\"timeout\": 10})\n" +
                 "PRINT(taskId)\n",
                 "timeout task test", Arrays.asList("test"), true);
 
@@ -480,7 +480,7 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("frag_test", "v1",
-                "taskId = START_TASK(\"sleep 2\")\n" +
+                "taskId = START_TASK(\"" + testServer.script("sleep2") + "\")\n" +
                 "result = WAIT_TASK(taskId, 10000)\n",
                 "fragment test", Arrays.asList("test"), true);
 
@@ -652,6 +652,13 @@ public class TeeBoxServerTest {
                                     String publisherApiToken,
                                     String adminApiToken) throws Exception {
         File dataDir = Files.createTempDirectory("propertee-teebox-data").toFile();
+        File scriptsDir = new File(dataDir, "test-scripts");
+        scriptsDir.mkdirs();
+        writeScript(scriptsDir, "sleep_echo", "sleep 2; echo \"$@\"");
+        writeScript(scriptsDir, "sleep30", "sleep 30");
+        writeScript(scriptsDir, "sleep2", "sleep 2");
+        writeScript(scriptsDir, "sleep1", "sleep 1");
+        writeScript(scriptsDir, "echo_args", "echo \"$@\"");
 
         TeeBoxConfig config = new TeeBoxConfig();
         config.bindAddress = "127.0.0.1";
@@ -665,7 +672,7 @@ public class TeeBoxServerTest {
 
         TeeBoxServer server = new TeeBoxServer(config);
         server.start();
-        return new TestServer(server, "http://127.0.0.1:" + server.getPort());
+        return new TestServer(server, "http://127.0.0.1:" + server.getPort(), scriptsDir);
     }
 
     private Map<String, Object> postJson(String url, Map<String, Object> payload, int expectedStatus) throws IOException {
@@ -801,15 +808,32 @@ public class TeeBoxServerTest {
     private static class TestServer {
         private final TeeBoxServer server;
         private final String baseUrl;
+        private final File scriptsDir;
 
-        private TestServer(TeeBoxServer server, String baseUrl) {
+        private TestServer(TeeBoxServer server, String baseUrl, File scriptsDir) {
             this.server = server;
             this.baseUrl = baseUrl;
+            this.scriptsDir = scriptsDir;
+        }
+
+        private String script(String name) {
+            return new File(scriptsDir, name + ".sh").getAbsolutePath();
         }
 
         private void close() {
             server.stop();
         }
+    }
+
+    private static void writeScript(File dir, String name, String body) throws IOException {
+        File script = new File(dir, name + ".sh");
+        java.io.FileOutputStream out = new java.io.FileOutputStream(script);
+        try {
+            out.write(("#!/bin/sh\n" + body + "\n").getBytes("UTF-8"));
+        } finally {
+            out.close();
+        }
+        script.setExecutable(true);
     }
 
     private static void restoreProperty(String name, String value) {

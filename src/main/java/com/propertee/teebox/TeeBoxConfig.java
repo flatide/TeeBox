@@ -15,9 +15,6 @@ public class TeeBoxConfig {
     public String clientApiToken;
     public String publisherApiToken;
     public String adminApiToken;
-    public String commandGuardMode;
-    public String commandGuardExtraPatterns;
-    public String commandGuardPatternsFile;
 
     public static TeeBoxConfig fromArgs(String[] args) {
         File configFile = resolveConfigFile(args);
@@ -64,18 +61,6 @@ public class TeeBoxConfig {
             config.adminApiToken = adminApiToken.trim();
         }
         config.dataDir = canonicalFile(new File(dataDir.trim()));
-        String guardMode = getSetting("commandGuard.mode", fileProps);
-        if (guardMode != null && guardMode.trim().length() > 0) {
-            config.commandGuardMode = guardMode.trim();
-        }
-        String guardExtra = getSetting("commandGuard.extraPatterns", fileProps);
-        if (guardExtra != null && guardExtra.trim().length() > 0) {
-            config.commandGuardExtraPatterns = guardExtra.trim();
-        }
-        String guardFile = getSetting("commandGuard.patternsFile", fileProps);
-        if (guardFile != null && guardFile.trim().length() > 0) {
-            config.commandGuardPatternsFile = guardFile.trim();
-        }
         return config;
     }
 

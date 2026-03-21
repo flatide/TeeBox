@@ -52,7 +52,7 @@ public class ManagedTaskEngine implements TaskRunner {
     private static final long DEFAULT_ARCHIVE_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L;
 
     private final DefaultTaskRunner runner;
-    private final CommandGuard commandGuard;
+    private final CommandGuard commandGuard = new CommandGuard();
     private final File taskBaseDir;
     private final File tasksDir;
     private final String hostInstanceId;
@@ -67,14 +67,9 @@ public class ManagedTaskEngine implements TaskRunner {
     private final ConcurrentHashMap<String, Object> taskLocks = new ConcurrentHashMap<>();
 
     public ManagedTaskEngine(String baseDir, String hostInstanceId) {
-        this(baseDir, hostInstanceId, CommandGuard.fromConfig(null, null, null));
-    }
-
-    public ManagedTaskEngine(String baseDir, String hostInstanceId, CommandGuard commandGuard) {
         this.taskBaseDir = new File(baseDir);
         this.tasksDir = new File(taskBaseDir, "tasks");
         this.hostInstanceId = hostInstanceId;
-        this.commandGuard = commandGuard;
         if (!tasksDir.exists() && !tasksDir.mkdirs()) {
             throw new IllegalStateException("Failed to create tasks directory: " + tasksDir.getAbsolutePath());
         }
@@ -155,7 +150,7 @@ public class ManagedTaskEngine implements TaskRunner {
 
     @Override
     public Task execute(TaskRequest request) {
-        commandGuard.validate(request.command);
+        commandGuard.validate(request.command, request.cwd);
         Task task = runner.execute(request);
         task.hostInstanceId = hostInstanceId;
         // Record pidStartTime via ProcessHandle for future init() identity verification
