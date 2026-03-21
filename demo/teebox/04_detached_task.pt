@@ -1,7 +1,17 @@
-// Detached task demo: run finishes quickly while the external process keeps running
-PRINT("starting detached task")
-taskId = START_TASK("sleep 120; echo detached_task_done")
-PRINT("detached task id", taskId)
-status = TASK_STATUS(taskId)
-PRINT("detached status", status.status, status.alive)
-PRINT("run exits now; task should remain visible in admin task list")
+// Parallel tasks demo: multiple SHELL commands via multi/thread
+// Submit with property: scriptsDir = /path/to/demo/teebox/scripts
+PRINT("starting parallel tasks")
+
+ctx = SHELL_CTX(scriptsDir)
+
+function run_task(ctx, name) do
+    return SHELL(::ctx, "./echo_done.sh " + name)
+end
+
+multi result do
+    thread task1: run_task(::ctx, "task1")
+    thread task2: run_task(::ctx, "task2")
+end
+
+PRINT("task1 result", result.task1)
+PRINT("task2 result", result.task2)

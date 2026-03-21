@@ -39,8 +39,7 @@ public class TeeBoxServerTest {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("multi_tasks", "v1",
                 "function worker(name) do\n" +
-                "    taskId = START_TASK(\"" + testServer.script("sleep_echo") + " \" + name)\n" +
-                "    return WAIT_TASK(taskId, 5000)\n" +
+                "    return SHELL(\"" + testServer.script("sleep_echo") + " \" + name)\n" +
                 "end\n\n" +
                 "multi result do\n" +
                 "    thread alpha: worker(\"alpha\")\n" +
@@ -79,9 +78,8 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("kill_task", "v1",
-                "taskId = START_TASK(\"" + testServer.script("sleep30") + "\")\n" +
-                "result = WAIT_TASK(taskId, 60000)\n" +
-                "PRINT(result.status)\n",
+                "result = SHELL(\"" + testServer.script("sleep30") + "\")\n" +
+                "PRINT(result.ok)\n",
                 "kill task test", Arrays.asList("test"), true);
 
             String runId = (String) client.submitRun("kill_task", null, new LinkedHashMap<String, Object>()).get("runId");
@@ -110,9 +108,8 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("kill_task_repeat", "v1",
-                "taskId = START_TASK(\"" + testServer.script("sleep30") + "\")\n" +
-                "result = WAIT_TASK(taskId, 60000)\n" +
-                "PRINT(result.status)\n",
+                "result = SHELL(\"" + testServer.script("sleep30") + "\")\n" +
+                "PRINT(result.ok)\n",
                 "repeat kill task test", Arrays.asList("test"), true);
 
             String runId = (String) client.submitRun("kill_task_repeat", null, new LinkedHashMap<String, Object>()).get("runId");
@@ -346,9 +343,13 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("query_a", "v1",
-                "taskA = START_TASK(\"" + testServer.script("echo_args") + " a1\")\n" +
-                "taskB = START_TASK(\"" + testServer.script("echo_args") + " a2\")\n" +
-                "result = [WAIT_TASK(taskA, 5000), WAIT_TASK(taskB, 5000)]\n",
+                "function run_task(arg) do\n" +
+                "    return SHELL(\"" + testServer.script("echo_args") + " \" + arg)\n" +
+                "end\n\n" +
+                "multi result do\n" +
+                "    thread t1: run_task(\"a1\")\n" +
+                "    thread t2: run_task(\"a2\")\n" +
+                "end\n",
                 "query a", Arrays.asList("test"), true);
             client.registerScript("query_b", "v1",
                 "result = {\"name\": \"b\"}\n",
@@ -384,8 +385,8 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("timeout_task", "v1",
-                "taskId = START_TASK(\"" + testServer.script("sleep1") + "\", {\"timeout\": 10})\n" +
-                "PRINT(taskId)\n",
+                "result = SHELL(\"" + testServer.script("sleep1") + "\", {\"timeout\": 10})\n" +
+                "PRINT(result.ok)\n",
                 "timeout task test", Arrays.asList("test"), true);
 
             String runId = (String) client.submitRun("timeout_task", null, new LinkedHashMap<String, Object>()).get("runId");
@@ -480,8 +481,7 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("frag_test", "v1",
-                "taskId = START_TASK(\"" + testServer.script("sleep2") + "\")\n" +
-                "result = WAIT_TASK(taskId, 10000)\n",
+                "result = SHELL(\"" + testServer.script("sleep2") + "\")\n",
                 "fragment test", Arrays.asList("test"), true);
 
             String runId = (String) client.submitRun("frag_test", null, new LinkedHashMap<String, Object>()).get("runId");
