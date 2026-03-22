@@ -40,15 +40,6 @@ tasks.withType(Test).configureEach {
     }
 }
 
-task runTeeBoxUpstream(type: JavaExec) {
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'com.propertee.teebox.TeeBoxUpstreamMockMain'
-    standardInput = System.in
-    systemProperties System.properties.findAll { key, value ->
-        key.startsWith('propertee.teebox.upstream.')
-    }
-}
-
 task teeBoxJar(type: Jar) {
     dependsOn classes
     archiveBaseName = 'propertee-teebox'

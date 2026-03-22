@@ -84,6 +84,20 @@ public class RunStore {
         }
     }
 
+    public synchronized int count(String status) {
+        List<RunIndexEntry> entries = loadIndexEntries();
+        if (status == null) {
+            return entries.size();
+        }
+        int count = 0;
+        for (RunIndexEntry entry : entries) {
+            if (status.equalsIgnoreCase(entry.status)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     public synchronized List<RunInfo> loadAll() {
         return query(null, 0, -1);
     }

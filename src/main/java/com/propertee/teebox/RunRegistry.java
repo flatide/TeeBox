@@ -52,6 +52,11 @@ public class RunRegistry {
         return runs.get(runId);
     }
 
+    public int countRuns(String status) {
+        flushDirty();
+        return runStore.count(status);
+    }
+
     public List<RunInfo> listRuns(String status, int offset, int limit) {
         return listRuns(status, null, offset, limit);
     }

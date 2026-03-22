@@ -132,6 +132,10 @@ public class RunManager {
         return scriptRegistry.readVersionContent(scriptId, version);
     }
 
+    public int countRuns(String status) {
+        return runRegistry.countRuns(status);
+    }
+
     public List<RunInfo> listRuns() {
         return listRuns(null, 0, -1);
     }

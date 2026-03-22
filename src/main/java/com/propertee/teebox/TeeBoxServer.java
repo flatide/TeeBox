@@ -206,13 +206,19 @@ public class TeeBoxServer {
             html = pageRenderer.renderNavCountsFragment();
         } else if (fragment.startsWith("all-runs")) {
             String status = null;
+            int page = 1;
+            int pageSize = AdminPageRenderer.DEFAULT_RUNS_PAGE_SIZE;
             String rawQuery = exchange.getRequestURI().getRawQuery();
             if (rawQuery != null) {
                 Map<String, String> query = parseQuery(exchange);
                 status = trimToNull(query.get("status"));
+                page = parseInt(query.get("page"), 1);
             }
-            List<RunInfo> runs = runManager.listRuns(status, 0, -1);
-            html = pageRenderer.renderRunsTableFragment(runs);
+            if (page < 1) page = 1;
+            int offset = (page - 1) * pageSize;
+            int totalCount = runManager.countRuns(status);
+            List<RunInfo> runs = runManager.listRuns(status, offset, pageSize);
+            html = pageRenderer.renderRunsTableWithPagination(runs, page, pageSize, totalCount);
         } else if (fragment.startsWith("run-detail/")) {
             String runId = fragment.substring("run-detail/".length());
             html = pageRenderer.renderRunDetailFragment(runId);

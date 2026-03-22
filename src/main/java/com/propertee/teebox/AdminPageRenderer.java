@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Locale;
 
 public class AdminPageRenderer {
+    static final int DEFAULT_RUNS_PAGE_SIZE = 25;
     private final TeeBoxConfig config;
     private final RunManager runManager;
     private final Gson gson;
@@ -109,11 +110,12 @@ public class AdminPageRenderer {
             }
             sb.append("</td>");
             sb.append("<td class='mono'>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? " <span class='dim'>@" + escape(run.version) + "</span>" : "").append("</td>");
-            sb.append("<td>").append(statusBadge(run.status != null ? run.status.name() : "UNKNOWN")).append("</td>");
+            List<TaskInfo> tasks = runManager.listTasksForRun(run.runId);
+            sb.append("<td>").append(renderRunStatusWithTaskWarnings(run, tasks)).append("</td>");
             sb.append("<td class='dim'>").append(escape(formatTime(run.createdAt))).append("</td>");
             sb.append("<td class='dim'>").append(formatDuration(run.startedAt, run.endedAt)).append("</td>");
             sb.append("<td class='center'>").append(run.threads != null ? run.threads.size() : 0).append("</td>");
-            sb.append("<td class='center'>").append(runManager.listTasksForRun(run.runId).size()).append("</td>");
+            sb.append("<td class='center'>").append(tasks.size()).append("</td>");
             sb.append("</tr>");
         }
         sb.append("</tbody></table></div>");
@@ -186,7 +188,9 @@ public class AdminPageRenderer {
     }
 
     public String renderRunsPage() {
-        List<RunInfo> runs = runManager.listRuns();
+        int pageSize = DEFAULT_RUNS_PAGE_SIZE;
+        int totalCount = runManager.countRuns(null);
+        List<RunInfo> runs = runManager.listRuns(null, 0, pageSize);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Runs - TeeBox Admin"));
         sb.append(renderTopNav("runs"));
@@ -207,12 +211,13 @@ public class AdminPageRenderer {
         sb.append("<option value='SERVER_RESTARTED'>SERVER_RESTARTED</option>");
         sb.append("</select></div>");
         sb.append("<div id='runs-table-content'>");
-        sb.append(renderRunsTableFragment(runs));
+        sb.append(renderRunsTableWithPagination(runs, 1, pageSize, totalCount));
         sb.append("</div>");
         sb.append("</div>");
 
         sb.append("<script>");
         sb.append("(function(){");
+        sb.append("var currentPage=1;");
         sb.append("function fetchFragment(url,targetId){");
         sb.append("var xhr=new XMLHttpRequest();");
         sb.append("xhr.open('GET',url,true);");
@@ -221,17 +226,74 @@ public class AdminPageRenderer {
         sb.append("var el=document.getElementById(targetId);");
         sb.append("if(el)el.innerHTML=xhr.responseText;");
         sb.append("}};xhr.send();}");
+        sb.append("window.goToPage=function(p){currentPage=p;refreshRunsPage();};");
         sb.append("window.refreshRunsPage=function(){");
         sb.append("var status=document.getElementById('status-filter').value;");
-        sb.append("var url='/admin/fragments/all-runs'+(status?'?status='+encodeURIComponent(status):'');");
+        sb.append("var url='/admin/fragments/all-runs?page='+currentPage;");
+        sb.append("if(status)url+='&status='+encodeURIComponent(status);");
         sb.append("fetchFragment(url,'runs-table-content');");
         sb.append("fetchFragment('/admin/fragments/nav-counts','nav-counts');");
         sb.append("};");
-        sb.append("window.filterRuns=window.refreshRunsPage;");
+        sb.append("window.filterRuns=function(){currentPage=1;refreshRunsPage();};");
         sb.append("window.refreshPage=window.refreshRunsPage;");
         sb.append("})();");
         sb.append("</script>");
         sb.append(pageEnd());
+        return sb.toString();
+    }
+
+    public String renderRunsTableWithPagination(List<RunInfo> runs, int page, int pageSize, int totalCount) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(renderRunsTableFragment(runs));
+        if (totalCount > 0) {
+            int totalPages = (totalCount + pageSize - 1) / pageSize;
+            int start = (page - 1) * pageSize + 1;
+            int end = Math.min(page * pageSize, totalCount);
+            sb.append("<div class='pagination'>");
+            sb.append("<span class='pagination-info'>").append(start).append("-").append(end);
+            sb.append(" of ").append(totalCount).append("</span>");
+            sb.append("<div class='pagination-controls'>");
+            if (page > 1) {
+                sb.append("<button class='pagination-btn' onclick='goToPage(1)'>&#171;</button>");
+                sb.append("<button class='pagination-btn' onclick='goToPage(").append(page - 1).append(")'>&#8249;</button>");
+            } else {
+                sb.append("<button class='pagination-btn' disabled>&#171;</button>");
+                sb.append("<button class='pagination-btn' disabled>&#8249;</button>");
+            }
+            int windowStart = Math.max(1, page - 2);
+            int windowEnd = Math.min(totalPages, page + 2);
+            if (windowEnd - windowStart < 4) {
+                windowStart = Math.max(1, windowEnd - 4);
+                windowEnd = Math.min(totalPages, windowStart + 4);
+            }
+            if (windowStart > 1) {
+                sb.append("<button class='pagination-btn' onclick='goToPage(1)'>1</button>");
+                if (windowStart > 2) {
+                    sb.append("<span class='pagination-ellipsis'>...</span>");
+                }
+            }
+            for (int i = windowStart; i <= windowEnd; i++) {
+                if (i == page) {
+                    sb.append("<button class='pagination-btn pagination-active'>").append(i).append("</button>");
+                } else {
+                    sb.append("<button class='pagination-btn' onclick='goToPage(").append(i).append(")'>").append(i).append("</button>");
+                }
+            }
+            if (windowEnd < totalPages) {
+                if (windowEnd < totalPages - 1) {
+                    sb.append("<span class='pagination-ellipsis'>...</span>");
+                }
+                sb.append("<button class='pagination-btn' onclick='goToPage(").append(totalPages).append(")'>").append(totalPages).append("</button>");
+            }
+            if (page < totalPages) {
+                sb.append("<button class='pagination-btn' onclick='goToPage(").append(page + 1).append(")'>&#8250;</button>");
+                sb.append("<button class='pagination-btn' onclick='goToPage(").append(totalPages).append(")'>&#187;</button>");
+            } else {
+                sb.append("<button class='pagination-btn' disabled>&#8250;</button>");
+                sb.append("<button class='pagination-btn' disabled>&#187;</button>");
+            }
+            sb.append("</div></div>");
+        }
         return sb.toString();
     }
 
@@ -289,7 +351,7 @@ public class AdminPageRenderer {
         sb.append("<button type='submit' class='btn-danger btn-sm'>Kill All Tasks</button></form></div>");
         sb.append("<div class='detail-grid'>");
         sb.append("<div class='detail-item'><div class='detail-label'>Script</div><div class='detail-value'><code>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? "@" + escape(run.version) : "").append("</code></div></div>");
-        sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(statusBadge(run.status != null ? run.status.name() : "UNKNOWN")).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(renderRunStatusWithTaskWarnings(run, tasks)).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Archived</div><div class='detail-value'>").append(run.archived ? statusBadge("YES") : statusBadge("NO")).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Created</div><div class='detail-value dim'>").append(escape(formatTime(run.createdAt))).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Started</div><div class='detail-value dim'>").append(escape(formatTime(run.startedAt))).append("</div></div>");
@@ -297,6 +359,14 @@ public class AdminPageRenderer {
         sb.append("<div class='detail-item'><div class='detail-label'>Duration</div><div class='detail-value'>").append(formatDuration(run.startedAt, run.endedAt)).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Explicit Return</div><div class='detail-value'>").append(run.hasExplicitReturn ? statusBadge("YES") : statusBadge("NO")).append("</div></div>");
         sb.append("</div></div>");
+
+        sb.append("<div class='card'><h2>Input Properties</h2>");
+        if (run.properties != null && !run.properties.isEmpty()) {
+            sb.append("<pre>").append(escape(gson.toJson(run.properties))).append("</pre>");
+        } else {
+            sb.append("<p class='empty'>No properties</p>");
+        }
+        sb.append("</div>");
 
         if (run.errorMessage != null && run.errorMessage.length() > 0) {
             sb.append("<div class='card'><h2>Error</h2><pre>").append(escape(run.errorMessage)).append("</pre></div>");
@@ -717,7 +787,7 @@ public class AdminPageRenderer {
             sb.append("<td class='center'>").append(thread.threadId).append("</td>");
             sb.append("<td class='mono'>").append(escape(thread.name)).append("</td>");
             sb.append("<td>").append(statusBadge(thread.state)).append("</td>");
-            sb.append("<td class='center dim'>").append(escape(thread.parentId)).append("</td>");
+            sb.append("<td class='dim'>").append(formatParentThread(thread.parentId, threads)).append("</td>");
             sb.append("<td class='mono'>").append(escape(thread.resultKeyName)).append("</td>");
             sb.append("<td>").append(escape(thread.resultSummary)).append("</td>");
             sb.append("<td>").append(escape(thread.errorMessage)).append("</td>");
@@ -726,6 +796,34 @@ public class AdminPageRenderer {
         }
         sb.append("</tbody></table></div>");
         return sb.toString();
+    }
+
+    private String renderRunStatusWithTaskWarnings(RunInfo run, List<TaskInfo> tasks) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(statusBadge(run.status != null ? run.status.name() : "UNKNOWN"));
+        int killed = 0;
+        int lost = 0;
+        for (TaskInfo task : tasks) {
+            if ("killed".equals(task.status)) killed++;
+            else if ("lost".equals(task.status)) lost++;
+        }
+        if (killed > 0) {
+            sb.append(" <span class='badge badge-killed'>").append(killed).append(" killed</span>");
+        }
+        if (lost > 0) {
+            sb.append(" <span class='badge badge-lost'>").append(lost).append(" lost</span>");
+        }
+        return sb.toString();
+    }
+
+    private String formatParentThread(Integer parentId, List<RunThreadInfo> threads) {
+        if (parentId == null) return "";
+        for (RunThreadInfo t : threads) {
+            if (t.threadId == parentId.intValue()) {
+                return "<span class='mono'>" + escape(t.name) + "(" + parentId + ")</span>";
+            }
+        }
+        return String.valueOf(parentId);
     }
 
     private String renderTaskTable(List<TaskInfo> tasks, boolean includeKill) {
@@ -852,6 +950,14 @@ public class AdminPageRenderer {
         sb.append(".filter-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;} ");
         sb.append(".filter-bar select{padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;} ");
         sb.append(".auto-toggle{font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:4px;margin-left:12px;cursor:pointer;} ");
+        sb.append(".pagination{display:flex;align-items:center;justify-content:space-between;padding:12px 0 4px 0;} ");
+        sb.append(".pagination-info{font-size:13px;color:#64748b;} ");
+        sb.append(".pagination-controls{display:flex;align-items:center;gap:4px;} ");
+        sb.append(".pagination-btn{padding:4px 10px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;font-size:13px;cursor:pointer;color:#334155;min-width:32px;text-align:center;} ");
+        sb.append(".pagination-btn:hover:not([disabled]):not(.pagination-active){background:#f1f5f9;} ");
+        sb.append(".pagination-btn:disabled{color:#cbd5e1;cursor:default;} ");
+        sb.append(".pagination-active{background:#2563eb;color:#fff;border-color:#2563eb;cursor:default;} ");
+        sb.append(".pagination-ellipsis{color:#94a3b8;font-size:13px;padding:0 4px;} ");
         sb.append("</style></head><body>");
         return sb.toString();
     }

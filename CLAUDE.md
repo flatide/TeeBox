@@ -29,13 +29,6 @@ ProperTee TeeBox is an HTTP API and admin UI service for remote ProperTee script
 # Build deployable fat JAR + distribution ZIP
 ./gradlew teeBoxZip
 
-# Run upstream mock harness (for integration testing)
-./gradlew runTeeBoxUpstream \
-  -Dpropertee.teebox.upstream.baseUrl=http://127.0.0.1:18080 \
-  -Dpropertee.teebox.upstream.scriptId=calc_sum \
-  -Dpropertee.teebox.upstream.version=v1 \
-  -Dpropertee.teebox.upstream.scriptFile=$PWD/demo/teebox/05_registered_sum.pt \
-  -Dpropertee.teebox.upstream.activate=true
 ```
 
 ## Architecture
