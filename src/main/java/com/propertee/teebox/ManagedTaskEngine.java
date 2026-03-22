@@ -33,8 +33,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
@@ -51,8 +53,13 @@ public class ManagedTaskEngine implements TaskRunner {
     private static final long DEFAULT_RETENTION_MS = 24L * 60L * 60L * 1000L;
     private static final long DEFAULT_ARCHIVE_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L;
 
+    private static final Set<String> DENIED_ENV_VARS = new HashSet<String>(Arrays.asList(
+            "LD_PRELOAD", "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"));
+    private static final String[] DENIED_ENV_PREFIXES = {"DYLD_"};
+
     private final DefaultTaskRunner runner;
-    private final CommandGuard commandGuard = new CommandGuard();
+    private final CommandGuard commandGuard;
     private final File taskBaseDir;
     private final File tasksDir;
     private final String hostInstanceId;
@@ -67,9 +74,14 @@ public class ManagedTaskEngine implements TaskRunner {
     private final ConcurrentHashMap<String, Object> taskLocks = new ConcurrentHashMap<>();
 
     public ManagedTaskEngine(String baseDir, String hostInstanceId) {
+        this(baseDir, hostInstanceId, Collections.singletonList(new File(baseDir)));
+    }
+
+    public ManagedTaskEngine(String baseDir, String hostInstanceId, List<File> allowedRoots) {
         this.taskBaseDir = new File(baseDir);
         this.tasksDir = new File(taskBaseDir, "tasks");
         this.hostInstanceId = hostInstanceId;
+        this.commandGuard = new CommandGuard(allowedRoots);
         if (!tasksDir.exists() && !tasksDir.mkdirs()) {
             throw new IllegalStateException("Failed to create tasks directory: " + tasksDir.getAbsolutePath());
         }
@@ -150,7 +162,19 @@ public class ManagedTaskEngine implements TaskRunner {
 
     @Override
     public Task execute(TaskRequest request) {
-        commandGuard.validate(request.command, request.cwd);
+        String auditTs = Instant.now().toString();
+        try {
+            commandGuard.validateCwd(request.cwd);
+            validateEnv(request.env, request.command);
+            commandGuard.validate(request.command, request.cwd);
+        } catch (CommandGuardException e) {
+            System.err.println("[AUDIT] BLOCKED runId=" + request.runId
+                    + " command=" + request.command + " reason=" + e.getMatchedPattern()
+                    + " ts=" + auditTs);
+            throw e;
+        }
+        System.err.println("[AUDIT] ALLOWED runId=" + request.runId
+                + " command=" + request.command + " ts=" + auditTs);
         Task task = runner.execute(request);
         task.hostInstanceId = hostInstanceId;
         // Record pidStartTime via ProcessHandle for future init() identity verification
@@ -172,6 +196,22 @@ public class ManagedTaskEngine implements TaskRunner {
         syncStatusFromLifecycle(task);
         saveMeta(task);
         return task;
+    }
+
+    private static void validateEnv(Map<String, String> env, String command) {
+        if (env == null || env.isEmpty()) {
+            return;
+        }
+        for (String key : env.keySet()) {
+            if (DENIED_ENV_VARS.contains(key)) {
+                throw new CommandGuardException(command, "denied-env-var:" + key);
+            }
+            for (String prefix : DENIED_ENV_PREFIXES) {
+                if (key.startsWith(prefix)) {
+                    throw new CommandGuardException(command, "denied-env-var:" + key);
+                }
+            }
+        }
     }
 
     @Override

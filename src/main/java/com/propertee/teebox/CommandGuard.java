@@ -3,26 +3,46 @@ package com.propertee.teebox;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
  * Validates task commands before execution.
  *
- * Only direct script file invocations are allowed. Bare commands (rm, echo, sleep, etc.)
- * and shell operators (;, |, &amp;, &gt;, etc.) are rejected.
+ * Rejects control characters, shell operators, bare commands, non-.sh files,
+ * and scripts outside allowed roots.
  */
 public class CommandGuard {
 
     private static final String SHELL_OPERATORS = ";|&><`";
+    private final List<File> allowedRoots;
+
+    public CommandGuard() {
+        this(Collections.<File>emptyList());
+    }
+
+    public CommandGuard(List<File> allowedRoots) {
+        this.allowedRoots = allowedRoots != null ? canonicalize(allowedRoots) : Collections.<File>emptyList();
+    }
 
     /**
      * Validate a command with optional cwd for script path resolution.
      *
-     * Rejects shell operators, bare commands, and missing script files.
+     * Rejects control characters, shell operators, bare commands,
+     * non-.sh files, missing files, and scripts outside allowed roots.
      */
     public void validate(String command, String cwd) {
         if (command == null) {
             return;
+        }
+
+        // 0. Reject control characters (newline injection vector)
+        for (int i = 0; i < command.length(); i++) {
+            char c = command.charAt(i);
+            if (c == '\n' || c == '\r' || c == '\0') {
+                throw new CommandGuardException(command,
+                        "control-char:0x" + String.format("%02x", (int) c));
+            }
         }
 
         // 1. Reject shell operators outside quotes
@@ -48,6 +68,44 @@ public class CommandGuard {
         if (!scriptFile.isFile()) {
             throw new CommandGuardException(command, "file-not-found:" + scriptFile.getPath());
         }
+
+        // 5. Enforce .sh extension
+        if (!scriptFile.getName().endsWith(".sh")) {
+            throw new CommandGuardException(command, "not-shell-script:" + scriptFile.getName());
+        }
+
+        // 6. Enforce allowed roots (if configured)
+        if (!allowedRoots.isEmpty()) {
+            validateWithinRoots(scriptFile, command);
+        }
+    }
+
+    /**
+     * Validate that a working directory is within allowed roots.
+     */
+    public void validateCwd(String cwd) {
+        if (cwd == null || cwd.length() == 0 || allowedRoots.isEmpty()) {
+            return;
+        }
+        String canonicalCwd = canonicalPath(new File(cwd));
+        for (File root : allowedRoots) {
+            String rootPath = root.getPath();
+            if (canonicalCwd.equals(rootPath) || canonicalCwd.startsWith(rootPath + File.separator)) {
+                return;
+            }
+        }
+        throw new CommandGuardException(cwd, "cwd-outside-allowed-root:" + canonicalCwd);
+    }
+
+    private void validateWithinRoots(File scriptFile, String command) {
+        String canonicalScript = canonicalPath(scriptFile);
+        for (File root : allowedRoots) {
+            String rootPath = root.getPath();
+            if (canonicalScript.equals(rootPath) || canonicalScript.startsWith(rootPath + File.separator)) {
+                return;
+            }
+        }
+        throw new CommandGuardException(command, "outside-allowed-root:" + canonicalPath(scriptFile));
     }
 
     private static File resolveScriptFile(String path, String cwd) {
@@ -135,5 +193,25 @@ public class CommandGuard {
             tokens.add(current.toString());
         }
         return tokens;
+    }
+
+    private static List<File> canonicalize(List<File> roots) {
+        List<File> result = new ArrayList<File>();
+        for (File root : roots) {
+            try {
+                result.add(root.getCanonicalFile());
+            } catch (IOException e) {
+                result.add(root.getAbsoluteFile());
+            }
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    private static String canonicalPath(File file) {
+        try {
+            return file.getCanonicalPath();
+        } catch (IOException e) {
+            return file.getAbsolutePath();
+        }
     }
 }
