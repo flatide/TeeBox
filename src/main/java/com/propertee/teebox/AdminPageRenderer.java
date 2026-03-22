@@ -387,11 +387,45 @@ public class AdminPageRenderer {
 
         String stdout = joinLines(run.stdoutLines);
         String stderr = joinLines(run.stderrLines);
+        sb.append("<div class='card'><h2>Script Output</h2>");
         if (stdout.length() > 0) {
-            sb.append("<div class='card'><h2>Stdout</h2><pre>").append(escape(stdout)).append("</pre></div>");
+            sb.append("<pre>").append(escape(stdout)).append("</pre>");
+        } else {
+            sb.append("<p class='empty'>No output</p>");
         }
+        sb.append("</div>");
         if (stderr.length() > 0) {
-            sb.append("<div class='card'><h2>Stderr</h2><pre>").append(escape(stderr)).append("</pre></div>");
+            sb.append("<div class='card'><h2>Script Errors</h2><pre>").append(escape(stderr)).append("</pre></div>");
+        }
+
+        if (!tasks.isEmpty()) {
+            sb.append("<div class='card'><h2>Task Output</h2>");
+            boolean anyOutput = false;
+            for (TaskInfo task : tasks) {
+                String taskStdout = tail(runManager.getTaskStdout(task.taskId), 4000);
+                String taskStderr = tail(runManager.getTaskStderr(task.taskId), 4000);
+                if (taskStdout.length() > 0 || taskStderr.length() > 0) {
+                    anyOutput = true;
+                    sb.append("<div class='task-output-block'>");
+                    sb.append("<div class='task-output-label mono'>").append(escape(shortId(task.taskId)));
+                    if (task.threadName != null) {
+                        sb.append(" <span class='dim'>").append(escape(task.threadName)).append("</span>");
+                    }
+                    sb.append(" ").append(statusBadge(task.status));
+                    sb.append("</div>");
+                    if (taskStdout.length() > 0) {
+                        sb.append("<pre>").append(escape(taskStdout)).append("</pre>");
+                    }
+                    if (taskStderr.length() > 0) {
+                        sb.append("<pre style='border-left:3px solid #fca5a5;'>").append(escape(taskStderr)).append("</pre>");
+                    }
+                    sb.append("</div>");
+                }
+            }
+            if (!anyOutput) {
+                sb.append("<p class='empty'>No task output</p>");
+            }
+            sb.append("</div>");
         }
         return sb.toString();
     }
@@ -958,6 +992,9 @@ public class AdminPageRenderer {
         sb.append(".pagination-btn:disabled{color:#cbd5e1;cursor:default;} ");
         sb.append(".pagination-active{background:#2563eb;color:#fff;border-color:#2563eb;cursor:default;} ");
         sb.append(".pagination-ellipsis{color:#94a3b8;font-size:13px;padding:0 4px;} ");
+        sb.append(".task-output-block{margin-bottom:16px;} .task-output-block:last-child{margin-bottom:0;} ");
+        sb.append(".task-output-label{font-size:12px;color:#64748b;margin-bottom:4px;} ");
+        sb.append(".task-output-block pre{margin-top:4px;} ");
         sb.append("</style></head><body>");
         return sb.toString();
     }
