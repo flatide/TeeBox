@@ -1,3 +1,3 @@
 #!/bin/sh
-sleep 2
+sleep 10
 echo "$1_done"
