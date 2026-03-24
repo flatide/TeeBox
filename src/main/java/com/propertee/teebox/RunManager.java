@@ -256,7 +256,7 @@ public class RunManager {
                 try {
                     runRegistry.flushDirty();
                 } catch (Exception e) {
-                    // flush errors logged but not propagated
+                    TeeBoxLog.warn("RunManager", "Flush failed", e);
                 }
             }
         }, FLUSH_INTERVAL_MS, FLUSH_INTERVAL_MS, TimeUnit.MILLISECONDS);
@@ -268,7 +268,7 @@ public class RunManager {
                     maintainRuns();
                     maintainTasks();
                 } catch (Exception e) {
-                    // maintenance errors logged but not propagated
+                    TeeBoxLog.warn("RunManager", "Maintenance failed", e);
                 }
             }
         }, maintenanceIntervalMs, maintenanceIntervalMs, TimeUnit.MILLISECONDS);
@@ -323,6 +323,7 @@ public class RunManager {
                 runRegistry.markFailed(run, result.errorMessage);
             }
         } catch (Throwable error) {
+            TeeBoxLog.error("RunManager", "Run failed: " + run.runId, error);
             runRegistry.markFailed(run, error != null ? error.getMessage() : "Unknown error");
         } finally {
             activeRuns.remove(run.runId);

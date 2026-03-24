@@ -252,7 +252,7 @@ public class RunStore {
             writer = null;
             moveAtomically(indexTmpFile.toPath(), indexFile.toPath());
         } catch (IOException e) {
-            System.err.println("[RunStore] Failed to write run index: " + e.getMessage());
+            TeeBoxLog.error("RunStore", "Failed to write run index", e);
         } finally {
             if (writer != null) {
                 try {

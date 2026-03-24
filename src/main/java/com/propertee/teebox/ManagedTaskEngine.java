@@ -162,19 +162,17 @@ public class ManagedTaskEngine implements TaskRunner {
 
     @Override
     public Task execute(TaskRequest request) {
-        String auditTs = Instant.now().toString();
         try {
             commandGuard.validateCwd(request.cwd);
             validateEnv(request.env, request.command);
             commandGuard.validate(request.command, request.cwd);
         } catch (CommandGuardException e) {
-            System.err.println("[AUDIT] BLOCKED runId=" + request.runId
-                    + " command=" + request.command + " reason=" + e.getMatchedPattern()
-                    + " ts=" + auditTs);
+            TeeBoxLog.warn("AUDIT", "BLOCKED runId=" + request.runId
+                    + " command=" + request.command + " reason=" + e.getMatchedPattern());
             throw e;
         }
-        System.err.println("[AUDIT] ALLOWED runId=" + request.runId
-                + " command=" + request.command + " ts=" + auditTs);
+        TeeBoxLog.info("AUDIT", "ALLOWED runId=" + request.runId
+                + " command=" + request.command);
         Task task = runner.execute(request);
         task.hostInstanceId = hostInstanceId;
         // Record pidStartTime via ProcessHandle for future init() identity verification
@@ -725,13 +723,13 @@ public class ManagedTaskEngine implements TaskRunner {
             return;
         }
         try {
-            Process process = new ProcessBuilder("kill", "-" + signal, "-" + pgid).start();
+            Process process = new ProcessBuilder("kill", "-" + signal, "--", "-" + pgid).start();
             process.waitFor();
             process.getInputStream().close();
             process.getErrorStream().close();
             process.getOutputStream().close();
         } catch (Exception e) {
-            // best-effort
+            TeeBoxLog.warn("TaskEngine", "Failed to signal process group " + pgid, e);
         }
     }
 
@@ -880,7 +878,7 @@ public class ManagedTaskEngine implements TaskRunner {
             writer = null;
             moveAtomically(indexTmpFile.toPath(), indexFile.toPath());
         } catch (IOException e) {
-            System.err.println("[ManagedTaskEngine] Failed to write task index: " + e.getMessage());
+            TeeBoxLog.error("TaskEngine", "Failed to write task index", e);
         } finally {
             closeQuietly(writer);
         }
@@ -962,7 +960,7 @@ public class ManagedTaskEngine implements TaskRunner {
                     lifecycles.put(task.taskId, lc);
                 }
             } catch (Exception e) {
-                // best-effort lifecycle parse
+                TeeBoxLog.warn("TaskEngine", "Failed to parse lifecycle for task " + task.taskId, e);
                 if (!lifecycles.containsKey(task.taskId)) {
                     TaskLifecycle lc = TaskLifecycle.normalizeFromRunner(task);
                     if (!isTransientStatus(task.status)) {

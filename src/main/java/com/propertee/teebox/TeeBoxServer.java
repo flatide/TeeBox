@@ -82,6 +82,7 @@ public class TeeBoxServer {
                 int status = health.healthy ? HttpURLConnection.HTTP_OK : 503;
                 writeJson(exchange, status, health);
             } catch (Exception e) {
+                TeeBoxLog.error("API", "Server error", e);
                 writeJson(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, errorMap(e.getMessage()));
             }
         }
@@ -184,8 +185,10 @@ public class TeeBoxServer {
                 }
                 writeText(exchange, HttpURLConnection.HTTP_NOT_FOUND, "Not found");
             } catch (IllegalArgumentException e) {
+                TeeBoxLog.warn("AdminUI", "Bad request: " + e.getMessage());
                 writeHtml(exchange, HttpURLConnection.HTTP_BAD_REQUEST, pageRenderer.renderErrorPage("Bad request", e.getMessage()));
             } catch (Exception e) {
+                TeeBoxLog.error("AdminUI", "Server error: " + path, e);
                 writeHtml(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, pageRenderer.renderErrorPage("Server error", e.getMessage()));
             }
         }
@@ -256,8 +259,10 @@ public class TeeBoxServer {
                 }
                 writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Not found"));
             } catch (IllegalArgumentException e) {
+                TeeBoxLog.warn("API", "Bad request: " + e.getMessage());
                 writeJson(exchange, HttpURLConnection.HTTP_BAD_REQUEST, errorMap(e.getMessage()));
             } catch (Exception e) {
+                TeeBoxLog.error("API", "Server error", e);
                 writeJson(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, errorMap(e.getMessage()));
             }
         }
