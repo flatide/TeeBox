@@ -112,7 +112,7 @@ TeeBox (Java)
               └── sleep, curl, ...
 ```
 
-- `setsid`로 task가 독립 process group leader가 됨 (`pid == pgid`)
+- `setsid`로 task를 TeeBox와 다른 process group으로 격리를 시도
 - `command.sh`는 exit code 캡처 용도의 최소 래퍼
 
 ### Task Kill
@@ -123,21 +123,11 @@ TeeBox (Java)
 - Admin API: `POST /api/admin/tasks/{taskId}/kill`
 - Run 전체 kill: `POST /api/admin/runs/{runId}/kill-tasks`
 
-TeeBox는 `kill -KILL -- -PGID`로 task의 전체 process group을 원자적으로 종료합니다.
+TeeBox는 process group kill을 우선 시도하고, 필요 시 하위 프로세스 트리를 수집하여 개별 kill하는 fallback을 수행합니다.
 
 ### Shell에서 직접 kill (비권장)
 
-운영 상황에서 불가피하게 shell에서 직접 kill해야 할 경우:
-
-```bash
-# process group 전체를 kill (권장)
-kill -TERM -- -<PID>
-
-# 강제 종료
-kill -KILL -- -<PID>
-```
-
-UI에 표시된 PID가 곧 PGID입니다. `--`는 음수 PGID가 signal로 오해석되는 것을 방지합니다. 단일 프로세스만 kill하면 (`kill <PID>`) 자식 프로세스가 orphan으로 남을 수 있습니다.
+프로세스 중단은 반드시 TeeBox UI 또는 Admin API를 사용해야 합니다. Shell에서 `kill <PID>`로 단일 프로세스만 종료하면 자식 프로세스가 orphan으로 남을 수 있으며, TeeBox의 lifecycle 관리와 불일치가 발생합니다.
 
 ---
 
