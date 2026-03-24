@@ -1,38 +1,35 @@
 package com.propertee.teebox;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 /**
- * Minimal structured logging to stderr.
- * Format: [timestamp] [LEVEL] [component] message
+ * Logging facade using Log4j2.
+ * Component name is used as the logger name.
  */
 public class TeeBoxLog {
-    private static final String FORMAT = "yyyy-MM-dd HH:mm:ss.SSS";
 
     public static void info(String component, String message) {
-        log("INFO", component, message);
+        logger(component).info(message);
     }
 
     public static void warn(String component, String message) {
-        log("WARN", component, message);
+        logger(component).warn(message);
     }
 
     public static void warn(String component, String message, Throwable t) {
-        log("WARN", component, message + " -- " + t.getClass().getSimpleName() + ": " + t.getMessage());
+        logger(component).warn(message, t);
     }
 
     public static void error(String component, String message) {
-        log("ERROR", component, message);
+        logger(component).error(message);
     }
 
     public static void error(String component, String message, Throwable t) {
-        log("ERROR", component, message + " -- " + t.getClass().getSimpleName() + ": " + t.getMessage());
+        logger(component).error(message, t);
     }
 
-    private static void log(String level, String component, String message) {
-        String ts = new SimpleDateFormat(FORMAT, Locale.ENGLISH).format(new Date());
-        System.err.println("[" + ts + "] [" + level + "] [" + component + "] " + message);
+    private static Logger logger(String component) {
+        return LogManager.getLogger(component);
     }
 }

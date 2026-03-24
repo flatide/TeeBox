@@ -22,4 +22,10 @@ if [ -n "$DATA_DIR" ] && [ ! -d "$DATA_DIR" ]; then
     mkdir -p "$DATA_DIR" || { echo "Failed to create dataDir: $DATA_DIR" 1>&2; exit 1; }
 fi
 
-exec "$JAVA_BIN" ${JAVA_OPTS:-} -jar "$JAR_FILE" --config "$CONF_FILE" "$@"
+LOG4J_CONF=${PROPERTEE_TEEBOX_LOG4J:-"$BASE_DIR/conf/log4j2.xml"}
+LOG4J_OPTS=""
+if [ -f "$LOG4J_CONF" ]; then
+    LOG4J_OPTS="-Dlog4j.configurationFile=$LOG4J_CONF"
+fi
+
+exec "$JAVA_BIN" ${JAVA_OPTS:-} $LOG4J_OPTS -jar "$JAR_FILE" --config "$CONF_FILE" "$@"

@@ -19,6 +19,8 @@ repositories {
 dependencies {
     implementation 'com.propertee:propertee-core:0.4.0'
     implementation 'com.google.code.gson:gson:2.11.0'
+    implementation 'org.apache.logging.log4j:log4j-api:2.24.3'
+    implementation 'org.apache.logging.log4j:log4j-core:2.24.3'
     testImplementation 'junit:junit:4.13.2'
 }
 
@@ -71,6 +73,9 @@ task teeBoxDist(type: Copy) {
     }
     from('deploy/teebox/README.md') {
         into '.'
+    }
+    from('deploy/teebox/log4j2.xml') {
+        into 'conf'
     }
     description = 'Build a deployable ProperTee TeeBox directory'
     group = 'distribution'
