@@ -15,31 +15,46 @@ import java.util.Collections;
 
 public class CommandGuardTest {
 
-    // ---- Bare commands should be blocked ----
+    // ---- Bare commands are allowed except denied commands ----
 
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockBareRm() {
+    @Test
+    public void shouldAllowBareRm() {
         new CommandGuard().validate("rm -rf /tmp/build", null);
     }
 
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockBareEcho() {
+    @Test
+    public void shouldAllowBareEcho() {
         new CommandGuard().validate("echo hello", null);
     }
 
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockBareSleep() {
+    @Test
+    public void shouldAllowBareSleep() {
         new CommandGuard().validate("sleep 5", null);
     }
 
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockBarePython() {
+    @Test
+    public void shouldAllowBarePython() {
         new CommandGuard().validate("python3 script.py", null);
     }
 
-    @Test(expected = CommandGuardException.class)
-    public void shouldBlockBareShutdown() {
+    @Test
+    public void shouldAllowBareShutdownCommandString() {
         new CommandGuard().validate("shutdown -h now", null);
+    }
+
+    @Test
+    public void shouldBlockBareSudo() {
+        assertDeniedCommandBlocked("sudo whoami", "sudo");
+    }
+
+    @Test
+    public void shouldBlockBareSu() {
+        assertDeniedCommandBlocked("su root", "su");
+    }
+
+    @Test
+    public void shouldBlockPathSudo() {
+        assertDeniedCommandBlocked("/usr/bin/sudo whoami", "sudo");
     }
 
     // ---- Shell operators should be blocked ----
@@ -100,32 +115,22 @@ public class CommandGuardTest {
         assertControlCharBlocked(script.getAbsolutePath() + "\0rm -rf /", "0x00");
     }
 
-    // ---- .sh extension enforcement ----
+    // ---- File path executables ----
 
     @Test
-    public void shouldBlockNonShExtension() throws Exception {
+    public void shouldAllowNonShExtension() throws Exception {
         File tmpDir = Files.createTempDirectory("guard-ext").toFile();
         File script = new File(tmpDir, "run.py");
         writeFile(script, "#!/usr/bin/env python3\nprint('hello')");
-        try {
-            new CommandGuard().validate(script.getAbsolutePath(), null);
-            Assert.fail("Expected CommandGuardException");
-        } catch (CommandGuardException e) {
-            Assert.assertTrue(e.getMatchedPattern().startsWith("not-shell-script:"));
-        }
+        new CommandGuard().validate(script.getAbsolutePath(), null);
     }
 
     @Test
-    public void shouldBlockNoExtension() throws Exception {
+    public void shouldAllowNoExtension() throws Exception {
         File tmpDir = Files.createTempDirectory("guard-noext").toFile();
         File script = new File(tmpDir, "run_script");
         writeFile(script, "#!/bin/sh\necho ok");
-        try {
-            new CommandGuard().validate(script.getAbsolutePath(), null);
-            Assert.fail("Expected CommandGuardException");
-        } catch (CommandGuardException e) {
-            Assert.assertTrue(e.getMatchedPattern().startsWith("not-shell-script:"));
-        }
+        new CommandGuard().validate(script.getAbsolutePath(), null);
     }
 
     // ---- Allowed roots enforcement ----
@@ -278,11 +283,11 @@ public class CommandGuardTest {
     @Test
     public void exceptionShouldCarryCommandAndPattern() {
         try {
-            new CommandGuard().validate("rm -rf /etc", null);
+            new CommandGuard().validate("sudo whoami", null);
             Assert.fail("Expected CommandGuardException");
         } catch (CommandGuardException e) {
-            Assert.assertEquals("rm -rf /etc", e.getCommand());
-            Assert.assertTrue(e.getMatchedPattern().startsWith("bare-command:"));
+            Assert.assertEquals("sudo whoami", e.getCommand());
+            Assert.assertEquals("denied-command:sudo", e.getMatchedPattern());
         }
     }
 
@@ -306,6 +311,15 @@ public class CommandGuardTest {
                     e.getMatchedPattern().startsWith("control-char:"));
             Assert.assertTrue("Expected hex " + expectedHex + " but got: " + e.getMatchedPattern(),
                     e.getMatchedPattern().contains(expectedHex));
+        }
+    }
+
+    private static void assertDeniedCommandBlocked(String command, String expectedCommand) {
+        try {
+            new CommandGuard().validate(command, null);
+            Assert.fail("Expected CommandGuardException for denied command");
+        } catch (CommandGuardException e) {
+            Assert.assertEquals("denied-command:" + expectedCommand, e.getMatchedPattern());
         }
     }
 

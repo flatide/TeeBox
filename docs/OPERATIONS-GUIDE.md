@@ -131,10 +131,11 @@ TeeBox는 process group kill을 우선 시도하고, 필요 시 하위 프로세
 
 ### 보안 제약
 
-- `.sh` 확장자 파일만 실행 가능
-- `allowedScriptRoots` 내의 스크립트만 허용 (기본: `dataDir`)
+- TeeBox는 root로 실행되면 시작 실패
+- `sudo`, `su` 명령은 차단
+- 경로 형태로 지정한 실행 파일은 `allowedScriptRoots` 내에서만 허용 (기본: `dataDir`)
 - shell operator (`;`, `|`, `&`, `>` 등) 차단
-- bare command (`rm`, `echo` 등) 차단 — 반드시 파일 경로로 지정
+- bare command 실행 허용
 - 제어 문자 (`\n`, `\r`, `\0`) 차단
 - 위험 환경 변수 (`LD_PRELOAD`, `DYLD_*`) 차단
 

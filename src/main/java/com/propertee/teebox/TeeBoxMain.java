@@ -2,6 +2,7 @@ package com.propertee.teebox;
 
 public class TeeBoxMain {
     public static void main(String[] args) throws Exception {
+        RuntimePolicy.requireNonRoot();
         TeeBoxConfig config = TeeBoxConfig.fromArgs(args);
         System.setProperty("propertee.task.baseDir", new java.io.File(config.dataDir, "tasks").getAbsolutePath());
 

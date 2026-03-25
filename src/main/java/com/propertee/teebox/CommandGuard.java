@@ -4,17 +4,25 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Validates task commands before execution.
  *
- * Rejects control characters, shell operators, bare commands, non-.sh files,
- * and scripts outside allowed roots.
+ * Rejects control characters, shell operators, denied privilege-escalation
+ * commands, missing executable paths, and path executables outside allowed
+ * roots.
  */
 public class CommandGuard {
 
     private static final String SHELL_OPERATORS = ";|&><`";
+    private static final Set<String> DENIED_COMMANDS = new HashSet<String>();
+    static {
+        DENIED_COMMANDS.add("sudo");
+        DENIED_COMMANDS.add("su");
+    }
     private final List<File> allowedRoots;
 
     public CommandGuard() {
@@ -28,8 +36,9 @@ public class CommandGuard {
     /**
      * Validate a command with optional cwd for script path resolution.
      *
-     * Rejects control characters, shell operators, bare commands,
-     * non-.sh files, missing files, and scripts outside allowed roots.
+     * Rejects control characters, shell operators, denied privilege-escalation
+     * commands, missing path executables, and path executables outside allowed
+     * roots.
      */
     public void validate(String command, String cwd) {
         if (command == null) {
@@ -58,25 +67,21 @@ public class CommandGuard {
         }
         String executable = tokens.get(0);
 
-        // 3. Executable must be a file path (contain '/')
-        if (executable.indexOf('/') < 0) {
-            throw new CommandGuardException(command, "bare-command:" + executable);
+        // 3. Explicitly block privilege-escalation commands.
+        String commandName = baseName(executable);
+        if (DENIED_COMMANDS.contains(commandName)) {
+            throw new CommandGuardException(command, "denied-command:" + commandName);
         }
 
-        // 4. Resolve and verify the script file exists
-        File scriptFile = resolveScriptFile(executable, cwd);
-        if (!scriptFile.isFile()) {
-            throw new CommandGuardException(command, "file-not-found:" + scriptFile.getPath());
-        }
-
-        // 5. Enforce .sh extension
-        if (!scriptFile.getName().endsWith(".sh")) {
-            throw new CommandGuardException(command, "not-shell-script:" + scriptFile.getName());
-        }
-
-        // 6. Enforce allowed roots (if configured)
-        if (!allowedRoots.isEmpty()) {
-            validateWithinRoots(scriptFile, command);
+        // 4. If the executable is a path, resolve it and enforce allowed roots.
+        if (executable.indexOf('/') >= 0) {
+            File executableFile = resolveScriptFile(executable, cwd);
+            if (!executableFile.isFile()) {
+                throw new CommandGuardException(command, "file-not-found:" + executableFile.getPath());
+            }
+            if (!allowedRoots.isEmpty()) {
+                validateWithinRoots(executableFile, command);
+            }
         }
     }
 
@@ -213,5 +218,13 @@ public class CommandGuard {
         } catch (IOException e) {
             return file.getAbsolutePath();
         }
+    }
+
+    private static String baseName(String executable) {
+        int lastSlash = executable.lastIndexOf('/');
+        if (lastSlash >= 0 && lastSlash + 1 < executable.length()) {
+            return executable.substring(lastSlash + 1);
+        }
+        return executable;
     }
 }
