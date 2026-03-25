@@ -1,3 +1,9 @@
 #!/bin/sh
-sleep 20
-echo "$1_done(2)""
+sleep 15
+echo "step 1"
+sleep 15
+echo "step 2"
+sleep 15
+echo "step 3"
+sleep 15
+echo "$1_done(2)"

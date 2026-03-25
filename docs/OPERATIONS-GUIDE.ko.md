@@ -6,7 +6,7 @@
 
 ```bash
 cd propertee-teebox && ./gradlew teeBoxZip
-# → build/distributions/propertee-teebox-dist.zip
+# -> build/distributions/propertee-teebox-dist.zip
 ```
 
 ### 설치
@@ -18,7 +18,7 @@ unzip propertee-teebox-dist.zip -d /opt/teebox
 디렉터리 구조:
 ```
 /opt/teebox/
-  bin/run-teebox.sh     # 실행 스크립트
+  bin/run-teebox.sh      # 실행 스크립트
   conf/teebox.properties # 설정 파일
   lib/propertee-teebox.jar
 ```
@@ -37,21 +37,21 @@ propertee.teebox.maxRuns=4
 |------|--------|------|
 | `bind` | `127.0.0.1` | 바인드 주소 |
 | `port` | `18080` | 리스닝 포트 |
-| `dataDir` | (필수) | 데이터 디렉터리 (runs, tasks, script-registry) |
+| `dataDir` | (필수) | 데이터 디렉터리 (`runs`, `tasks`, `script-registry`) |
 | `maxRuns` | `4` | 동시 실행 가능한 최대 run 수 |
 | `apiToken` | 없음 | 전체 API 공통 Bearer 토큰 (fallback) |
 | `clientApiToken` | 없음 | `/api/client` 전용 토큰 |
 | `publisherApiToken` | 없음 | `/api/publisher` 전용 토큰 |
 | `adminApiToken` | 없음 | `/api/admin` 전용 토큰 |
-| `allowedScriptRoots` | `dataDir` | SHELL 실행 허용 경로 (쉼표 구분) |
-| `runRetentionMs` | `86400000` (24h) | run 보관 → archived 전환 |
-| `runArchiveRetentionMs` | `604800000` (7d) | archived → 삭제 |
+| `allowedScriptRoots` | `dataDir` | `SHELL()` 실행 허용 경로 (쉼표 구분) |
+| `runRetentionMs` | `86400000` (24h) | run 보관 -> archived 전환 |
+| `runArchiveRetentionMs` | `604800000` (7d) | archived -> 삭제 |
 | `maintenanceIntervalMs` | `60000` (1m) | 백그라운드 유지보수 주기 |
 
 환경 변수:
-- `PROPERTEE_TEEBOX_CONFIG` — 설정 파일 경로 (기본: `conf/teebox.properties`)
-- `JAVA_HOME` — Java 설치 경로
-- `JAVA_OPTS` — JVM 옵션 (`-Xmx`, `-D` 등). 시스템 프로퍼티는 설정 파일보다 우선
+- `PROPERTEE_TEEBOX_CONFIG` - 설정 파일 경로 (기본: `conf/teebox.properties`)
+- `JAVA_HOME` - Java 설치 경로
+- `JAVA_OPTS` - JVM 옵션 (`-Xmx`, `-D` 등). 시스템 프로퍼티는 설정 파일보다 우선
 
 ### 실행
 
@@ -62,7 +62,7 @@ propertee.teebox.maxRuns=4
 ### 의존성
 
 - Java 17+
-- `setsid` (util-linux) — task process group 격리에 필요. Linux에 기본 포함.
+- `setsid` (util-linux) - task process group 격리에 필요. Linux에 기본 포함
 
 ---
 
@@ -85,7 +85,7 @@ Admin HTML UI: `/admin`
 ## 3. 스크립트 실행 흐름
 
 ```
-Publisher API로 스크립트 등록 → Client API로 run 제출 → TeeBox가 실행 → 결과 조회
+Publisher API로 스크립트 등록 -> Client API로 run 제출 -> TeeBox가 실행 -> 결과 조회
 ```
 
 1. **스크립트 등록**: `POST /api/publisher/scripts/{scriptId}/versions/{version}`
@@ -103,7 +103,7 @@ TeeBox는 ProperTee 스크립트의 `SHELL()` 호출마다 외부 프로세스(t
 
 ```
 TeeBox (Java)
-  └── setsid /bin/sh command.sh    ← task (독립 process group)
+  └── setsid /bin/sh command.sh    <- task (독립 process group)
         └── /path/to/user_script.sh
               └── sleep, curl, ...
 ```
@@ -134,7 +134,7 @@ TeeBox는 process group kill을 우선 시도하고, 필요 시 하위 프로세
 - `.sh` 확장자 파일만 실행 가능
 - `allowedScriptRoots` 내의 스크립트만 허용 (기본: `dataDir`)
 - shell operator (`;`, `|`, `&`, `>` 등) 차단
-- bare command (`rm`, `echo` 등) 차단 — 반드시 파일 경로로 지정
+- bare command (`rm`, `echo` 등) 차단 - 반드시 파일 경로로 지정
 - 제어 문자 (`\n`, `\r`, `\0`) 차단
 - 위험 환경 변수 (`LD_PRELOAD`, `DYLD_*`) 차단
 
@@ -175,7 +175,7 @@ wait $WORKER_PID
 
 **Run:**
 ```
-Active (0~24h) → Archived (24h~7d) → Purged (7d~)
+Active (0~24h) -> Archived (24h~7d) -> Purged (7d~)
 ```
 - Active: 전체 로그 (stdout/stderr 최대 200줄), 스레드 정보 유지
 - Archived: 스레드 목록 제거, stdout 50줄/stderr 20줄로 축소
@@ -188,8 +188,8 @@ Active (0~24h) → Archived (24h~7d) → Purged (7d~)
 
 ```
 dataDir/
-  runs/           # run 상태 JSON 파일
-  tasks/          # task 메타데이터, stdout/stderr 로그
+  runs/            # run 상태 JSON 파일
+  tasks/           # task 메타데이터, stdout/stderr 로그
   script-registry/ # 등록된 스크립트 버전
 ```
 
@@ -199,7 +199,7 @@ dataDir/
 
 ### Admin Dashboard
 
-`http://<host>:<port>/admin` — 실시간 대시보드
+`http://<host>:<port>/admin` - 실시간 대시보드
 
 - Active/Queued run 현황
 - JVM 메모리, 디스크 사용량
@@ -220,38 +220,10 @@ run detail 페이지에서 확인 가능한 정보:
 - **Input Properties**: run에 전달된 입력값
 - 실행 중인 run은 auto-refresh로 출력이 실시간 추적됨
 
-### 로깅
+### 감사 로그
 
-Log4j2 기반. 콘솔(stderr)과 파일에 동시 출력.
-
-**로그 파일 위치**: `propertee.teebox.logDir` 시스템 프로퍼티로 지정 (기본: `logs/`)
-
+task 실행 시 stderr에 구조화된 감사 로그 출력:
 ```
-logs/
-  teebox.log              # 현재 로그
-  teebox-2026-03-24-1.log.gz  # 롤링된 로그
+[AUDIT] ALLOWED runId=... command=... ts=...
+[AUDIT] BLOCKED runId=... command=... reason=... ts=...
 ```
-
-**롤링 정책:**
-- 파일 크기 50MB 또는 1일 단위로 롤링
-- 최대 30개 보관 후 자동 삭제
-
-**설정 변경**: `conf/log4j2.xml` 수정 또는 `PROPERTEE_TEEBOX_LOG4J` 환경 변수로 별도 설정 파일 지정
-
-**로그 형식:**
-```
-2026-03-24 10:30:15.123 [INFO ] [AUDIT] ALLOWED runId=run-abc command=/path/script.sh
-2026-03-24 10:30:20.456 [ERROR] [RunManager] Run failed: run-abc -- RuntimeException: ...
-```
-
-**주요 로그 컴포넌트:**
-
-| 컴포넌트 | 내용 |
-|----------|------|
-| `TeeBox` | 서버 시작/종료 |
-| `AUDIT` | task 명령 허용/차단 |
-| `API` | API 요청 에러 |
-| `AdminUI` | Admin UI 에러 |
-| `RunManager` | run 실행 실패, flush/maintenance 에러 |
-| `TaskEngine` | task index/lifecycle 에러, process group kill 실패 |
-| `RunStore` | run 저장소 I/O 에러 |
