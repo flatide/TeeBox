@@ -3,7 +3,6 @@ package com.propertee.teebox;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
-import com.propertee.task.DefaultTaskRunner;
 import com.propertee.task.Task;
 import com.propertee.task.TaskObservation;
 import com.propertee.task.TaskRequest;
@@ -41,7 +40,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * Managed task engine that wraps a DefaultTaskRunner and adds persistence,
+ * Managed task engine that wraps a platform TaskRunner and adds persistence,
  * indexing, archival, and querying.
  *
  * Task lifecycle is managed via TaskLifecycle (4-axis model) as the single
@@ -58,7 +57,7 @@ public class ManagedTaskEngine implements TaskRunner {
             "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"));
     private static final String[] DENIED_ENV_PREFIXES = {"DYLD_"};
 
-    private final DefaultTaskRunner runner;
+    private final TaskRunner runner;
     private final CommandGuard commandGuard;
     private final File taskBaseDir;
     private final File tasksDir;
@@ -89,7 +88,14 @@ public class ManagedTaskEngine implements TaskRunner {
         this.indexTmpFile = new File(tasksDir, "index.json.tmp");
         this.retentionMs = parseDurationProperty("propertee.task.retentionMs", DEFAULT_RETENTION_MS);
         this.archiveRetentionMs = parseDurationProperty("propertee.task.archiveRetentionMs", DEFAULT_ARCHIVE_RETENTION_MS);
-        this.runner = new DefaultTaskRunner(baseDir);
+        this.runner = createRunner(baseDir);
+    }
+
+    private TaskRunner createRunner(String baseDir) {
+        if (IS_WINDOWS) {
+            return new SimulatedTaskRunner(baseDir);
+        }
+        return new UnixTaskRunner(baseDir);
     }
 
     // ---- Per-task locking ----
