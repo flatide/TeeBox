@@ -1,16 +1,13 @@
 // Parallel tasks demo: multiple SHELL commands via multi/thread
-// Submit with property: scriptsDir = /path/to/demo/teebox/scripts
 PRINT("starting parallel tasks")
 
-ctx = SHELL_CTX(scriptsDir)
-
 function run_task(ctx, name) do
-    return SHELL(::ctx, "./echo_done.sh " + name)
+    return SHELL("sh -c 'sleep 10; echo " + name + "_done'")
 end
 
 multi result do
-    thread task1: run_task(::ctx, "task1")
-    thread task2: run_task(::ctx, "task2")
+    thread task1: run_task({}, "task1")
+    thread task2: run_task({}, "task2")
 end
 
 PRINT("task1 result", result.task1)

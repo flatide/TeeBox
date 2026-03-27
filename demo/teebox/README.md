@@ -28,7 +28,7 @@ http://127.0.0.1:18080/admin
 - `03_long_task_kill.pt`
   - Starts a long-running external task and waits for it so an admin can kill it from the UI or API.
 - `04_detached_task.pt`
-  - Starts an external task and exits the ProperTee run immediately so the task remains visible as a detached process.
+  - Starts multiple delayed external commands in parallel and shows their final task results.
 - `05_registered_sum.pt`
   - Minimal registered-script example for the `publisher -> client` flow.
 
