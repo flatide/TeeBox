@@ -84,11 +84,11 @@ Useful settings:
 
 ## GitHub Download
 
-`propertee-teebox-dist.zip` is published on GitHub Releases when a repository tag such as `v0.3.1` is pushed.
+`propertee-teebox-dist.zip` is published on GitHub Releases when a repository tag such as `v0.5.0` is pushed.
 
 ```bash
-git tag v0.3.1
-git push origin v0.3.1
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 ## Configuration
