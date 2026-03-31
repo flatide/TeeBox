@@ -38,8 +38,53 @@ public class CommandGuardTest {
     }
 
     @Test
-    public void shouldAllowBareShutdownCommandString() {
-        new CommandGuard().validate("shutdown -h now", null);
+    public void shouldBlockBareShutdownCommandString() {
+        assertDeniedCommandBlocked("shutdown -h now", "shutdown");
+    }
+
+    @Test
+    public void shouldBlockBareRebootCommandString() {
+        assertDeniedCommandBlocked("reboot", "reboot");
+    }
+
+    @Test
+    public void shouldBlockDangerousRecursiveRmRoot() {
+        assertDangerousRmBlocked("rm -rf /");
+    }
+
+    @Test
+    public void shouldBlockDangerousRecursiveRmGlob() {
+        assertDangerousRmBlocked("rm -rf /*");
+    }
+
+    @Test
+    public void shouldBlockDangerousRecursiveRmEtcGlob() {
+        assertDangerousRmBlocked("rm -rf /etc/*");
+    }
+
+    @Test
+    public void shouldBlockDangerousRecursiveRmHome() {
+        assertDangerousRmBlocked("rm -rf $HOME");
+    }
+
+    @Test
+    public void shouldAllowNonRecursiveRmEtcFile() {
+        new CommandGuard().validate("rm /etc/hosts", null);
+    }
+
+    @Test
+    public void shouldBlockDangerousDdToDevice() {
+        try {
+            new CommandGuard().validate("dd if=/dev/zero of=/dev/disk1", null);
+            Assert.fail("Expected CommandGuardException");
+        } catch (CommandGuardException e) {
+            Assert.assertEquals("dangerous-dd-target", e.getMatchedPattern());
+        }
+    }
+
+    @Test
+    public void shouldAllowDdToRegularFile() {
+        new CommandGuard().validate("dd if=input.bin of=/tmp/output.bin", null);
     }
 
     @Test
@@ -57,42 +102,56 @@ public class CommandGuardTest {
         assertDeniedCommandBlocked("/usr/bin/sudo whoami", "sudo");
     }
 
-    // ---- Shell operators should be blocked ----
+    // ---- Shell syntax should be allowed ----
 
     @Test
-    public void shouldBlockSemicolon() throws Exception {
+    public void shouldAllowSemicolon() throws Exception {
         File script = createScript("semi");
-        assertShellOperatorBlocked(script.getAbsolutePath() + "; rm -rf /");
+        new CommandGuard().validate(script.getAbsolutePath() + "; echo ok", null);
     }
 
     @Test
-    public void shouldBlockPipe() throws Exception {
+    public void shouldAllowPipe() throws Exception {
         File script = createScript("pipe");
-        assertShellOperatorBlocked(script.getAbsolutePath() + " | cat");
+        new CommandGuard().validate(script.getAbsolutePath() + " | cat", null);
     }
 
     @Test
-    public void shouldBlockAmpersand() throws Exception {
+    public void shouldAllowAmpersand() throws Exception {
         File script = createScript("amp");
-        assertShellOperatorBlocked(script.getAbsolutePath() + " && echo done");
+        new CommandGuard().validate(script.getAbsolutePath() + " && echo done", null);
     }
 
     @Test
-    public void shouldBlockRedirect() throws Exception {
+    public void shouldAllowRedirect() throws Exception {
         File script = createScript("redir");
-        assertShellOperatorBlocked(script.getAbsolutePath() + " > /tmp/out");
+        new CommandGuard().validate(script.getAbsolutePath() + " > /tmp/out", null);
     }
 
     @Test
-    public void shouldBlockCommandSubstitution() throws Exception {
-        File script = createScript("sub");
-        assertShellOperatorBlocked(script.getAbsolutePath() + " $(whoami)");
+    public void shouldAllowShellWrapperPayload() {
+        new CommandGuard().validate("sh -c 'sleep 1; echo done'", null);
     }
 
     @Test
-    public void shouldBlockBacktick() throws Exception {
-        File script = createScript("bt");
-        assertShellOperatorBlocked(script.getAbsolutePath() + " `whoami`");
+    public void shouldBlockSudoInsideShellWrapperPayload() {
+        assertDeniedCommandBlocked("sh -c 'sudo whoami'", "sudo");
+    }
+
+    @Test
+    public void shouldBlockDangerousRmInsideShellWrapperPayload() {
+        assertDangerousRmBlocked("sh -c 'rm -rf /etc/*'");
+    }
+
+    @Test
+    public void shouldBlockDeniedCommandInCompoundSequence() {
+        assertDeniedCommandBlocked("echo ok; sudo whoami", "sudo");
+    }
+
+    @Test
+    public void shouldAllowPathExecutableAfterEnvAssignment() throws Exception {
+        File script = createScript("envpath");
+        new CommandGuard().validate("DEMO=1 " + script.getAbsolutePath() + " arg1", null);
     }
 
     // ---- Control characters should be blocked ----
@@ -293,12 +352,12 @@ public class CommandGuardTest {
 
     // ---- Helpers ----
 
-    private static void assertShellOperatorBlocked(String command) {
+    private static void assertDangerousRmBlocked(String command) {
         try {
             new CommandGuard().validate(command, null);
-            Assert.fail("Expected CommandGuardException for: " + command);
+            Assert.fail("Expected CommandGuardException for dangerous rm");
         } catch (CommandGuardException e) {
-            Assert.assertTrue(e.getMatchedPattern().startsWith("shell-operator:"));
+            Assert.assertEquals("dangerous-rm-target", e.getMatchedPattern());
         }
     }
 

@@ -2,7 +2,7 @@
 PRINT("starting parallel tasks")
 
 function run_task(ctx, name) do
-    return SHELL("sh -c 'sleep 10; echo " + name + "_done'")
+    return SHELL("sleep 10; echo " + name + "_done")
 end
 
 multi result do

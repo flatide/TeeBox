@@ -1,4 +1,4 @@
 // Long-running external task: use admin page or API to kill the task while SHELL is blocking
 PRINT("starting long task via SHELL")
-result = SHELL("sh -c 'sleep 300; echo should_not_print'")
+result = SHELL("sleep 300; echo should_not_print")
 PRINT("final result", result)
