@@ -27,8 +27,6 @@ public class AdminPageRenderer {
         sb.append("<a href='/admin' class='top-nav-link").append("dashboard".equals(activePage) ? " active" : "").append("'>Dashboard</a>");
         sb.append("<a href='/admin/scripts' class='top-nav-link").append("scripts".equals(activePage) ? " active" : "").append("'>Scripts</a>");
         sb.append("<a href='/admin/runs' class='top-nav-link").append("runs".equals(activePage) ? " active" : "").append("'>Runs</a>");
-        sb.append("<a href='/health' class='top-nav-link'>Health</a>");
-        sb.append("<a href='/api/admin/system' class='top-nav-link'>System API</a>");
         sb.append("</div>");
         sb.append("<div class='top-nav-meta' id='nav-counts'>");
         sb.append("<span class='tag tag-nav'>active ").append(runManager.getActiveCount()).append("</span> ");
