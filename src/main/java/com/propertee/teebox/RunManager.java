@@ -38,7 +38,6 @@ public class RunManager {
     private final ManagedTaskEngine managedTaskEngine;
     private final ThreadPoolExecutor runExecutor;
     private final ScriptExecutor scriptExecutor;
-    private final SystemInfoCollector systemInfoCollector;
     private final ScheduledExecutorService maintenanceScheduler;
     private final long maintenanceIntervalMs;
     private final java.util.concurrent.ConcurrentHashMap<String, Future<?>> activeRuns = new java.util.concurrent.ConcurrentHashMap<String, Future<?>>();
@@ -68,7 +67,6 @@ public class RunManager {
         this.managedTaskEngine.init();
         this.managedTaskEngine.archiveExpiredTasks();
         this.scriptExecutor = new ScriptExecutor();
-        this.systemInfoCollector = teeBoxConfig != null ? new SystemInfoCollector(teeBoxConfig) : null;
         this.maintenanceIntervalMs = parseDurationProperty("maintenanceIntervalMs", DEFAULT_MAINTENANCE_INTERVAL_MS);
         this.runExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(Math.max(1, maxConcurrentRuns));
         this.maintenanceScheduler = Executors.newSingleThreadScheduledExecutor();
@@ -200,37 +198,6 @@ public class RunManager {
 
     public int getActiveCount() {
         return runExecutor.getActiveCount();
-    }
-
-    public SystemInfo getSystemInfo() {
-        if (systemInfoCollector == null) {
-            return null;
-        }
-        return systemInfoCollector.collect();
-    }
-
-    public HealthStatus getHealthStatus() {
-        HealthStatus health = new HealthStatus();
-        health.healthy = true;
-        health.uptimeMs = System.currentTimeMillis() - startTimeMs;
-        health.activeRuns = runExecutor.getActiveCount();
-        health.queuedRuns = runExecutor.getQueue().size();
-        health.maxConcurrentRuns = runExecutor.getMaximumPoolSize();
-        health.completedRuns = runExecutor.getCompletedTaskCount();
-
-        if (systemInfoCollector != null) {
-            try {
-                File dataDirFile = this.dataDir;
-                health.diskFreeMb = dataDirFile.getUsableSpace() / (1024L * 1024L);
-                if (health.diskFreeMb < 100) {
-                    health.healthy = false;
-                    health.reason = "Disk space low: " + health.diskFreeMb + " MB free";
-                }
-            } catch (Exception e) {
-                // ignore disk check failure
-            }
-        }
-        return health;
     }
 
     public void shutdown() {

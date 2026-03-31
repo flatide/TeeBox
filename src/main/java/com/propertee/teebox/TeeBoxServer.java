@@ -59,7 +59,6 @@ public class TeeBoxServer {
     private void registerContexts() {
         server.createContext("/api", new ApiHandler());
         server.createContext("/admin", new AdminHandler());
-        server.createContext("/health", new HealthHandler());
         server.createContext("/", new RootHandler());
     }
 
@@ -67,24 +66,6 @@ public class TeeBoxServer {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             redirect(exchange, "/admin");
-        }
-    }
-
-    private class HealthHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if (!"GET".equals(exchange.getRequestMethod())) {
-                writeJson(exchange, HttpURLConnection.HTTP_BAD_METHOD, errorMap("Use GET"));
-                return;
-            }
-            try {
-                HealthStatus health = runManager.getHealthStatus();
-                int status = health.healthy ? HttpURLConnection.HTTP_OK : 503;
-                writeJson(exchange, status, health);
-            } catch (Exception e) {
-                TeeBoxLog.error("API", "Server error", e);
-                writeJson(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, errorMap(e.getMessage()));
-            }
         }
     }
 
@@ -203,8 +184,6 @@ public class TeeBoxServer {
             List<RunInfo> active = new ArrayList<RunInfo>(running);
             active.addAll(queued);
             html = pageRenderer.renderRunsTableFragment(active);
-        } else if ("dashboard-sysinfo".equals(fragment)) {
-            html = pageRenderer.renderSystemInfoFragment();
         } else if ("nav-counts".equals(fragment)) {
             html = pageRenderer.renderNavCountsFragment();
         } else if (fragment.startsWith("all-runs")) {
@@ -387,21 +366,6 @@ public class TeeBoxServer {
     }
 
     private void handleAdminApi(HttpExchange exchange, String method, String path) throws IOException {
-        if ("GET".equals(method) && "/api/admin/health".equals(path)) {
-            HealthStatus health = runManager.getHealthStatus();
-            int statusCode = health.healthy ? HttpURLConnection.HTTP_OK : 503;
-            writeJson(exchange, statusCode, health);
-            return;
-        }
-        if ("GET".equals(method) && "/api/admin/system".equals(path)) {
-            SystemInfo info = runManager.getSystemInfo();
-            if (info == null) {
-                writeJson(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, errorMap("System info not available"));
-                return;
-            }
-            writeJson(exchange, HttpURLConnection.HTTP_OK, info);
-            return;
-        }
         if ("GET".equals(method) && "/api/admin/runs".equals(path)) {
             Map<String, String> query = parseQuery(exchange);
             String status = trimToNull(query.get("status"));
