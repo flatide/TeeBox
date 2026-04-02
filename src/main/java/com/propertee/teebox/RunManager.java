@@ -67,7 +67,7 @@ public class RunManager {
         this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId(), allowedRoots);
         this.managedTaskEngine.init();
         this.managedTaskEngine.archiveExpiredTasks();
-        this.scriptExecutor = new ScriptExecutor();
+        this.scriptExecutor = new ScriptExecutor(new TeeBoxPlatformProvider(this.dataDir));
         this.systemInfoCollector = teeBoxConfig != null ? new SystemInfoCollector(teeBoxConfig) : null;
         this.maintenanceIntervalMs = parseDurationProperty("maintenanceIntervalMs", DEFAULT_MAINTENANCE_INTERVAL_MS);
         this.runExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(Math.max(1, maxConcurrentRuns));

@@ -293,6 +293,50 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void serverShouldExposePlatformBuiltinsThroughRuns() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript(
+                "platform_builtins",
+                "v1",
+                "MKDIR(baseDir + \"/sub\")\n" +
+                "WRITE_FILE(baseDir + \"/sub/test.txt\", \"line1\\nline2\\n\")\n" +
+                "lines = READ_LINES(baseDir + \"/sub/test.txt\")\n" +
+                "info = FILE_INFO(baseDir + \"/sub/test.txt\")\n" +
+                "entries = LIST_DIR(baseDir + \"/sub\")\n" +
+                "return {\n" +
+                "  \"exists\": FILE_EXISTS(baseDir + \"/sub/test.txt\"),\n" +
+                "  \"envType\": TYPE_OF(ENV(\"PATH\", \"\")),\n" +
+                "  \"line1\": lines.value.1,\n" +
+                "  \"line2\": lines.value.2,\n" +
+                "  \"fileType\": info.value.type,\n" +
+                "  \"entryCount\": LEN(entries.value)\n" +
+                "}\n",
+                "platform builtins test",
+                Arrays.asList("test"),
+                true
+            );
+
+            Map<String, Object> props = new LinkedHashMap<String, Object>();
+            props.put("baseDir", new File(testServer.dataDir, "platform-builtins").getAbsolutePath());
+            String runId = (String) client.submitRun("platform_builtins", null, props).get("runId");
+            client.waitForRunTerminal(runId, 8000L);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resultData = (Map<String, Object>) client.getRunResult(runId).get("resultData");
+            Assert.assertEquals(Boolean.TRUE, resultData.get("exists"));
+            Assert.assertEquals("string", resultData.get("envType"));
+            Assert.assertEquals("line1", resultData.get("line1"));
+            Assert.assertEquals("line2", resultData.get("line2"));
+            Assert.assertEquals("file", resultData.get("fileType"));
+            Assert.assertEquals(1.0, ((Number) resultData.get("entryCount")).doubleValue(), 0.0);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void serverShouldRunActivatedPublisherVersionByDefault() throws Exception {
         TestServer testServer = createServer();
         try {
@@ -672,7 +716,7 @@ public class TeeBoxServerTest {
 
         TeeBoxServer server = new TeeBoxServer(config);
         server.start();
-        return new TestServer(server, "http://127.0.0.1:" + server.getPort(), scriptsDir);
+        return new TestServer(server, "http://127.0.0.1:" + server.getPort(), scriptsDir, dataDir);
     }
 
     private Map<String, Object> postJson(String url, Map<String, Object> payload, int expectedStatus) throws IOException {
@@ -809,11 +853,13 @@ public class TeeBoxServerTest {
         private final TeeBoxServer server;
         private final String baseUrl;
         private final File scriptsDir;
+        private final File dataDir;
 
-        private TestServer(TeeBoxServer server, String baseUrl, File scriptsDir) {
+        private TestServer(TeeBoxServer server, String baseUrl, File scriptsDir, File dataDir) {
             this.server = server;
             this.baseUrl = baseUrl;
             this.scriptsDir = scriptsDir;
+            this.dataDir = dataDir;
         }
 
         private String script(String name) {

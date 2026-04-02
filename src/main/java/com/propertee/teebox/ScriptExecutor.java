@@ -4,6 +4,7 @@ import com.propertee.core.ScriptParser;
 import com.propertee.interpreter.BuiltinFunctions;
 import com.propertee.interpreter.ProperTeeInterpreter;
 import com.propertee.parser.ProperTeeParser;
+import com.propertee.platform.PlatformProvider;
 import com.propertee.runtime.TypeChecker;
 import com.propertee.scheduler.Scheduler;
 import com.propertee.scheduler.SchedulerListener;
@@ -20,6 +21,12 @@ import java.util.List;
 import java.util.Map;
 
 public class ScriptExecutor {
+    private final PlatformProvider platformProvider;
+
+    public ScriptExecutor(PlatformProvider platformProvider) {
+        this.platformProvider = platformProvider;
+    }
+
     public ExecutionResult execute(File scriptFile,
                                    Map<String, Object> properties,
                                    int maxIterations,
@@ -53,7 +60,7 @@ public class ScriptExecutor {
                 }
             };
 
-            BuiltinFunctions builtins = new BuiltinFunctions(stdout, stderr, runId, taskRunner);
+            BuiltinFunctions builtins = new BuiltinFunctions(stdout, stderr, runId, taskRunner, platformProvider);
             visitor = new ProperTeeInterpreter(properties, stdout, stderr, maxIterations, iterationLimitBehavior, builtins);
             Scheduler scheduler = new Scheduler(visitor, callbacks != null ? new CallbackSchedulerListener(callbacks) : null);
             ProperTeeInterpreter.RootStepper mainStepper = visitor.createRootStepper(tree);
