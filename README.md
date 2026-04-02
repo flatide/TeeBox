@@ -14,27 +14,28 @@ TeeBox is the ProperTee execution service module. It exposes an HTTP admin UI an
 
 ## Main Components
 
-- [`TeeBoxMain.java`](/Users/journey/Flatide/propertee-java/propertee-teebox/src/main/java/com/propertee/teebox/TeeBoxMain.java)
+- [TeeBoxMain.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/TeeBoxMain.java)
   - process entry point
-- [`TeeBoxServer.java`](/Users/journey/Flatide/propertee-java/propertee-teebox/src/main/java/com/propertee/teebox/TeeBoxServer.java)
+- [TeeBoxServer.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/TeeBoxServer.java)
   - HTTP routing and API/admin handlers
-- [`RunManager.java`](/Users/journey/Flatide/propertee-java/propertee-teebox/src/main/java/com/propertee/teebox/RunManager.java)
+- [RunManager.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/RunManager.java)
   - run lifecycle and task lookup
-- [`RunRegistry.java`](/Users/journey/Flatide/propertee-java/propertee-teebox/src/main/java/com/propertee/teebox/RunRegistry.java)
+- [RunRegistry.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/RunRegistry.java)
   - persistent run storage and indexing
-- [`AdminPageRenderer.java`](/Users/journey/Flatide/propertee-java/propertee-teebox/src/main/java/com/propertee/teebox/AdminPageRenderer.java)
+- [AdminPageRenderer.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/AdminPageRenderer.java)
   - server-rendered admin UI
 
 ## Quick Start
 
 ```bash
 ./gradlew teeBoxZip
-./gradlew runTeeBox \
-  -Dpropertee.teebox.scriptsRoot=$PWD/propertee-teebox/demo/teebox \
+./gradlew run \
   -Dpropertee.teebox.dataDir=/tmp/propertee-teebox-data
 ```
 
 Open `http://127.0.0.1:18080/admin`.
+
+For local development, TeeBox resolves `propertee-core` from the sibling composite build at `../propertee-java`.
 
 ## API Namespaces
 
@@ -58,11 +59,11 @@ The practical boundary is:
 Example:
 
 ```bash
-./gradlew :propertee-teebox:runTeeBoxUpstream \
+./gradlew runTeeBoxUpstream \
   -Dpropertee.teebox.upstream.baseUrl=http://127.0.0.1:18080 \
   -Dpropertee.teebox.upstream.scriptId=calc_sum \
   -Dpropertee.teebox.upstream.version=v1 \
-  -Dpropertee.teebox.upstream.scriptFile=$PWD/propertee-teebox/demo/teebox/05_registered_sum.pt \
+  -Dpropertee.teebox.upstream.scriptFile=$PWD/demo/teebox/05_registered_sum.pt \
   -Dpropertee.teebox.upstream.activate=true \
   -Dpropertee.teebox.upstream.propsJson='{"a":40,"b":2}'
 ```
@@ -97,15 +98,16 @@ Primary settings use the `propertee.teebox.*` prefix:
 
 - `propertee.teebox.bind`
 - `propertee.teebox.port`
-- `propertee.teebox.scriptsRoot`
 - `propertee.teebox.dataDir`
 - `propertee.teebox.maxRuns`
 - `propertee.teebox.apiToken`
 - `propertee.teebox.clientApiToken`
 - `propertee.teebox.publisherApiToken`
 - `propertee.teebox.adminApiToken`
+- `propertee.teebox.allowedScriptRoots`
 - `propertee.teebox.runRetentionMs`
 - `propertee.teebox.runArchiveRetentionMs`
+- `propertee.teebox.maintenanceIntervalMs`
 
 Token behavior:
 
@@ -116,7 +118,7 @@ Token behavior:
 
 ## Related Docs
 
-- Deployment bundle: [`deploy/teebox/README.md`](/Users/journey/Flatide/propertee-java/propertee-teebox/deploy/teebox/README.md)
-- Demo scripts: [`demo/teebox/README.md`](/Users/journey/Flatide/propertee-java/propertee-teebox/demo/teebox/README.md)
-- Evolution plan: [`demo/teebox/PLAN.md`](/Users/journey/Flatide/propertee-java/propertee-teebox/demo/teebox/PLAN.md)
-- API boundary plan: [`docs/teebox-api-boundary-plan-ko.md`](/Users/journey/Flatide/propertee-java/docs/teebox-api-boundary-plan-ko.md)
+- Deployment bundle: [deploy/teebox/README.md](/Users/journey/Flatide/propertee-teebox/deploy/teebox/README.md)
+- Demo scripts: [demo/teebox/README.md](/Users/journey/Flatide/propertee-teebox/demo/teebox/README.md)
+- Operations guide: [docs/OPERATIONS-GUIDE.md](/Users/journey/Flatide/propertee-teebox/docs/OPERATIONS-GUIDE.md)
+- Korean operations guide: [docs/OPERATIONS-GUIDE.ko.md](/Users/journey/Flatide/propertee-teebox/docs/OPERATIONS-GUIDE.ko.md)

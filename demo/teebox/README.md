@@ -4,13 +4,12 @@ This folder contains sample scripts for the TeeBox admin server added in `com.pr
 
 ## Start the server
 
-Run the TeeBox server with this folder as `scriptsRoot`:
+Run the TeeBox server with a temporary `dataDir`:
 
 ```bash
 ./gradlew --no-daemon \
-  -Dpropertee.teebox.scriptsRoot=$PWD/propertee-teebox/demo/teebox \
   -Dpropertee.teebox.dataDir=/tmp/propertee-teebox-data \
-  runTeeBox
+  run
 ```
 
 Open:
@@ -45,23 +44,22 @@ http://127.0.0.1:18080/admin
 Run the upstream mock against a live TeeBox instance:
 
 ```bash
-./gradlew :propertee-teebox:runTeeBoxUpstream \
+./gradlew runTeeBoxUpstream \
   -Dpropertee.teebox.upstream.baseUrl=http://127.0.0.1:18080 \
   -Dpropertee.teebox.upstream.scriptId=calc_sum \
   -Dpropertee.teebox.upstream.version=v1 \
-  -Dpropertee.teebox.upstream.scriptFile=$PWD/propertee-teebox/demo/teebox/05_registered_sum.pt \
+  -Dpropertee.teebox.upstream.scriptFile=$PWD/demo/teebox/05_registered_sum.pt \
   -Dpropertee.teebox.upstream.activate=true \
   -Dpropertee.teebox.upstream.propsJson='{"a":40,"b":2}'
 ```
 
 ## Useful API endpoints
 
-- `POST /api/runs`
-- `GET /api/runs`
-- `GET /api/runs/{runId}`
-- `GET /api/runs/{runId}/threads`
-- `GET /api/runs/{runId}/tasks`
-- `GET /api/tasks`
-- `GET /api/tasks/{taskId}`
-- `POST /api/tasks/{taskId}/kill`
-- `POST /api/runs/{runId}/kill-tasks`
+- `POST /api/client/scripts/{scriptId}/runs`
+- `GET /api/client/runs`
+- `GET /api/client/runs/{runId}`
+- `GET /api/admin/runs/{runId}`
+- `GET /api/admin/tasks`
+- `GET /api/admin/tasks/{taskId}`
+- `POST /api/admin/tasks/{taskId}/kill`
+- `POST /api/admin/runs/{runId}/kill-tasks`

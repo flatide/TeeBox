@@ -42,5 +42,5 @@ The scripts accept extra CLI arguments and respect:
 
 - The deployment jar is `lib/propertee-teebox.jar`.
 - System properties in `JAVA_OPTS` override values from `conf/teebox.properties`.
-- The server exposes `/admin` HTML UI and `/api/*` JSON endpoints.
+- The server exposes `/admin` HTML UI, `/health`, and namespaced `/api/client/*`, `/api/publisher/*`, `/api/admin/*` JSON endpoints.
 - For split credentials, use `propertee.teebox.clientApiToken`, `propertee.teebox.publisherApiToken`, and `propertee.teebox.adminApiToken`.

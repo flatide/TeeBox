@@ -63,6 +63,7 @@ propertee.teebox.maxRuns=64
 
 - Java 17+
 - `setsid` (util-linux) — task process group 격리에 필요. Linux에 기본 포함.
+- 개발 시 `../propertee-java` composite build 필요
 
 ---
 
@@ -108,13 +109,13 @@ TeeBox는 ProperTee 스크립트의 `SHELL()` 호출마다 외부 프로세스(t
 
 ```
 TeeBox (Java)
-  └── setsid /bin/sh command.sh    ← task (독립 process group)
-        └── /path/to/user_script.sh
-              └── sleep, curl, ...
+  └── [setsid] /bin/sh <generated command file>
+        └── user command
 ```
 
-- `setsid`로 task를 TeeBox와 다른 process group으로 격리를 시도
-- `command.sh`는 exit code 캡처 용도의 최소 래퍼
+- Linux/macOS에서는 `UnixTaskRunner`가 `/bin/sh` 기반으로 task를 실행
+- `setsid`가 있으면 별도 process group 격리를 시도
+- Windows는 실제 외부 실행 대신 simulated task runner 사용
 
 ### Task Kill
 
@@ -144,6 +145,7 @@ TeeBox는 process group kill을 우선 시도하고, 필요 시 하위 프로세
 - 치명적인 시스템 파괴 명령은 차단 (`shutdown`, `reboot`, 위험한 `rm -rf`, `/dev/*` 대상 `dd` 등)
 - 제어 문자 (`\n`, `\r`, `\0`) 차단
 - 위험 환경 변수 (`LD_PRELOAD`, `DYLD_*`) 차단
+- `ENV`, `FILE_*`, `READ_LINES`, `WRITE_*`, `MKDIR`, `LIST_DIR`, `DELETE_FILE`은 TeeBox가 주입하는 `PlatformProvider`를 통해 host 환경에 접근
 
 ### Background 프로세스 주의사항
 
