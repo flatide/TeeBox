@@ -124,6 +124,10 @@ public class RunManager {
         return scriptRegistry.registerVersion(scriptId, version, content, description, labels, activate);
     }
 
+    public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content) {
+        return scriptRegistry.updateVersionContent(scriptId, version, content);
+    }
+
     public ScriptInfo activateScriptVersion(String scriptId, String version) {
         return scriptRegistry.activateVersion(scriptId, version);
     }

@@ -135,6 +135,24 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                     return;
                 }
+                if ("POST".equals(method) && "/admin/scripts/update-source".equals(path)) {
+                    Map<String, String> form = parseForm(exchange);
+                    String scriptId = form.get("scriptId");
+                    String version = form.get("version");
+                    String content = form.get("content");
+                    if (scriptId == null || scriptId.trim().length() == 0) {
+                        throw new IllegalArgumentException("Script ID is required");
+                    }
+                    if (version == null || version.trim().length() == 0) {
+                        throw new IllegalArgumentException("Version is required");
+                    }
+                    if (content == null || content.trim().length() == 0) {
+                        throw new IllegalArgumentException("Script content is required");
+                    }
+                    runManager.updateScriptVersionContent(scriptId.trim(), version.trim(), content);
+                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
+                    return;
+                }
                 if ("GET".equals(method) && "/admin/runs".equals(path)) {
                     writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderRunsPage());
                     return;

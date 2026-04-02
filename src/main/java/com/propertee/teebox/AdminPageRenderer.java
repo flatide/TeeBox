@@ -537,31 +537,9 @@ public class AdminPageRenderer {
         sb.append(renderTopNav("scripts"));
 
         sb.append("<div class='card'>");
-        sb.append("<h2>Register Script</h2>");
-        sb.append("<form method='post' action='/admin/scripts/register' class='form-grid' id='register-form'>");
-        sb.append("<div class='form-row'><label>Script ID</label><input type='text' name='scriptId' placeholder='calc_sum' required/></div>");
-        sb.append("<div class='form-row'><label>Version</label><input type='text' name='version' placeholder='v1' required/></div>");
-        sb.append("<div class='form-row'><label>Description</label><input type='text' name='description' placeholder=''/></div>");
-        sb.append("<div class='form-row'><label>Script File</label>");
-        sb.append("<input type='file' id='script-file' accept='.pt,.txt' style='font-size:13px;'/>");
+        sb.append("<div class='card-header'><h2>Registered Scripts (").append(scripts.size()).append(")</h2>");
+        sb.append("<div class='card-actions'><button class='btn btn-sm' onclick='document.getElementById(\"register-modal\").style.display=\"flex\"'>Register Script</button></div>");
         sb.append("</div>");
-        sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='script-content' rows='8' style='font-family:monospace;font-size:13px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;' placeholder='return {\"ok\": true}'></textarea></div>");
-        sb.append("<div class='form-row-inline'>");
-        sb.append("<label class='checkbox-label'><input type='checkbox' name='activate' checked/> Activate</label>");
-        sb.append("<button type='submit'>Register</button>");
-        sb.append("</div></form>");
-        sb.append("<script>");
-        sb.append("document.getElementById('script-file').addEventListener('change',function(e){");
-        sb.append("var file=e.target.files[0];if(!file)return;");
-        sb.append("var reader=new FileReader();");
-        sb.append("reader.onload=function(ev){document.getElementById('script-content').value=ev.target.result;};");
-        sb.append("reader.readAsText(file);");
-        sb.append("});");
-        sb.append("</script>");
-        sb.append("</div>");
-
-        sb.append("<div class='card'>");
-        sb.append("<div class='card-header'><h2>Registered Scripts (").append(scripts.size()).append(")</h2></div>");
         if (scripts.isEmpty()) {
             sb.append("<p class='empty'>No scripts registered</p>");
         } else {
@@ -587,6 +565,37 @@ public class AdminPageRenderer {
             sb.append("</tbody></table></div>");
         }
         sb.append("</div>");
+
+        // Register Script modal
+        sb.append("<div id='register-modal' class='modal-overlay' style='display:none'>");
+        sb.append("<div class='modal-content'>");
+        sb.append("<div class='card-header'><h2>Register Script</h2>");
+        sb.append("<button class='btn-refresh' onclick='document.getElementById(\"register-modal\").style.display=\"none\"'>Close</button></div>");
+        sb.append("<form method='post' action='/admin/scripts/register' class='form-grid' id='register-form'>");
+        sb.append("<div class='form-row'><label>Script ID</label><input type='text' name='scriptId' placeholder='calc_sum' required/></div>");
+        sb.append("<div class='form-row'><label>Version</label><input type='text' name='version' placeholder='v1' required/></div>");
+        sb.append("<div class='form-row'><label>Description</label><input type='text' name='description' placeholder=''/></div>");
+        sb.append("<div class='form-row'><label>Script File</label>");
+        sb.append("<input type='file' id='script-file' accept='.pt,.txt' style='font-size:13px;'/>");
+        sb.append("</div>");
+        sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='script-content' rows='8' style='font-family:monospace;font-size:13px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;' placeholder='return {\"ok\": true}'></textarea></div>");
+        sb.append("<div class='form-row-inline'>");
+        sb.append("<label class='checkbox-label'><input type='checkbox' name='activate' checked/> Activate</label>");
+        sb.append("<button type='submit'>Register</button>");
+        sb.append("</div></form>");
+        sb.append("</div></div>");
+
+        sb.append("<script>");
+        sb.append("document.getElementById('script-file').addEventListener('change',function(e){");
+        sb.append("var file=e.target.files[0];if(!file)return;");
+        sb.append("var reader=new FileReader();");
+        sb.append("reader.onload=function(ev){document.getElementById('script-content').value=ev.target.result;};");
+        sb.append("reader.readAsText(file);");
+        sb.append("});");
+        sb.append("document.getElementById('register-modal').addEventListener('click',function(e){");
+        sb.append("if(e.target===this)this.style.display='none';");
+        sb.append("});");
+        sb.append("</script>");
 
         sb.append(pageEnd());
         return sb.toString();
@@ -670,11 +679,15 @@ public class AdminPageRenderer {
 
         if (script.activeVersion != null && script.activeVersion.length() > 0) {
             String content = runManager.getScriptVersionContent(scriptId, script.activeVersion);
-            if (content != null && content.length() > 0) {
+            if (content != null) {
                 sb.append("<div class='card'>");
-                sb.append("<h2>Active Version Source (").append(escape(script.activeVersion)).append(")</h2>");
-                sb.append("<pre>").append(escape(content)).append("</pre>");
-                sb.append("</div>");
+                sb.append("<div class='card-header'><h2>Active Version Source (").append(escape(script.activeVersion)).append(")</h2></div>");
+                sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid'>");
+                sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
+                sb.append("<input type='hidden' name='version' value='").append(escape(script.activeVersion)).append("'/>");
+                sb.append("<textarea name='content' rows='12' style='font-family:\"SF Mono\",SFMono-Regular,Consolas,\"Liberation Mono\",Menlo,monospace;font-size:12px;padding:12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;line-height:1.6;background:#1e293b;color:#e2e8f0;'>").append(escape(content)).append("</textarea>");
+                sb.append("<div class='form-row-inline'><button type='submit'>Save</button></div>");
+                sb.append("</form></div>");
             }
         }
 
@@ -952,6 +965,8 @@ public class AdminPageRenderer {
         sb.append(".center{text-align:center;} ");
         sb.append(".link-subtle{color:#64748b;font-size:12px;} .link-subtle:hover{color:#2563eb;} ");
         sb.append(".empty{color:#94a3b8;padding:24px 0;text-align:center;font-style:italic;} ");
+        sb.append(".modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;} ");
+        sb.append(".modal-content{background:#fff;border-radius:8px;padding:20px;width:90%;max-width:600px;max-height:90vh;overflow-y:auto;} ");
         sb.append(".footer{margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:12px;} ");
         sb.append(".tag{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:500;background:#e2e8f0;color:#475569;} ");
         sb.append(".detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px;} ");

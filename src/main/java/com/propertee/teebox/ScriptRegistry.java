@@ -130,6 +130,24 @@ public class ScriptRegistry {
         return info.copy();
     }
 
+    public synchronized ScriptInfo updateVersionContent(String scriptId, String version, String content) {
+        if (content == null || content.trim().length() == 0) {
+            throw new IllegalArgumentException("content is required");
+        }
+        validateScript(content);
+        ScriptInfo info = requireScript(scriptId);
+        ScriptVersionInfo vi = findVersion(info, version);
+        if (vi == null) {
+            throw new IllegalArgumentException("Unknown script version: " + scriptId + "@" + version);
+        }
+        File scriptFile = new File(new File(scriptDir(scriptId), "versions"), version + ".pt");
+        writeFile(scriptFile, content);
+        vi.sha256 = sha256(content);
+        info.updatedAt = System.currentTimeMillis();
+        saveScript(info);
+        return info.copy();
+    }
+
     public synchronized ScriptInfo activateVersion(String scriptId, String version) {
         ScriptInfo info = requireScript(scriptId);
         if (findVersion(info, version) == null) {
