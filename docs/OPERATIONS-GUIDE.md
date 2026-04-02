@@ -30,7 +30,7 @@ unzip propertee-teebox-dist.zip -d /opt/teebox
 propertee.teebox.bind=127.0.0.1
 propertee.teebox.port=18080
 propertee.teebox.dataDir=/var/lib/teebox
-propertee.teebox.maxRuns=4
+propertee.teebox.maxRuns=64
 ```
 
 | 속성 | 기본값 | 설명 |
@@ -38,7 +38,7 @@ propertee.teebox.maxRuns=4
 | `bind` | `127.0.0.1` | 바인드 주소 |
 | `port` | `18080` | 리스닝 포트 |
 | `dataDir` | (필수) | 데이터 디렉터리 (runs, tasks, script-registry) |
-| `maxRuns` | `4` | 동시 실행 가능한 최대 run 수 |
+| `maxRuns` | `64` | 동시 실행 가능한 최대 run 수 |
 | `apiToken` | 없음 | 전체 API 공통 Bearer 토큰 (fallback) |
 | `clientApiToken` | 없음 | `/api/client` 전용 토큰 |
 | `publisherApiToken` | 없음 | `/api/publisher` 전용 토큰 |
@@ -92,6 +92,11 @@ Publisher API로 스크립트 등록 → Client API로 run 제출 → TeeBox가 
 2. **버전 활성화**: `POST /api/publisher/scripts/{scriptId}/activate/{version}`
 3. **Run 제출**: `POST /api/client/scripts/{scriptId}/runs`
 4. **결과 폴링**: `GET /api/client/runs/{runId}`
+
+운영 권장 패턴:
+- job submit 스크립트는 job id를 확보하면 바로 종료
+- job status polling은 별도 짧은 스크립트로 분리하고 외부 스케줄러나 cron에서 주기 호출
+- 하나의 ProperTee run 안에서 background job 후 장시간 `wait` 하거나 polling loop를 유지하는 패턴은 비권장
 
 ---
 

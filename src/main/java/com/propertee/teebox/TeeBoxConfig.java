@@ -12,7 +12,7 @@ public class TeeBoxConfig {
     public String bindAddress = "127.0.0.1";
     public int port = 18080;
     public File dataDir;
-    public int maxConcurrentRuns = 4;
+    public int maxConcurrentRuns = 64;
     public String apiToken;
     public String clientApiToken;
     public String publisherApiToken;
