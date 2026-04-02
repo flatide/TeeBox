@@ -576,7 +576,7 @@ public class AdminPageRenderer {
         sb.append("<div class='form-row'><label>Version</label><input type='text' name='version' placeholder='v1' required/></div>");
         sb.append("<div class='form-row'><label>Description</label><input type='text' name='description' placeholder=''/></div>");
         sb.append("<div class='form-row'><label>Script File</label>");
-        sb.append("<input type='file' id='script-file' accept='.pt,.txt' style='font-size:13px;'/>");
+        sb.append("<input type='file' id='script-file' accept='.tee,.txt' style='font-size:13px;'/>");
         sb.append("</div>");
         sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='script-content' rows='8' style='font-family:monospace;font-size:13px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;' placeholder='return {\"ok\": true}'></textarea></div>");
         sb.append("<div class='form-row-inline'>");

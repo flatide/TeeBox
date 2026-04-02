@@ -24,7 +24,7 @@ HTTP Request → TeeBoxServer (com.sun.net.httpserver)
                               tasks/task-{id}/
             ScriptRegistry ←→ script-registry/
                                 {scriptId}/script.json
-                                {scriptId}/versions/{ver}.pt
+                                {scriptId}/versions/{ver}.tee
 ```
 
 ### 구성 요소 (19개 Java 파일, ~4,000 LOC)
@@ -107,7 +107,7 @@ HTTP Request → TeeBoxServer (com.sun.net.httpserver)
 
 ```
 POST /api/client/runs
-Body: {"scriptPath": "01_basic_run.pt", "props": {...}}
+Body: {"scriptPath": "01_basic_run.tee", "props": {...}}
          ↓
 parseRunRequest()  ← scriptPath만 파싱
          ↓
@@ -130,7 +130,7 @@ RunManager.submit()
          ↓
 resolveRunTarget() → scriptId!=null → ScriptRegistry.resolve(scriptId, version)
          ↓
-script-registry/{scriptId}/versions/{version}.pt → 실행
+script-registry/{scriptId}/versions/{version}.tee → 실행
 ```
 
 **핵심 차이:** `parseRunRequest()`는 `scriptPath`만 읽고, `parseScriptRunRequest()`는 URL의 `scriptId`와 body의 `version`을 읽는다. `parseRunRequest()`는 body의 `scriptId` 필드를 **무시**한다.
@@ -176,7 +176,7 @@ dataDir/script-registry/
 └── {scriptId}/
     ├── script.json          (메타데이터: ScriptInfo)
     └── versions/
-        └── {version}.pt     (스크립트 소스)
+        └── {version}.tee     (스크립트 소스)
 ```
 
 ### 5-2. 등록 흐름
@@ -194,7 +194,7 @@ dataDir/script-registry/
 resolve(scriptId, version)
   → version이 null이면 activeVersion 사용
   → ScriptVersionInfo에서 버전 확인
-  → .pt 파일 존재 확인
+  → .tee 파일 존재 확인
   → ResolvedScript {scriptId, version, displayPath, file} 반환
 ```
 

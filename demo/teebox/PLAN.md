@@ -69,7 +69,7 @@ private static TaskEngine createDefaultTaskEngine() {
 
 **문제:** 단일 task kill(`RunManager.killTask`)은 run을 즉시 `FAILED`로 바꾸지만 (`RunManager.java:148-153`), 전체 run task kill(`RunManager.killRunTasks`)은 run 상태를 변경하지 않는다 (`RunManager.java:157-159`). 또한 단일 task kill은 해당 task가 run에서 어떤 역할인지(detached/optional 등) 구분하지 않고 무조건 run을 실패 처리한다.
 
-**정책:** run 상태는 **스크립트 실행 결과만 반영**한다. admin이 task를 kill하는 것은 운영 행위이지 스크립트 실행 실패가 아니다. `04_detached_task.pt`처럼 run이 이미 `COMPLETED`인데 detached task를 kill하면 완료된 run이 `FAILED`로 뒤바뀌는 것은 잘못된 설계.
+**정책:** run 상태는 **스크립트 실행 결과만 반영**한다. admin이 task를 kill하는 것은 운영 행위이지 스크립트 실행 실패가 아니다. `04_detached_task.tee`처럼 run이 이미 `COMPLETED`인데 detached task를 kill하면 완료된 run이 `FAILED`로 뒤바뀌는 것은 잘못된 설계.
 
 **수정:** `killTask()`와 `killRunTasks()` 모두에서 run 상태 전이를 제거. task 상태만 `"killed"`로 변경.
 
@@ -355,8 +355,8 @@ public Task getTask(String taskId) { ... }  // 기존과 동일
 ```java
 // runs/index.json — RunStore가 유지하는 인덱스
 [
-  { "runId": "run-abc", "status": "COMPLETED", "createdAt": 1709..., "endedAt": 1709..., "scriptPath": "calc.pt" },
-  { "runId": "run-def", "status": "RUNNING",   "createdAt": 1709..., "scriptPath": "sim.pt" }
+  { "runId": "run-abc", "status": "COMPLETED", "createdAt": 1709..., "endedAt": 1709..., "scriptPath": "calc.tee" },
+  { "runId": "run-def", "status": "RUNNING",   "createdAt": 1709..., "scriptPath": "sim.tee" }
 ]
 ```
 
@@ -535,7 +535,7 @@ runExecutor = new ThreadPoolExecutor(
 ```
 POST /api/runs
 {
-  "scriptPath": "calculate.pt",
+  "scriptPath": "calculate.tee",
   "props": { "input": 42 },
   "callbackUrl": "http://client-node:8080/results"
 }

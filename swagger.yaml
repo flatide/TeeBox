@@ -622,8 +622,8 @@ components:
       properties:
         scriptPath:
           type: string
-          description: Relative path to .pt script (under scriptsRoot)
-          example: "01_hello.pt"
+          description: Relative path to .tee script (under scriptsRoot)
+          example: "01_hello.tee"
         props:
           type: object
           additionalProperties: true

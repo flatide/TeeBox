@@ -109,7 +109,7 @@ public class ScriptRegistry {
             versionsDir.mkdirs();
         }
 
-        File scriptFile = new File(versionsDir, version + ".pt");
+        File scriptFile = new File(versionsDir, version + ".tee");
         writeFile(scriptFile, content);
 
         ScriptVersionInfo versionInfo = new ScriptVersionInfo();
@@ -140,7 +140,7 @@ public class ScriptRegistry {
         if (vi == null) {
             throw new IllegalArgumentException("Unknown script version: " + scriptId + "@" + version);
         }
-        File scriptFile = new File(new File(scriptDir(scriptId), "versions"), version + ".pt");
+        File scriptFile = new File(new File(scriptDir(scriptId), "versions"), version + ".tee");
         writeFile(scriptFile, content);
         vi.sha256 = sha256(content);
         info.updatedAt = System.currentTimeMillis();
@@ -308,7 +308,7 @@ public class ScriptRegistry {
     }
 
     private File scriptVersionFile(String scriptId, String version) {
-        return new File(new File(scriptDir(scriptId), "versions"), version + ".pt");
+        return new File(new File(scriptDir(scriptId), "versions"), version + ".tee");
     }
 
     private void writeFile(File file, String content) {
