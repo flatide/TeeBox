@@ -44,14 +44,20 @@ propertee.teebox.maxRuns=64
 | `publisherApiToken` | 없음 | `/api/publisher` 전용 토큰 |
 | `adminApiToken` | 없음 | `/api/admin` 전용 토큰 |
 | `allowedScriptRoots` | `dataDir` | SHELL 실행 허용 경로 (쉼표 구분) |
-| `runRetentionMs` | `86400000` (24h) | run 보관 → archived 전환 |
-| `runArchiveRetentionMs` | `604800000` (7d) | archived → 삭제 |
-| `maintenanceIntervalMs` | `60000` (1m) | 백그라운드 유지보수 주기 |
+| `runRetentionMs` | `24h` | run 보관 → archived 전환 |
+| `runArchiveRetentionMs` | `7d` | archived → 삭제 |
+| `maintenanceIntervalMs` | `1m` | 백그라운드 유지보수 주기 |
 
 환경 변수:
 - `PROPERTEE_TEEBOX_CONFIG` — 설정 파일 경로 (기본: `conf/teebox.properties`)
 - `JAVA_HOME` — Java 설치 경로
 - `JAVA_OPTS` — JVM 옵션 (`-Xmx`, `-D` 등). 시스템 프로퍼티는 설정 파일보다 우선
+
+duration 형식:
+- `runRetentionMs`, `runArchiveRetentionMs`, `maintenanceIntervalMs`
+- `propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`
+- 지원 suffix: `ms`, `s`, `m`, `h`, `d`
+- 예: `500ms`, `30s`, `1m`, `24h`, `7d`
 
 ### 실행
 

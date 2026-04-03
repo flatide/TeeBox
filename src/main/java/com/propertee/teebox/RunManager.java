@@ -419,8 +419,8 @@ public class RunManager {
             return defaultValue;
         }
         try {
-            return Long.parseLong(raw.trim());
-        } catch (NumberFormatException e) {
+            return DurationParser.parseMillis(raw);
+        } catch (RuntimeException e) {
             return defaultValue;
         }
     }

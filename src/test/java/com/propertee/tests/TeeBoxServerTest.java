@@ -457,9 +457,9 @@ public class TeeBoxServerTest {
         String oldRunRetention = System.getProperty("propertee.teebox.runRetentionMs");
         String oldRunArchiveRetention = System.getProperty("propertee.teebox.runArchiveRetentionMs");
         String oldMaintenanceInterval = System.getProperty("propertee.teebox.maintenanceIntervalMs");
-        System.setProperty("propertee.teebox.runRetentionMs", "0");
-        System.setProperty("propertee.teebox.runArchiveRetentionMs", "86400000");
-        System.setProperty("propertee.teebox.maintenanceIntervalMs", "500");
+        System.setProperty("propertee.teebox.runRetentionMs", "0ms");
+        System.setProperty("propertee.teebox.runArchiveRetentionMs", "24h");
+        System.setProperty("propertee.teebox.maintenanceIntervalMs", "500ms");
         try {
             TestServer testServer = createServer();
             try {
@@ -495,9 +495,9 @@ public class TeeBoxServerTest {
         String oldRunRetention = System.getProperty("propertee.teebox.runRetentionMs");
         String oldRunArchiveRetention = System.getProperty("propertee.teebox.runArchiveRetentionMs");
         String oldMaintenanceInterval = System.getProperty("propertee.teebox.maintenanceIntervalMs");
-        System.setProperty("propertee.teebox.runRetentionMs", "0");
-        System.setProperty("propertee.teebox.runArchiveRetentionMs", "100");
-        System.setProperty("propertee.teebox.maintenanceIntervalMs", "500");
+        System.setProperty("propertee.teebox.runRetentionMs", "0ms");
+        System.setProperty("propertee.teebox.runArchiveRetentionMs", "100ms");
+        System.setProperty("propertee.teebox.maintenanceIntervalMs", "500ms");
         try {
             TestServer testServer = createServer();
             try {

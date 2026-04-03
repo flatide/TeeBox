@@ -109,6 +109,8 @@ Primary settings use the `propertee.teebox.*` prefix:
 - `propertee.teebox.runArchiveRetentionMs`
 - `propertee.teebox.maintenanceIntervalMs`
 
+Duration-style settings accept `ms`, `s`, `m`, `h`, and `d` suffixes. Example: `500ms`, `1m`, `24h`, `7d`.
+
 Token behavior:
 
 - `apiToken`: default fallback for all API namespaces
