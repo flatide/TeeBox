@@ -991,7 +991,7 @@ public class AdminPageRenderer {
         sb.append(".top-nav-link.active{background:#334155;color:#fff;} ");
         sb.append(".top-nav-meta{margin-left:auto;display:flex;gap:8px;} ");
         sb.append(".tag-nav{background:#334155;color:#94a3b8;font-size:11px;} ");
-        sb.append(".btn-refresh{background:transparent;border:1px solid #cbd5e1;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;} ");
+        sb.append(".btn-refresh{background:#fff;color:#334155;border:1px solid #cbd5e1;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;} ");
         sb.append(".btn-refresh:hover{background:#f1f5f9;} ");
         sb.append(".filter-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;} ");
         sb.append(".filter-bar select{padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;} ");
