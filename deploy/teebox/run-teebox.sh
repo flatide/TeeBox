@@ -4,7 +4,15 @@ set -eu
 BASE_DIR=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 JAR_FILE="$BASE_DIR/lib/propertee-teebox.jar"
 CONF_FILE=${PROPERTEE_TEEBOX_CONFIG:-"$BASE_DIR/conf/teebox.properties"}
-JAVA_BIN=${JAVA_HOME:+$JAVA_HOME/bin/}java
+BUNDLED_JAVA="$BASE_DIR/runtime/bin/java"
+
+if [ -x "$BUNDLED_JAVA" ]; then
+    JAVA_BIN="$BUNDLED_JAVA"
+elif [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+    JAVA_BIN="$JAVA_HOME/bin/java"
+else
+    JAVA_BIN="java"
+fi
 
 if [ ! -f "$JAR_FILE" ]; then
     echo "TeeBox server jar not found: $JAR_FILE" 1>&2

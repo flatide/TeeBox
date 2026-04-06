@@ -3,8 +3,16 @@ plugins {
     id 'application'
 }
 
+import java.util.zip.GZIPInputStream
+import java.security.MessageDigest
+
 group = 'com.propertee'
 version = '0.5.0'
+
+ext {
+    defaultRuntimeLinuxX64Url = 'https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz'
+    defaultRuntimeLinuxX64Sha256 = 'a2def047a73941e01a73739f92755f86b895811afb1f91243db214cff5bdac3f'
+}
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -76,8 +84,93 @@ task teeBoxDist(type: Copy) {
     from('deploy/teebox/log4j2.xml') {
         into 'conf'
     }
+    File bundledRuntimeDir = file("${buildDir}/runtime-linux-x64")
+    File localRuntimeDir = file('deploy/teebox/runtime-linux-x64')
+    if (bundledRuntimeDir.exists()) {
+        from(bundledRuntimeDir) {
+            into 'runtime'
+        }
+    } else if (localRuntimeDir.exists()) {
+        from(localRuntimeDir) {
+            into 'runtime'
+        }
+    }
     description = 'Build a deployable ProperTee TeeBox directory'
     group = 'distribution'
+}
+
+task fetchRuntimeLinuxX64 {
+    description = 'Download and unpack a Linux x86_64 Java runtime into build/runtime-linux-x64'
+    group = 'distribution'
+
+    doLast {
+        String configuredUrl = System.getProperty('propertee.teebox.runtimeLinuxX64Url')
+        if (configuredUrl == null || configuredUrl.trim().isEmpty()) {
+            configuredUrl = System.getenv('PROPERTEE_TEEBOX_RUNTIME_LINUX_X64_URL')
+        }
+        if (configuredUrl == null || configuredUrl.trim().isEmpty()) {
+            configuredUrl = defaultRuntimeLinuxX64Url
+        }
+        String configuredSha256 = System.getProperty('propertee.teebox.runtimeLinuxX64Sha256')
+        if (configuredSha256 == null || configuredSha256.trim().isEmpty()) {
+            configuredSha256 = System.getenv('PROPERTEE_TEEBOX_RUNTIME_LINUX_X64_SHA256')
+        }
+        if (configuredSha256 == null || configuredSha256.trim().isEmpty()) {
+            configuredSha256 = defaultRuntimeLinuxX64Sha256
+        }
+
+        File runtimeDir = file("${buildDir}/runtime-linux-x64")
+        File downloadsDir = file("${buildDir}/runtime-downloads")
+        File archiveFile = file("${downloadsDir}/runtime-linux-x64.tar.gz")
+
+        runtimeDir.deleteDir()
+        downloadsDir.mkdirs()
+
+        logger.lifecycle("Downloading Linux x86_64 runtime from {}", configuredUrl)
+        new URL(configuredUrl).withInputStream { input ->
+            archiveFile.withOutputStream { output ->
+                byte[] buffer = new byte[8192]
+                int read
+                while ((read = input.read(buffer)) >= 0) {
+                    output.write(buffer, 0, read)
+                }
+            }
+        }
+
+        MessageDigest digest = MessageDigest.getInstance('SHA-256')
+        archiveFile.withInputStream { input ->
+            byte[] buffer = new byte[8192]
+            int read
+            while ((read = input.read(buffer)) >= 0) {
+                digest.update(buffer, 0, read)
+            }
+        }
+        String actualSha256 = digest.digest().collect { String.format('%02x', it) }.join()
+        if (!actualSha256.equalsIgnoreCase(configuredSha256.trim())) {
+            throw new GradleException(
+                "Runtime SHA-256 mismatch. Expected ${configuredSha256}, got ${actualSha256}"
+            )
+        }
+
+        copy {
+            from tarTree(resources.gzip(archiveFile))
+            into runtimeDir
+            eachFile { details ->
+                String path = details.path
+                int slash = path.indexOf('/')
+                if (slash >= 0) {
+                    details.path = path.substring(slash + 1)
+                }
+            }
+            includeEmptyDirs = false
+        }
+
+        File javaBin = file("${runtimeDir}/bin/java")
+        if (!javaBin.exists()) {
+            throw new GradleException("Downloaded archive did not produce runtime/bin/java under ${runtimeDir}")
+        }
+        logger.lifecycle("Runtime unpacked to {}", runtimeDir)
+    }
 }
 
 task teeBoxZip(type: Zip) {
