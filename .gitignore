@@ -2,7 +2,6 @@ logs/
 # Gradle
 .gradle/
 build/
-dist/
 !gradle/wrapper/gradle-wrapper.jar
 
 # IDE

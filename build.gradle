@@ -84,18 +84,31 @@ task teeBoxDist(type: Copy) {
     from('deploy/teebox/log4j2.xml') {
         into 'conf'
     }
-    File bundledRuntimeDir = file("${buildDir}/runtime-linux-x64")
-    File localRuntimeDir = file('deploy/teebox/runtime-linux-x64')
-    if (bundledRuntimeDir.exists()) {
-        from(bundledRuntimeDir) {
-            into 'runtime'
+    description = 'Build a deployable ProperTee TeeBox directory'
+    group = 'distribution'
+}
+
+task teeBoxDistWithRuntime(type: Copy) {
+    dependsOn teeBoxDist
+    into "${buildDir}/teebox-dist-with-runtime"
+    from("${buildDir}/teebox-dist")
+
+    doFirst {
+        File bundledRuntimeDir = file("${buildDir}/runtime-linux-x64")
+        File localRuntimeDir = file('deploy/teebox/runtime-linux-x64')
+        File selectedRuntimeDir = bundledRuntimeDir.exists() ? bundledRuntimeDir :
+            (localRuntimeDir.exists() ? localRuntimeDir : null)
+        if (selectedRuntimeDir == null) {
+            throw new GradleException(
+                "No runtime found. Run fetchRuntimeLinuxX64 first or place a runtime under deploy/teebox/runtime-linux-x64"
+            )
         }
-    } else if (localRuntimeDir.exists()) {
-        from(localRuntimeDir) {
+        from(selectedRuntimeDir) {
             into 'runtime'
         }
     }
-    description = 'Build a deployable ProperTee TeeBox directory'
+
+    description = 'Build a deployable ProperTee TeeBox directory including a Linux x86_64 runtime'
     group = 'distribution'
 }
 
@@ -188,4 +201,14 @@ task teeBoxZip(type: Zip) {
             into "${rootDir}/dist"
         }
     }
+}
+
+task teeBoxZipWithRuntime(type: Zip) {
+    dependsOn teeBoxDistWithRuntime
+    archiveBaseName = 'propertee-teebox'
+    archiveClassifier = 'dist-with-runtime'
+    destinationDirectory = file("${buildDir}/distributions")
+    from("${buildDir}/teebox-dist-with-runtime")
+    description = 'Build a deployable ProperTee TeeBox zip archive including a Linux x86_64 runtime'
+    group = 'distribution'
 }

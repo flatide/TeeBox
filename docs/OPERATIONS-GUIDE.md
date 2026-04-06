@@ -15,12 +15,15 @@ cd propertee-teebox && ./gradlew teeBoxZip
 unzip propertee-teebox-dist.zip -d /opt/teebox
 ```
 
+기본 GitHub 배포 zip에는 Java runtime이 포함되지 않는다. 배포 서버에서 Linux x86_64 Java 21 runtime archive를 별도로 받아 `/opt/teebox/runtime/` 아래에 풀어서 `runtime/bin/java`가 존재하도록 준비해야 한다.
+
 디렉터리 구조:
 ```
 /opt/teebox/
   bin/run-teebox.sh     # 실행 스크립트
   conf/teebox.properties # 설정 파일
   lib/propertee-teebox.jar
+  runtime/bin/java      # 별도 설치한 Java 21 runtime
 ```
 
 ### 설정
@@ -67,7 +70,7 @@ duration 형식:
 
 ### 의존성
 
-- Java 17+
+- Linux x86_64 Java 21 runtime (`runtime/bin/java`) 또는 시스템 Java 17+
 - `setsid` (util-linux) — task process group 격리에 필요. Linux에 기본 포함.
 - 개발 시 `../propertee-java` composite build 필요
 
