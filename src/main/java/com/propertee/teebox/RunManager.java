@@ -11,7 +11,6 @@ import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,13 +57,7 @@ public class RunManager {
         long runArchiveRetentionMs = parseDurationProperty("runArchiveRetentionMs", DEFAULT_RUN_ARCHIVE_RETENTION_MS);
         this.runRegistry = new RunRegistry(this.dataDir, MAX_LOG_LINES, ARCHIVED_STDOUT_LINES, ARCHIVED_STDERR_LINES, runRetentionMs, runArchiveRetentionMs);
         this.scriptRegistry = new ScriptRegistry(this.dataDir);
-        List<File> allowedRoots;
-        if (teeBoxConfig != null && teeBoxConfig.allowedScriptRoots != null && !teeBoxConfig.allowedScriptRoots.isEmpty()) {
-            allowedRoots = teeBoxConfig.allowedScriptRoots;
-        } else {
-            allowedRoots = Collections.singletonList(this.dataDir);
-        }
-        this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId(), allowedRoots);
+        this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId());
         this.managedTaskEngine.init();
         this.managedTaskEngine.archiveExpiredTasks();
         this.scriptExecutor = new ScriptExecutor(new TeeBoxPlatformProvider(this.dataDir));

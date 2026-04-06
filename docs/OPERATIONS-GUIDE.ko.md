@@ -46,7 +46,6 @@ propertee.teebox.maxRuns=64
 | `clientApiToken` | 없음 | `/api/client` 전용 토큰 |
 | `publisherApiToken` | 없음 | `/api/publisher` 전용 토큰 |
 | `adminApiToken` | 없음 | `/api/admin` 전용 토큰 |
-| `allowedScriptRoots` | `dataDir` | `SHELL()` 실행 허용 경로 (쉼표 구분) |
 | `runRetentionMs` | `24h` | run 보관 -> archived 전환 |
 | `runArchiveRetentionMs` | `7d` | archived -> 삭제 |
 | `maintenanceIntervalMs` | `1m` | 백그라운드 유지보수 주기 |
@@ -148,7 +147,6 @@ TeeBox는 process group kill을 우선 시도하고, 필요 시 하위 프로세
 
 - TeeBox는 root로 실행되면 시작 실패
 - `sudo`, `su` 명령은 차단
-- 경로 형태로 지정한 실행 파일은 `allowedScriptRoots` 내에서만 허용 (기본: `dataDir`)
 - 일반적인 shell 문법(`;`, `|`, `&&`, 리다이렉션 등)은 허용
 - bare command 실행 허용
 - 치명적인 시스템 파괴 명령은 차단 (`shutdown`, `reboot`, 위험한 `rm -rf`, `/dev/*` 대상 `dd` 등)

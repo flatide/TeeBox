@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -49,22 +48,14 @@ public class CommandGuard {
                 "sh", "bash", "zsh", "dash", "ksh"
         ));
     }
-    private final List<File> allowedRoots;
-
     public CommandGuard() {
-        this(Collections.<File>emptyList());
-    }
-
-    public CommandGuard(List<File> allowedRoots) {
-        this.allowedRoots = allowedRoots != null ? canonicalize(allowedRoots) : Collections.<File>emptyList();
     }
 
     /**
      * Validate a command with optional cwd for script path resolution.
      *
      * Allows shell syntax, but blocks dangerous destructive commands,
-     * privilege-escalation commands, missing path executables, and path
-     * executables outside allowed roots.
+     * privilege-escalation commands, and missing path executables.
      */
     public void validate(String command, String cwd) {
         if (command == null) {
@@ -85,34 +76,6 @@ public class CommandGuard {
         for (List<String> tokens : splitCommands(command)) {
             validateTokens(tokens, cwd, command);
         }
-    }
-
-    /**
-     * Validate that a working directory is within allowed roots.
-     */
-    public void validateCwd(String cwd) {
-        if (cwd == null || cwd.length() == 0 || allowedRoots.isEmpty()) {
-            return;
-        }
-        String canonicalCwd = canonicalPath(new File(cwd));
-        for (File root : allowedRoots) {
-            String rootPath = root.getPath();
-            if (canonicalCwd.equals(rootPath) || canonicalCwd.startsWith(rootPath + File.separator)) {
-                return;
-            }
-        }
-        throw new CommandGuardException(cwd, "cwd-outside-allowed-root:" + canonicalCwd);
-    }
-
-    private void validateWithinRoots(File scriptFile, String command) {
-        String canonicalScript = canonicalPath(scriptFile);
-        for (File root : allowedRoots) {
-            String rootPath = root.getPath();
-            if (canonicalScript.equals(rootPath) || canonicalScript.startsWith(rootPath + File.separator)) {
-                return;
-            }
-        }
-        throw new CommandGuardException(command, "outside-allowed-root:" + canonicalPath(scriptFile));
     }
 
     private static File resolveScriptFile(String path, String cwd) {
@@ -156,9 +119,6 @@ public class CommandGuard {
             File executableFile = resolveScriptFile(executable, cwd);
             if (!executableFile.isFile()) {
                 throw new CommandGuardException(originalCommand, "file-not-found:" + executableFile.getPath());
-            }
-            if (!allowedRoots.isEmpty()) {
-                validateWithinRoots(executableFile, originalCommand);
             }
         }
 
@@ -226,26 +186,6 @@ public class CommandGuard {
             commands.add(currentCommand);
         }
         return commands;
-    }
-
-    private static List<File> canonicalize(List<File> roots) {
-        List<File> result = new ArrayList<File>();
-        for (File root : roots) {
-            try {
-                result.add(root.getCanonicalFile());
-            } catch (IOException e) {
-                result.add(root.getAbsoluteFile());
-            }
-        }
-        return Collections.unmodifiableList(result);
-    }
-
-    private static String canonicalPath(File file) {
-        try {
-            return file.getCanonicalPath();
-        } catch (IOException e) {
-            return file.getAbsolutePath();
-        }
     }
 
     private static String baseName(String executable) {

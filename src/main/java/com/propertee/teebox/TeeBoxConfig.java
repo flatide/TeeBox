@@ -4,8 +4,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Properties;
 
 public class TeeBoxConfig {
@@ -17,8 +15,6 @@ public class TeeBoxConfig {
     public String clientApiToken;
     public String publisherApiToken;
     public String adminApiToken;
-    public List<File> allowedScriptRoots;
-
     public static TeeBoxConfig fromArgs(String[] args) {
         File configFile = resolveConfigFile(args);
         Properties fileProps = loadProperties(configFile);
@@ -64,15 +60,6 @@ public class TeeBoxConfig {
             config.adminApiToken = adminApiToken.trim();
         }
         config.dataDir = canonicalFile(new File(dataDir.trim()));
-        String allowedRoots = getSetting("allowedScriptRoots", fileProps);
-        if (allowedRoots != null && allowedRoots.trim().length() > 0) {
-            config.allowedScriptRoots = new ArrayList<File>();
-            for (String root : allowedRoots.split(",")) {
-                if (root.trim().length() > 0) {
-                    config.allowedScriptRoots.add(canonicalFile(new File(root.trim())));
-                }
-            }
-        }
         return config;
     }
 

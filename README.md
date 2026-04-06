@@ -110,7 +110,6 @@ Primary settings use the `propertee.teebox.*` prefix:
 - `propertee.teebox.clientApiToken`
 - `propertee.teebox.publisherApiToken`
 - `propertee.teebox.adminApiToken`
-- `propertee.teebox.allowedScriptRoots`
 - `propertee.teebox.runRetentionMs`
 - `propertee.teebox.runArchiveRetentionMs`
 - `propertee.teebox.maintenanceIntervalMs`

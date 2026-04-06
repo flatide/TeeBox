@@ -73,14 +73,10 @@ public class ManagedTaskEngine implements TaskRunner {
     private final ConcurrentHashMap<String, Object> taskLocks = new ConcurrentHashMap<>();
 
     public ManagedTaskEngine(String baseDir, String hostInstanceId) {
-        this(baseDir, hostInstanceId, Collections.singletonList(new File(baseDir)));
-    }
-
-    public ManagedTaskEngine(String baseDir, String hostInstanceId, List<File> allowedRoots) {
         this.taskBaseDir = new File(baseDir);
         this.tasksDir = new File(taskBaseDir, "tasks");
         this.hostInstanceId = hostInstanceId;
-        this.commandGuard = new CommandGuard(allowedRoots);
+        this.commandGuard = new CommandGuard();
         if (!tasksDir.exists() && !tasksDir.mkdirs()) {
             throw new IllegalStateException("Failed to create tasks directory: " + tasksDir.getAbsolutePath());
         }
@@ -169,7 +165,6 @@ public class ManagedTaskEngine implements TaskRunner {
     @Override
     public Task execute(TaskRequest request) {
         try {
-            commandGuard.validateCwd(request.cwd);
             validateEnv(request.env, request.command);
             commandGuard.validate(request.command, request.cwd);
         } catch (CommandGuardException e) {
