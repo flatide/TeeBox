@@ -12,9 +12,10 @@ public class TeeBoxMain {
         Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
             @Override
             public void run() {
-                TeeBoxLog.info("TeeBox", "Shutting down");
+                // Use stderr directly — Log4j2 may already be shut down by its own hook
+                System.err.println("[TeeBox] Shutting down");
                 server.stop();
-                TeeBoxLog.info("TeeBox", "Shutdown complete");
+                System.err.println("[TeeBox] Shutdown complete");
             }
         }, "propertee-teebox-shutdown"));
 
