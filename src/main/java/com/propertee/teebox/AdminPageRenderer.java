@@ -400,8 +400,8 @@ public class AdminPageRenderer {
             sb.append("<div class='card'><h2>Task Output</h2>");
             boolean anyOutput = false;
             for (TaskInfo task : tasks) {
-                String taskStdout = tail(runManager.getTaskStdout(task.taskId), 4000);
-                String taskStderr = tail(runManager.getTaskStderr(task.taskId), 4000);
+                String taskStdout = nullToEmpty(runManager.getTaskStdout(task.taskId));
+                String taskStderr = nullToEmpty(runManager.getTaskStderr(task.taskId));
                 if (taskStdout.length() > 0 || taskStderr.length() > 0) {
                     anyOutput = true;
                     sb.append("<div class='task-output-block'>");
@@ -519,13 +519,13 @@ public class AdminPageRenderer {
             sb.append("<div class='card'><h2>Observation</h2><pre>").append(escape(gson.toJson(obs))).append("</pre></div>");
         }
 
-        String stdoutTail = tail(runManager.getTaskStdout(taskId), 4000);
-        String stderrTail = tail(runManager.getTaskStderr(taskId), 4000);
-        if (stdoutTail.length() > 0) {
-            sb.append("<div class='card'><h2>Stdout</h2><pre>").append(escape(stdoutTail)).append("</pre></div>");
+        String taskStdout = nullToEmpty(runManager.getTaskStdout(taskId));
+        String taskStderr = nullToEmpty(runManager.getTaskStderr(taskId));
+        if (taskStdout.length() > 0) {
+            sb.append("<div class='card'><h2>Stdout</h2><pre>").append(escape(taskStdout)).append("</pre></div>");
         }
-        if (stderrTail.length() > 0) {
-            sb.append("<div class='card'><h2>Stderr</h2><pre>").append(escape(stderrTail)).append("</pre></div>");
+        if (taskStderr.length() > 0) {
+            sb.append("<div class='card'><h2>Stderr</h2><pre>").append(escape(taskStderr)).append("</pre></div>");
         }
         return sb.toString();
     }
@@ -976,7 +976,7 @@ public class AdminPageRenderer {
         sb.append(".callout-warn{background:#fff7ed;border-color:#fdba74;color:#9a3412;} ");
         sb.append(".nav{display:flex;gap:12px;align-items:center;margin-bottom:16px;font-size:13px;} ");
         sb.append(".nav-sep{color:#cbd5e1;} ");
-        sb.append("pre{background:#1e293b;color:#e2e8f0;padding:16px;border-radius:6px;overflow-x:auto;font-size:12px;");
+        sb.append("pre{background:#1e293b;color:#e2e8f0;padding:16px;border-radius:6px;overflow-x:auto;overflow-y:auto;max-height:600px;font-size:12px;");
         sb.append("font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;line-height:1.6;margin-bottom:16px;} ");
         sb.append("code{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;");
         sb.append("background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;} ");
@@ -1060,6 +1060,10 @@ public class AdminPageRenderer {
             sb.append(lines.get(i));
         }
         return sb.toString();
+    }
+
+    private String nullToEmpty(String text) {
+        return text != null ? text : "";
     }
 
     private String tail(String text, int maxChars) {
