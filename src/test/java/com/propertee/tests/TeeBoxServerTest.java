@@ -632,18 +632,16 @@ public class TeeBoxServerTest {
     public void outputPublishShouldOnlyWatchFirstTask() throws Exception {
         TestServer testServer = createServer();
         try {
-            // Register script that spawns 2 tasks — only first should be watched
+            // First SHELL (sequential) outputs "no match here"
+            // Second SHELL outputs "jobid: SECRET"
+            // If only first task is watched → published should be empty
+            // If all tasks are watched → published would contain SECRET
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
-            registerPayload.put("scriptId", "multi_publish");
+            registerPayload.put("scriptId", "first_only");
             registerPayload.put("version", "v1");
             registerPayload.put("content",
-                "function worker(msg) do\n" +
-                "    return SHELL(\"echo '\" + msg + \"'\")\n" +
-                "end\n\n" +
-                "multi result do\n" +
-                "    thread first: worker(\"jobid: AAA\")\n" +
-                "    thread second: worker(\"jobid: BBB\")\n" +
-                "end\n");
+                "r1 = SHELL(\"echo 'no match here'\")\n" +
+                "r2 = SHELL(\"echo 'jobid: SECRET'\")\n");
             registerPayload.put("activate", Boolean.TRUE);
             List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
             Map<String, Object> rule = new LinkedHashMap<String, Object>();
@@ -659,7 +657,7 @@ public class TeeBoxServerTest {
             Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
             runPayload.put("props", new LinkedHashMap<String, Object>());
             Map<String, Object> submitResult = postJson(
-                testServer.baseUrl + "/api/client/scripts/multi_publish/runs", runPayload, 202);
+                testServer.baseUrl + "/api/client/scripts/first_only/runs", runPayload, 202);
             String runId = (String) submitResult.get("runId");
 
             waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
@@ -669,12 +667,12 @@ public class TeeBoxServerTest {
                 testServer.baseUrl + "/api/client/runs/" + runId, 200);
             @SuppressWarnings("unchecked")
             Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
-            // Should have exactly one jobId (from first task only)
-            Assert.assertNotNull("published should exist", published);
-            Assert.assertNotNull("jobId should exist", published.get("jobId"));
-            // The value should be either AAA or BBB depending on which task ran first
-            String jobId = (String) published.get("jobId");
-            Assert.assertTrue("jobId should be AAA or BBB", "AAA".equals(jobId) || "BBB".equals(jobId));
+            // First task outputs "no match here" — no jobid pattern match
+            // Second task outputs "jobid: SECRET" but should NOT be watched
+            // Therefore published should be null or not contain jobId
+            if (published != null) {
+                Assert.assertNull("jobId should not be published from second task", published.get("jobId"));
+            }
         } finally {
             testServer.close();
         }
