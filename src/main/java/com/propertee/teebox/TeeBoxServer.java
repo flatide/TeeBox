@@ -500,7 +500,7 @@ public class TeeBoxServer {
         }
         if ("POST".equals(method) && "/api/publisher/scripts".equals(path)) {
             ScriptPublishRequest request = parseScriptPublishRequest(exchange);
-            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate);
+            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate, request.outputRules);
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
@@ -527,7 +527,7 @@ public class TeeBoxServer {
             if (!scriptId.equals(request.scriptId)) {
                 throw new IllegalArgumentException("scriptId in path and body must match");
             }
-            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate);
+            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate, request.outputRules);
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
@@ -816,6 +816,9 @@ public class TeeBoxServer {
         summary.put("hasExplicitReturn", Boolean.valueOf(run.hasExplicitReturn));
         summary.put("resultSummary", run.resultSummary);
         summary.put("errorMessage", run.errorMessage);
+        if (run.published != null && !run.published.isEmpty()) {
+            summary.put("published", run.published);
+        }
         return summary;
     }
 
@@ -920,5 +923,6 @@ public class TeeBoxServer {
         String description;
         List<String> labels = new ArrayList<String>();
         boolean activate;
+        List<OutputPublishRule> outputRules;
     }
 }

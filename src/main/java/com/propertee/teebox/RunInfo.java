@@ -28,6 +28,7 @@ public class RunInfo {
     public List<RunThreadInfo> threads = new ArrayList<RunThreadInfo>();
     public List<String> stdoutLines = new ArrayList<String>();
     public List<String> stderrLines = new ArrayList<String>();
+    public Map<String, Object> published;
 
     public RunInfo copy() {
         RunInfo copy = new RunInfo();
@@ -54,6 +55,7 @@ public class RunInfo {
         }
         copy.stdoutLines = new ArrayList<String>(stdoutLines);
         copy.stderrLines = new ArrayList<String>(stderrLines);
+        copy.published = published != null ? copyMap(published) : null;
         return copy;
     }
 

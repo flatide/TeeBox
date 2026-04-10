@@ -375,6 +375,22 @@ public class AdminPageRenderer {
             sb.append("<div class='card'><h2>Result</h2><pre>").append(escape(run.resultSummary)).append("</pre></div>");
         }
 
+        if (run.published != null && !run.published.isEmpty()) {
+            sb.append("<div class='card'><h2>Published</h2>");
+            sb.append("<table class='data-table'><thead><tr><th>Key</th><th>Value</th></tr></thead><tbody>");
+            for (java.util.Map.Entry<String, Object> entry : run.published.entrySet()) {
+                if (entry.getKey().endsWith(".detectedAt")) continue;
+                sb.append("<tr><td class='mono'>").append(escape(entry.getKey())).append("</td>");
+                sb.append("<td class='mono'>").append(escape(entry.getValue()));
+                Object detectedAt = run.published.get(entry.getKey() + ".detectedAt");
+                if (detectedAt instanceof Number) {
+                    sb.append(" <span class='dim'>(detected at ").append(formatTime(((Number) detectedAt).longValue())).append(")</span>");
+                }
+                sb.append("</td></tr>");
+            }
+            sb.append("</tbody></table></div>");
+        }
+
         sb.append("<div class='card'><h2>Threads (").append(threads.size()).append(")</h2>");
         sb.append(renderThreadTable(threads));
         sb.append("</div>");

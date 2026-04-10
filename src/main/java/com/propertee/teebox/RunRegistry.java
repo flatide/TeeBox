@@ -52,6 +52,17 @@ public class RunRegistry {
         return runs.get(runId);
     }
 
+    /** Returns the raw (non-copied) RunInfo for in-place mutation by watchers. */
+    public RunInfo getRawRun(String runId) {
+        return runs.get(runId);
+    }
+
+    public void markDirty(RunInfo run) {
+        if (run != null && run.runId != null) {
+            markDirty(run.runId);
+        }
+    }
+
     public int countRuns(String status) {
         flushDirty();
         return runStore.count(status);

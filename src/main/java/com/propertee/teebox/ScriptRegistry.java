@@ -85,6 +85,16 @@ public class ScriptRegistry {
                                                    String description,
                                                    List<String> labels,
                                                    boolean activate) {
+        return registerVersion(scriptId, version, content, description, labels, activate, null);
+    }
+
+    public synchronized ScriptInfo registerVersion(String scriptId,
+                                                   String version,
+                                                   String content,
+                                                   String description,
+                                                   List<String> labels,
+                                                   boolean activate,
+                                                   List<OutputPublishRule> outputRules) {
         validateName("scriptId", scriptId);
         validateName("version", version);
         if (content == null || content.trim().length() == 0) {
@@ -119,6 +129,12 @@ public class ScriptRegistry {
         versionInfo.sha256 = sha256(content);
         versionInfo.createdAt = now;
         versionInfo.active = false;
+        if (outputRules != null && !outputRules.isEmpty()) {
+            versionInfo.outputRules = new ArrayList<OutputPublishRule>();
+            for (OutputPublishRule rule : outputRules) {
+                versionInfo.outputRules.add(rule.copy());
+            }
+        }
         info.versions.add(versionInfo);
         if (activate || info.activeVersion == null || info.activeVersion.length() == 0) {
             info.activeVersion = version;
