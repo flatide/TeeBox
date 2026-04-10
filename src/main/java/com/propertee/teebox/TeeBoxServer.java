@@ -500,7 +500,7 @@ public class TeeBoxServer {
         }
         if ("POST".equals(method) && "/api/publisher/scripts".equals(path)) {
             ScriptPublishRequest request = parseScriptPublishRequest(exchange);
-            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate);
+            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate, request.outputRules);
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
@@ -527,7 +527,7 @@ public class TeeBoxServer {
             if (!scriptId.equals(request.scriptId)) {
                 throw new IllegalArgumentException("scriptId in path and body must match");
             }
-            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate);
+            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate, request.outputRules);
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
@@ -593,6 +593,35 @@ public class TeeBoxServer {
                 if (value instanceof String) {
                     request.labels.add(((String) value).trim());
                 }
+            }
+        }
+        Object outputRules = raw.get("outputRules");
+        if (outputRules instanceof List) {
+            request.outputRules = new ArrayList<OutputPublishRule>();
+            @SuppressWarnings("unchecked")
+            List<Object> rawRules = (List<Object>) outputRules;
+            for (Object ruleObj : rawRules) {
+                if (!(ruleObj instanceof Map)) continue;
+                @SuppressWarnings("unchecked")
+                Map<String, Object> ruleMap = (Map<String, Object>) ruleObj;
+                OutputPublishRule rule = new OutputPublishRule();
+                Object stream = ruleMap.get("stream");
+                if (stream instanceof String) rule.stream = (String) stream;
+                Object pattern = ruleMap.get("pattern");
+                if (pattern instanceof String) rule.pattern = (String) pattern;
+                Object captureGroup = ruleMap.get("captureGroup");
+                if (captureGroup instanceof Number) rule.captureGroup = ((Number) captureGroup).intValue();
+                Object publishKey = ruleMap.get("publishKey");
+                if (publishKey instanceof String) rule.publishKey = (String) publishKey;
+                Object firstOnly = ruleMap.get("firstOnly");
+                if (firstOnly instanceof Boolean) rule.firstOnly = ((Boolean) firstOnly).booleanValue();
+                request.outputRules.add(rule);
+            }
+            // Validate regex patterns at registration time
+            try {
+                TaskOutputWatcher.validateRules(request.outputRules);
+            } catch (java.util.regex.PatternSyntaxException e) {
+                throw new IllegalArgumentException("Invalid outputRule regex: " + e.getMessage());
             }
         }
         return request;
@@ -816,6 +845,9 @@ public class TeeBoxServer {
         summary.put("hasExplicitReturn", Boolean.valueOf(run.hasExplicitReturn));
         summary.put("resultSummary", run.resultSummary);
         summary.put("errorMessage", run.errorMessage);
+        if (run.published != null && !run.published.isEmpty()) {
+            summary.put("published", run.published);
+        }
         return summary;
     }
 
@@ -920,5 +952,6 @@ public class TeeBoxServer {
         String description;
         List<String> labels = new ArrayList<String>();
         boolean activate;
+        List<OutputPublishRule> outputRules;
     }
 }

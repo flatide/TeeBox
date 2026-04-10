@@ -41,6 +41,7 @@ public class RunManager {
     private final ScheduledExecutorService maintenanceScheduler;
     private final long maintenanceIntervalMs;
     private final java.util.concurrent.ConcurrentHashMap<String, Future<?>> activeRuns = new java.util.concurrent.ConcurrentHashMap<String, Future<?>>();
+    private final java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher> outputWatchers = new java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher>();
     private final long startTimeMs = System.currentTimeMillis();
     private volatile boolean shutdownRequested = false;
 
@@ -114,7 +115,17 @@ public class RunManager {
                                             String description,
                                             List<String> labels,
                                             boolean activate) {
-        return scriptRegistry.registerVersion(scriptId, version, content, description, labels, activate);
+        return scriptRegistry.registerVersion(scriptId, version, content, description, labels, activate, null);
+    }
+
+    public ScriptInfo registerScriptVersion(String scriptId,
+                                            String version,
+                                            String content,
+                                            String description,
+                                            List<String> labels,
+                                            boolean activate,
+                                            List<OutputPublishRule> outputRules) {
+        return scriptRegistry.registerVersion(scriptId, version, content, description, labels, activate, outputRules);
     }
 
     public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content) {
@@ -232,6 +243,7 @@ public class RunManager {
 
     public void shutdown() {
         shutdownRequested = true;
+        outputWatchers.clear();
         maintenanceScheduler.shutdownNow();
         runRegistry.flushDirty();
         managedTaskEngine.shutdown();
@@ -252,6 +264,7 @@ public class RunManager {
             public void run() {
                 try {
                     runRegistry.flushDirty();
+                    scanOutputWatchers();
                 } catch (Exception e) {
                     TeeBoxLog.warn("RunManager", "Flush failed", e);
                 }
@@ -272,15 +285,21 @@ public class RunManager {
     }
 
     private void executeRun(final RunInfo run, File scriptFile) {
+        final List<OutputPublishRule> outputRules = getOutputRulesForScript(run.scriptId, run.version);
         try {
             runRegistry.markStarted(run);
+            // Wrap task engine to auto-register watchers on task creation
+            final ManagedTaskEngine engine = managedTaskEngine;
+            com.propertee.task.TaskRunner taskRunner = (outputRules != null && !outputRules.isEmpty())
+                ? new OutputWatchingTaskRunner(engine, run.runId, outputRules, this)
+                : (com.propertee.task.TaskRunner) managedTaskEngine;
             ScriptExecutor.ExecutionResult result = scriptExecutor.execute(
                 scriptFile,
                 run.properties,
                 run.maxIterations,
                 run.iterationLimitBehavior,
                 run.runId,
-                managedTaskEngine,
+                taskRunner,
                 new ScriptExecutor.Callbacks() {
                     @Override
                     public void onStdout(String line) {
@@ -459,6 +478,82 @@ public class RunManager {
 
     private void maintainTasks() {
         managedTaskEngine.archiveExpiredTasks();
+    }
+
+    // --- Output publish watcher ---
+
+    public void registerOutputWatcher(String taskId, String runId, File taskDir, List<OutputPublishRule> rules) {
+        if (rules == null || rules.isEmpty()) return;
+        TaskOutputWatcher watcher = new TaskOutputWatcher(taskId, runId, taskDir, rules);
+        outputWatchers.put(taskId, watcher);
+        TeeBoxLog.info("OutputWatcher", "Registered watcher for task=" + taskId + " run=" + runId + " rules=" + rules.size());
+    }
+
+    private void scanOutputWatchers() {
+        List<String> toRemove = new ArrayList<String>();
+        for (Map.Entry<String, TaskOutputWatcher> entry : outputWatchers.entrySet()) {
+            TaskOutputWatcher watcher = entry.getValue();
+            Map<String, Object> matches = watcher.scan();
+            applyWatcherMatches(watcher, matches);
+
+            // Remove if all rules matched or task is no longer alive
+            if (watcher.isAllMatched()) {
+                toRemove.add(entry.getKey());
+            } else {
+                TaskObservation obs = managedTaskEngine.observe(entry.getKey());
+                if (obs == null || !obs.alive) {
+                    // Task terminated — flush remainder and do final match
+                    Map<String, Object> finalMatches = watcher.finalScan();
+                    applyWatcherMatches(watcher, finalMatches);
+                    toRemove.add(entry.getKey());
+                }
+            }
+        }
+        for (String taskId : toRemove) {
+            outputWatchers.remove(taskId);
+        }
+    }
+
+    private void applyWatcherMatches(TaskOutputWatcher watcher, Map<String, Object> matches) {
+        if (matches.isEmpty()) return;
+        RunInfo run = runRegistry.getRawRun(watcher.getRunId());
+        if (run == null) return;
+        synchronized (run) {
+            if (run.published == null) {
+                run.published = new LinkedHashMap<String, Object>();
+            }
+            long now = System.currentTimeMillis();
+            for (Map.Entry<String, Object> match : matches.entrySet()) {
+                String key = match.getKey();
+                if (!run.published.containsKey(key)) {
+                    run.published.put(key, match.getValue());
+                    run.published.put(key + ".detectedAt", now);
+                    TeeBoxLog.info("OutputWatcher", "Published " + key + "=" + match.getValue() + " for run=" + run.runId);
+                }
+            }
+        }
+        runRegistry.markDirty(run);
+    }
+
+    // --- Accessors for watcher integration ---
+
+    public List<OutputPublishRule> getOutputRulesForScript(String scriptId, String version) {
+        ScriptInfo script = scriptRegistry.loadScript(scriptId);
+        if (script == null) return null;
+        ScriptVersionInfo vi = null;
+        String resolvedVersion = version != null ? version : script.activeVersion;
+        if (resolvedVersion == null) return null;
+        for (ScriptVersionInfo v : script.versions) {
+            if (resolvedVersion.equals(v.version)) {
+                vi = v;
+                break;
+            }
+        }
+        return vi != null ? vi.outputRules : null;
+    }
+
+    public File getTaskDir(String taskId) {
+        return managedTaskEngine.getTaskDir(taskId);
     }
 
     private static class ResolvedRunTarget {

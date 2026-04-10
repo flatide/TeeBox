@@ -555,6 +555,129 @@ public class TeeBoxServerTest {
         }
     }
 
+    @Test
+    public void outputPublishShouldCaptureJobId() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // Register script with outputRules
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "publish_test");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content",
+                "result = SHELL(\"echo 'jobid: 12345'\")\n" +
+                "PRINT(result.value)\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "jobid:\\s*(\\S+)");
+            rule.put("captureGroup", Double.valueOf(1));
+            rule.put("publishKey", "jobId");
+            rule.put("firstOnly", Boolean.TRUE);
+            rules.add(rule);
+            registerPayload.put("outputRules", rules);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+
+            // Submit run
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> submitResult = postJson(
+                testServer.baseUrl + "/api/client/scripts/publish_test/runs", runPayload, 202);
+            String runId = (String) submitResult.get("runId");
+
+            // Wait for completion
+            Map<String, Object> detail = waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
+
+            // Wait a bit for watcher scan cycle to publish
+            Thread.sleep(3000);
+
+            // Check published field in client API
+            Map<String, Object> clientRun = getJsonMap(
+                testServer.baseUrl + "/api/client/runs/" + runId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
+            Assert.assertNotNull("published should exist", published);
+            Assert.assertEquals("jobId should be 12345", "12345", published.get("jobId"));
+            Assert.assertNotNull("detectedAt should exist", published.get("jobId.detectedAt"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void outputPublishShouldRejectInvalidRegex() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            Map<String, Object> payload = new LinkedHashMap<String, Object>();
+            payload.put("scriptId", "bad_regex");
+            payload.put("version", "v1");
+            payload.put("content", "PRINT(\"hello\")\n");
+            payload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "[invalid(");
+            rule.put("publishKey", "test");
+            rules.add(rule);
+            payload.put("outputRules", rules);
+
+            // Should return 400
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts", "POST", payload, null, 400);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void outputPublishShouldOnlyWatchFirstTask() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // First SHELL (sequential) outputs "no match here"
+            // Second SHELL outputs "jobid: SECRET"
+            // If only first task is watched → published should be empty
+            // If all tasks are watched → published would contain SECRET
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "first_only");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content",
+                "r1 = SHELL(\"echo 'no match here'\")\n" +
+                "r2 = SHELL(\"echo 'jobid: SECRET'\")\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "jobid:\\s*(\\S+)");
+            rule.put("captureGroup", Double.valueOf(1));
+            rule.put("publishKey", "jobId");
+            rule.put("firstOnly", Boolean.TRUE);
+            rules.add(rule);
+            registerPayload.put("outputRules", rules);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> submitResult = postJson(
+                testServer.baseUrl + "/api/client/scripts/first_only/runs", runPayload, 202);
+            String runId = (String) submitResult.get("runId");
+
+            waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
+            Thread.sleep(3000);
+
+            Map<String, Object> clientRun = getJsonMap(
+                testServer.baseUrl + "/api/client/runs/" + runId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
+            // First task outputs "no match here" — no jobid pattern match
+            // Second task outputs "jobid: SECRET" but should NOT be watched
+            // Therefore published should be null or not contain jobId
+            if (published != null) {
+                Assert.assertNull("jobId should not be published from second task", published.get("jobId"));
+            }
+        } finally {
+            testServer.close();
+        }
+    }
+
     private boolean hasThreadName(List<Map<String, Object>> threads, String name) {
         for (Map<String, Object> thread : threads) {
             if (name.equals(thread.get("name"))) {

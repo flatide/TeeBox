@@ -62,6 +62,10 @@ public class ManagedTaskEngine implements TaskRunner {
     private final File taskBaseDir;
     private final File tasksDir;
     private final String hostInstanceId;
+
+    public File getTaskDir(String taskId) {
+        return new File(tasksDir, "task-" + taskId);
+    }
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private final Object indexLock = new Object();
     private final File indexFile;
