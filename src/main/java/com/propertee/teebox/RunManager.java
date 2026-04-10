@@ -336,6 +336,8 @@ public class RunManager {
                     }
                 }
             );
+            // Flush watchers for this run before marking complete
+            flushWatchersForRun(run.runId);
             runRegistry.flushDirty();
             if (result.success) {
                 runRegistry.markCompleted(run, result.hasExplicitReturn, result.resultData);
@@ -344,6 +346,7 @@ public class RunManager {
             }
         } catch (Throwable error) {
             TeeBoxLog.error("RunManager", "Run failed: " + run.runId, error);
+            flushWatchersForRun(run.runId);
             runRegistry.markFailed(run, error != null ? error.getMessage() : "Unknown error");
         } finally {
             activeRuns.remove(run.runId);
@@ -491,6 +494,22 @@ public class RunManager {
         TaskOutputWatcher watcher = new TaskOutputWatcher(taskId, runId, taskDir, rules);
         outputWatchers.put(taskId, watcher);
         TeeBoxLog.info("OutputWatcher", "Registered watcher for task=" + taskId + " run=" + runId + " rules=" + rules.size());
+    }
+
+    /** Immediately flush all watchers belonging to a run. Called when run completes. */
+    private void flushWatchersForRun(String runId) {
+        List<String> toRemove = new ArrayList<String>();
+        for (Map.Entry<String, TaskOutputWatcher> entry : outputWatchers.entrySet()) {
+            TaskOutputWatcher watcher = entry.getValue();
+            if (runId.equals(watcher.getRunId())) {
+                Map<String, Object> finalMatches = watcher.finalScan();
+                applyWatcherMatches(watcher, finalMatches);
+                toRemove.add(entry.getKey());
+            }
+        }
+        for (String taskId : toRemove) {
+            outputWatchers.remove(taskId);
+        }
     }
 
     private void scanOutputWatchers() {

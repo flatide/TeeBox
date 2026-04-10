@@ -589,8 +589,6 @@ public class TeeBoxServerTest {
             Map<String, Object> detail = waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
 
             // Wait a bit for watcher scan cycle to publish
-            Thread.sleep(3000);
-
             // Check published field in client API
             Map<String, Object> clientRun = getJsonMap(
                 testServer.baseUrl + "/api/client/runs/" + runId, 200);
