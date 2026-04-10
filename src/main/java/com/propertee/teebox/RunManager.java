@@ -492,8 +492,7 @@ public class RunManager {
     public void unregisterOutputWatcher(String taskId) {
         TaskOutputWatcher removed = outputWatchers.remove(taskId);
         if (removed != null) {
-            // Final scan to catch any remaining output
-            applyWatcherMatches(removed, removed.scan());
+            applyWatcherMatches(removed, removed.finalScan());
         }
     }
 
@@ -510,7 +509,9 @@ public class RunManager {
             } else {
                 TaskObservation obs = managedTaskEngine.observe(entry.getKey());
                 if (obs == null || !obs.alive) {
-                    // Final scan already done above; remove watcher
+                    // Task terminated — flush remainder and do final match
+                    Map<String, Object> finalMatches = watcher.finalScan();
+                    applyWatcherMatches(watcher, finalMatches);
                     toRemove.add(entry.getKey());
                 }
             }

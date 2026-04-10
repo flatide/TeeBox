@@ -120,6 +120,29 @@ public class TaskOutputWatcher {
         return matches;
     }
 
+    /**
+     * Final scan that flushes remainder buffers.
+     * Call when task is known to be terminated — no more output will arrive.
+     */
+    public Map<String, Object> finalScan() {
+        // Normal scan first to pick up any new complete lines
+        Map<String, Object> matches = new LinkedHashMap<String, Object>(scan());
+
+        // Flush stdout remainder as content
+        if (stdoutRemainder.length() > 0 && !stdoutRules.isEmpty()) {
+            matchRules(stdoutRules, stdoutRemainder, matches);
+            stdoutRemainder = "";
+        }
+
+        // Flush stderr remainder as content
+        if (stderrRemainder.length() > 0 && !stderrRules.isEmpty()) {
+            matchRules(stderrRules, stderrRemainder, matches);
+            stderrRemainder = "";
+        }
+
+        return matches;
+    }
+
     private boolean hasUnmatchedRules(List<CompiledRule> rules) {
         for (CompiledRule cr : rules) {
             if (!cr.rule.firstOnly || !matchedKeys.contains(cr.rule.publishKey)) {
