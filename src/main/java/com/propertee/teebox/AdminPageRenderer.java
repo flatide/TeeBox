@@ -595,6 +595,14 @@ public class AdminPageRenderer {
         sb.append("<input type='file' id='script-file' accept='.tee,.txt' style='font-size:13px;'/>");
         sb.append("</div>");
         sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='script-content' rows='8' style='font-family:monospace;font-size:13px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;' placeholder='return {\"ok\": true}'></textarea></div>");
+        sb.append("<details style='margin-top:4px;'><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule (optional)</summary>");
+        sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
+        sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
+        sb.append("<div class='form-row'><label>Publish Key</label><input type='text' name='publishKey' placeholder='jobId'/></div>");
+        sb.append("<div style='display:flex;gap:12px;'>");
+        sb.append("<div class='form-row' style='flex:1'><label>Capture Group</label><input type='number' name='captureGroup' value='1' min='0' style='width:60px;'/></div>");
+        sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'><option value='stdout'>stdout</option><option value='stderr'>stderr</option></select></div>");
+        sb.append("</div></div></details>");
         sb.append("<div class='form-row-inline'>");
         sb.append("<label class='checkbox-label'><input type='checkbox' name='activate' checked/> Activate</label>");
         sb.append("<button type='submit'>Register</button>");
