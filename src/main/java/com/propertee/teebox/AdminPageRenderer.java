@@ -710,6 +710,22 @@ public class AdminPageRenderer {
                 sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
                 sb.append("<input type='hidden' name='version' value='").append(escape(script.activeVersion)).append("'/>");
                 sb.append("<textarea name='content' rows='12' style='font-family:\"SF Mono\",SFMono-Regular,Consolas,\"Liberation Mono\",Menlo,monospace;font-size:12px;padding:12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;line-height:1.6;background:#1e293b;color:#e2e8f0;'>").append(escape(content)).append("</textarea>");
+
+                // Output capture rule editor
+                OutputPublishRule activeRule = findActiveOutputRule(script);
+                sb.append("<details style='margin-top:8px;'");
+                if (activeRule != null) sb.append(" open");
+                sb.append("><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule</summary>");
+                sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
+                sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' value='").append(activeRule != null ? escape(activeRule.pattern) : "").append("' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
+                sb.append("<div class='form-row'><label>Publish Key</label><input type='text' name='publishKey' value='").append(activeRule != null ? escape(activeRule.publishKey) : "").append("' placeholder='jobId'/></div>");
+                sb.append("<div style='display:flex;gap:12px;'>");
+                sb.append("<div class='form-row' style='flex:1'><label>Capture Group</label><input type='number' name='captureGroup' value='").append(activeRule != null ? activeRule.captureGroup : 1).append("' min='0' style='width:60px;'/></div>");
+                sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'>");
+                sb.append("<option value='stdout'").append(activeRule == null || !"stderr".equals(activeRule.stream) ? " selected" : "").append(">stdout</option>");
+                sb.append("<option value='stderr'").append(activeRule != null && "stderr".equals(activeRule.stream) ? " selected" : "").append(">stderr</option>");
+                sb.append("</select></div></div></div></details>");
+
                 sb.append("<div class='form-row-inline'><button type='submit'>Save</button></div>");
                 sb.append("</form></div>");
             }
@@ -1084,6 +1100,16 @@ public class AdminPageRenderer {
             sb.append(lines.get(i));
         }
         return sb.toString();
+    }
+
+    private OutputPublishRule findActiveOutputRule(ScriptInfo script) {
+        if (script == null || script.activeVersion == null) return null;
+        for (ScriptVersionInfo v : script.versions) {
+            if (script.activeVersion.equals(v.version) && v.outputRules != null && !v.outputRules.isEmpty()) {
+                return v.outputRules.get(0);
+            }
+        }
+        return null;
     }
 
     private String nullToEmpty(String text) {

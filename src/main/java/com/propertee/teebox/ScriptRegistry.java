@@ -146,7 +146,7 @@ public class ScriptRegistry {
         return info.copy();
     }
 
-    public synchronized ScriptInfo updateVersionContent(String scriptId, String version, String content) {
+    public synchronized ScriptInfo updateVersionContent(String scriptId, String version, String content, List<OutputPublishRule> outputRules) {
         if (content == null || content.trim().length() == 0) {
             throw new IllegalArgumentException("content is required");
         }
@@ -159,6 +159,17 @@ public class ScriptRegistry {
         File scriptFile = new File(new File(scriptDir(scriptId), "versions"), version + ".tee");
         writeFile(scriptFile, content);
         vi.sha256 = sha256(content);
+        // Update outputRules: null means no change, empty list means clear
+        if (outputRules != null) {
+            if (outputRules.isEmpty()) {
+                vi.outputRules = null;
+            } else {
+                vi.outputRules = new ArrayList<OutputPublishRule>();
+                for (OutputPublishRule rule : outputRules) {
+                    vi.outputRules.add(rule.copy());
+                }
+            }
+        }
         info.updatedAt = System.currentTimeMillis();
         saveScript(info);
         return info.copy();

@@ -131,28 +131,7 @@ public class TeeBoxServer {
                     if (content == null || content.trim().length() == 0) {
                         throw new IllegalArgumentException("Script content is required");
                     }
-                    List<OutputPublishRule> outputRules = null;
-                    String publishPattern = form.get("publishPattern");
-                    String publishKey = form.get("publishKey");
-                    if (publishPattern != null && publishPattern.trim().length() > 0
-                        && publishKey != null && publishKey.trim().length() > 0) {
-                        try {
-                            java.util.regex.Pattern.compile(publishPattern.trim());
-                        } catch (java.util.regex.PatternSyntaxException e) {
-                            throw new IllegalArgumentException("Invalid regex pattern: " + e.getMessage());
-                        }
-                        OutputPublishRule rule = new OutputPublishRule();
-                        rule.pattern = publishPattern.trim();
-                        rule.publishKey = publishKey.trim();
-                        String publishStream = form.get("publishStream");
-                        if ("stderr".equals(publishStream)) rule.stream = "stderr";
-                        String captureGroup = form.get("captureGroup");
-                        if (captureGroup != null && captureGroup.trim().length() > 0) {
-                            try { rule.captureGroup = Integer.parseInt(captureGroup.trim()); } catch (NumberFormatException ignore) {}
-                        }
-                        outputRules = new ArrayList<OutputPublishRule>();
-                        outputRules.add(rule);
-                    }
+                    List<OutputPublishRule> outputRules = parseOutputRuleFromForm(form);
                     runManager.registerScriptVersion(scriptId.trim(), version.trim(), content, description, new ArrayList<String>(), activate, outputRules);
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                     return;
@@ -171,7 +150,9 @@ public class TeeBoxServer {
                     if (content == null || content.trim().length() == 0) {
                         throw new IllegalArgumentException("Script content is required");
                     }
-                    runManager.updateScriptVersionContent(scriptId.trim(), version.trim(), content);
+                    // Parse output rule from form
+                    List<OutputPublishRule> outputRules = parseOutputRuleFromForm(form);
+                    runManager.updateScriptVersionContent(scriptId.trim(), version.trim(), content, outputRules);
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                     return;
                 }
@@ -660,6 +641,32 @@ public class TeeBoxServer {
             throw new IllegalArgumentException("Invalid JSON body");
         }
         return raw;
+    }
+
+    private List<OutputPublishRule> parseOutputRuleFromForm(Map<String, String> form) {
+        String publishPattern = form.get("publishPattern");
+        String publishKey = form.get("publishKey");
+        if (publishPattern == null || publishPattern.trim().length() == 0
+            || publishKey == null || publishKey.trim().length() == 0) {
+            return null;
+        }
+        try {
+            java.util.regex.Pattern.compile(publishPattern.trim());
+        } catch (java.util.regex.PatternSyntaxException e) {
+            throw new IllegalArgumentException("Invalid regex pattern: " + e.getMessage());
+        }
+        OutputPublishRule rule = new OutputPublishRule();
+        rule.pattern = publishPattern.trim();
+        rule.publishKey = publishKey.trim();
+        String publishStream = form.get("publishStream");
+        if ("stderr".equals(publishStream)) rule.stream = "stderr";
+        String captureGroup = form.get("captureGroup");
+        if (captureGroup != null && captureGroup.trim().length() > 0) {
+            try { rule.captureGroup = Integer.parseInt(captureGroup.trim()); } catch (NumberFormatException ignore) {}
+        }
+        List<OutputPublishRule> rules = new ArrayList<OutputPublishRule>();
+        rules.add(rule);
+        return rules;
     }
 
     private Map<String, String> parseForm(HttpExchange exchange) throws IOException {

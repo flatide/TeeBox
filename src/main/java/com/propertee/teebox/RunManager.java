@@ -129,7 +129,11 @@ public class RunManager {
     }
 
     public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content) {
-        return scriptRegistry.updateVersionContent(scriptId, version, content);
+        return scriptRegistry.updateVersionContent(scriptId, version, content, null);
+    }
+
+    public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content, List<OutputPublishRule> outputRules) {
+        return scriptRegistry.updateVersionContent(scriptId, version, content, outputRules);
     }
 
     public ScriptInfo activateScriptVersion(String scriptId, String version) {
