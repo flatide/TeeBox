@@ -14,6 +14,7 @@ class OutputWatchingTaskRunner implements TaskRunner {
     private final String runId;
     private final List<OutputPublishRule> outputRules;
     private final RunManager runManager;
+    private boolean firstTaskRegistered = false;
 
     OutputWatchingTaskRunner(ManagedTaskEngine delegate, String runId,
                              List<OutputPublishRule> outputRules, RunManager runManager) {
@@ -26,8 +27,11 @@ class OutputWatchingTaskRunner implements TaskRunner {
     @Override
     public Task execute(TaskRequest request) {
         Task task = delegate.execute(request);
-        // Register watcher for this task's output
-        runManager.registerOutputWatcher(task.taskId, runId, delegate.getTaskDir(task.taskId), outputRules);
+        // Register watcher for the first task only
+        if (!firstTaskRegistered) {
+            firstTaskRegistered = true;
+            runManager.registerOutputWatcher(task.taskId, runId, delegate.getTaskDir(task.taskId), outputRules);
+        }
         return task;
     }
 

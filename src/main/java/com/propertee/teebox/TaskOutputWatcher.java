@@ -95,7 +95,7 @@ public class TaskOutputWatcher {
         Map<String, Object> matches = new LinkedHashMap<String, Object>();
 
         // Read stdout once, apply all stdout rules
-        if (!stdoutRules.isEmpty() && hasUnmatchedRules(stdoutRules)) {
+        if (!stdoutRules.isEmpty() && hasUnmatchedFirstOnlyRules(stdoutRules)) {
             ReadResult rr = readIncremental(stdoutFile, stdoutOffset, stdoutRemainder);
             stdoutOffset = rr.newOffset;
             stdoutRemainder = rr.remainder;
@@ -105,7 +105,7 @@ public class TaskOutputWatcher {
         }
 
         // Read stderr once, apply all stderr rules
-        if (!stderrRules.isEmpty() && hasUnmatchedRules(stderrRules)) {
+        if (!stderrRules.isEmpty() && hasUnmatchedFirstOnlyRules(stderrRules)) {
             ReadResult rr = readIncremental(stderrFile, stderrOffset, stderrRemainder);
             stderrOffset = rr.newOffset;
             stderrRemainder = rr.remainder;
@@ -115,7 +115,7 @@ public class TaskOutputWatcher {
         }
 
         // Check if all firstOnly rules are matched
-        allMatched = !hasUnmatchedRules(stdoutRules) && !hasUnmatchedRules(stderrRules);
+        allMatched = !hasUnmatchedFirstOnlyRules(stdoutRules) && !hasUnmatchedFirstOnlyRules(stderrRules);
 
         return matches;
     }
@@ -143,9 +143,14 @@ public class TaskOutputWatcher {
         return matches;
     }
 
-    private boolean hasUnmatchedRules(List<CompiledRule> rules) {
+    /**
+     * Returns true if there are firstOnly rules that haven't matched yet.
+     * Non-firstOnly (continuous) rules don't block allMatched — they run
+     * until the task terminates regardless.
+     */
+    private boolean hasUnmatchedFirstOnlyRules(List<CompiledRule> rules) {
         for (CompiledRule cr : rules) {
-            if (!cr.rule.firstOnly || !matchedKeys.contains(cr.rule.publishKey)) {
+            if (cr.rule.firstOnly && !matchedKeys.contains(cr.rule.publishKey)) {
                 return true;
             }
         }

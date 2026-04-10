@@ -489,13 +489,6 @@ public class RunManager {
         TeeBoxLog.info("OutputWatcher", "Registered watcher for task=" + taskId + " run=" + runId + " rules=" + rules.size());
     }
 
-    public void unregisterOutputWatcher(String taskId) {
-        TaskOutputWatcher removed = outputWatchers.remove(taskId);
-        if (removed != null) {
-            applyWatcherMatches(removed, removed.finalScan());
-        }
-    }
-
     private void scanOutputWatchers() {
         List<String> toRemove = new ArrayList<String>();
         for (Map.Entry<String, TaskOutputWatcher> entry : outputWatchers.entrySet()) {

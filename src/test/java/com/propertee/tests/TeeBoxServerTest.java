@@ -555,6 +555,131 @@ public class TeeBoxServerTest {
         }
     }
 
+    @Test
+    public void outputPublishShouldCaptureJobId() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // Register script with outputRules
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "publish_test");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content",
+                "result = SHELL(\"echo 'jobid: 12345'\")\n" +
+                "PRINT(result.value)\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "jobid:\\s*(\\S+)");
+            rule.put("captureGroup", Double.valueOf(1));
+            rule.put("publishKey", "jobId");
+            rule.put("firstOnly", Boolean.TRUE);
+            rules.add(rule);
+            registerPayload.put("outputRules", rules);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+
+            // Submit run
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> submitResult = postJson(
+                testServer.baseUrl + "/api/client/scripts/publish_test/runs", runPayload, 202);
+            String runId = (String) submitResult.get("runId");
+
+            // Wait for completion
+            Map<String, Object> detail = waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
+
+            // Wait a bit for watcher scan cycle to publish
+            Thread.sleep(3000);
+
+            // Check published field in client API
+            Map<String, Object> clientRun = getJsonMap(
+                testServer.baseUrl + "/api/client/runs/" + runId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
+            Assert.assertNotNull("published should exist", published);
+            Assert.assertEquals("jobId should be 12345", "12345", published.get("jobId"));
+            Assert.assertNotNull("detectedAt should exist", published.get("jobId.detectedAt"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void outputPublishShouldRejectInvalidRegex() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            Map<String, Object> payload = new LinkedHashMap<String, Object>();
+            payload.put("scriptId", "bad_regex");
+            payload.put("version", "v1");
+            payload.put("content", "PRINT(\"hello\")\n");
+            payload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "[invalid(");
+            rule.put("publishKey", "test");
+            rules.add(rule);
+            payload.put("outputRules", rules);
+
+            // Should return 400
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts", "POST", payload, null, 400);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void outputPublishShouldOnlyWatchFirstTask() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // Register script that spawns 2 tasks — only first should be watched
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "multi_publish");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content",
+                "function worker(msg) do\n" +
+                "    return SHELL(\"echo '\" + msg + \"'\")\n" +
+                "end\n\n" +
+                "multi result do\n" +
+                "    thread first: worker(\"jobid: AAA\")\n" +
+                "    thread second: worker(\"jobid: BBB\")\n" +
+                "end\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "jobid:\\s*(\\S+)");
+            rule.put("captureGroup", Double.valueOf(1));
+            rule.put("publishKey", "jobId");
+            rule.put("firstOnly", Boolean.TRUE);
+            rules.add(rule);
+            registerPayload.put("outputRules", rules);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> submitResult = postJson(
+                testServer.baseUrl + "/api/client/scripts/multi_publish/runs", runPayload, 202);
+            String runId = (String) submitResult.get("runId");
+
+            waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
+            Thread.sleep(3000);
+
+            Map<String, Object> clientRun = getJsonMap(
+                testServer.baseUrl + "/api/client/runs/" + runId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
+            // Should have exactly one jobId (from first task only)
+            Assert.assertNotNull("published should exist", published);
+            Assert.assertNotNull("jobId should exist", published.get("jobId"));
+            // The value should be either AAA or BBB depending on which task ran first
+            String jobId = (String) published.get("jobId");
+            Assert.assertTrue("jobId should be AAA or BBB", "AAA".equals(jobId) || "BBB".equals(jobId));
+        } finally {
+            testServer.close();
+        }
+    }
+
     private boolean hasThreadName(List<Map<String, Object>> threads, String name) {
         for (Map<String, Object> thread : threads) {
             if (name.equals(thread.get("name"))) {
