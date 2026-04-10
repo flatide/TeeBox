@@ -15,7 +15,8 @@ public class TaskOutputWatcher {
     private final String runId;
     private final File stdoutFile;
     private final File stderrFile;
-    private final List<CompiledRule> rules;
+    private final List<CompiledRule> stdoutRules = new ArrayList<CompiledRule>();
+    private final List<CompiledRule> stderrRules = new ArrayList<CompiledRule>();
     private final Set<String> matchedKeys = new HashSet<String>();
     private long stdoutOffset = 0;
     private long stderrOffset = 0;
@@ -26,12 +27,22 @@ public class TaskOutputWatcher {
     private static class CompiledRule {
         final OutputPublishRule rule;
         final Pattern pattern;
-        final boolean isStdout;
 
-        CompiledRule(OutputPublishRule rule) {
+        CompiledRule(OutputPublishRule rule, Pattern pattern) {
             this.rule = rule;
-            this.pattern = Pattern.compile(rule.pattern);
-            this.isStdout = !"stderr".equals(rule.stream);
+            this.pattern = pattern;
+        }
+    }
+
+    private static class ReadResult {
+        final long newOffset;
+        final String content;
+        final String remainder;
+
+        ReadResult(long newOffset, String content, String remainder) {
+            this.newOffset = newOffset;
+            this.content = content;
+            this.remainder = remainder;
         }
     }
 
@@ -40,12 +51,30 @@ public class TaskOutputWatcher {
         this.runId = runId;
         this.stdoutFile = new File(taskDir, "stdout.log");
         this.stderrFile = new File(taskDir, "stderr.log");
-        this.rules = new ArrayList<CompiledRule>();
         for (OutputPublishRule rule : rules) {
-            if (rule.pattern != null && rule.pattern.length() > 0 && rule.publishKey != null) {
-                this.rules.add(new CompiledRule(rule));
+            if (rule.pattern == null || rule.pattern.length() == 0 || rule.publishKey == null) continue;
+            Pattern compiled = Pattern.compile(rule.pattern);
+            CompiledRule cr = new CompiledRule(rule, compiled);
+            if ("stderr".equals(rule.stream)) {
+                stderrRules.add(cr);
+            } else {
+                stdoutRules.add(cr);
             }
         }
+    }
+
+    /** Validate all patterns at registration time. Throws PatternSyntaxException on bad regex. */
+    public static void validateRules(List<OutputPublishRule> rules) {
+        if (rules == null) return;
+        for (OutputPublishRule rule : rules) {
+            if (rule.pattern != null && rule.pattern.length() > 0) {
+                Pattern.compile(rule.pattern);
+            }
+        }
+    }
+
+    public String getTaskId() {
+        return taskId;
     }
 
     public String getRunId() {
@@ -58,34 +87,54 @@ public class TaskOutputWatcher {
 
     /**
      * Scan for new output and return any matches found.
-     * Returns empty map if no new matches.
+     * Each stream is read once, then all rules for that stream are applied.
      */
     public Map<String, Object> scan() {
         if (allMatched) return Collections.emptyMap();
 
         Map<String, Object> matches = new LinkedHashMap<String, Object>();
 
+        // Read stdout once, apply all stdout rules
+        if (!stdoutRules.isEmpty() && hasUnmatchedRules(stdoutRules)) {
+            ReadResult rr = readIncremental(stdoutFile, stdoutOffset, stdoutRemainder);
+            stdoutOffset = rr.newOffset;
+            stdoutRemainder = rr.remainder;
+            if (rr.content.length() > 0) {
+                matchRules(stdoutRules, rr.content, matches);
+            }
+        }
+
+        // Read stderr once, apply all stderr rules
+        if (!stderrRules.isEmpty() && hasUnmatchedRules(stderrRules)) {
+            ReadResult rr = readIncremental(stderrFile, stderrOffset, stderrRemainder);
+            stderrOffset = rr.newOffset;
+            stderrRemainder = rr.remainder;
+            if (rr.content.length() > 0) {
+                matchRules(stderrRules, rr.content, matches);
+            }
+        }
+
+        // Check if all firstOnly rules are matched
+        allMatched = !hasUnmatchedRules(stdoutRules) && !hasUnmatchedRules(stderrRules);
+
+        return matches;
+    }
+
+    private boolean hasUnmatchedRules(List<CompiledRule> rules) {
+        for (CompiledRule cr : rules) {
+            if (!cr.rule.firstOnly || !matchedKeys.contains(cr.rule.publishKey)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void matchRules(List<CompiledRule> rules, String content, Map<String, Object> matches) {
         for (CompiledRule cr : rules) {
             if (cr.rule.firstOnly && matchedKeys.contains(cr.rule.publishKey)) {
                 continue;
             }
-
-            String newContent;
-            if (cr.isStdout) {
-                long[] result = readIncremental(stdoutFile, stdoutOffset, stdoutRemainder);
-                stdoutOffset = result[0];
-                newContent = extractContent(result);
-                stdoutRemainder = extractRemainder(result);
-            } else {
-                long[] result = readIncremental(stderrFile, stderrOffset, stderrRemainder);
-                stderrOffset = result[0];
-                newContent = extractContent(result);
-                stderrRemainder = extractRemainder(result);
-            }
-
-            if (newContent.length() == 0) continue;
-
-            Matcher matcher = cr.pattern.matcher(newContent);
+            Matcher matcher = cr.pattern.matcher(content);
             if (matcher.find()) {
                 int group = cr.rule.captureGroup;
                 String value = group <= matcher.groupCount() ? matcher.group(group) : matcher.group(0);
@@ -95,34 +144,11 @@ public class TaskOutputWatcher {
                 }
             }
         }
-
-        // Check if all firstOnly rules are matched
-        if (!rules.isEmpty()) {
-            boolean all = true;
-            for (CompiledRule cr : rules) {
-                if (cr.rule.firstOnly && !matchedKeys.contains(cr.rule.publishKey)) {
-                    all = false;
-                    break;
-                }
-            }
-            allMatched = all;
-        }
-
-        return matches;
     }
 
-    // Incremental file read. Returns [newOffset, contentChars..., remainderChars...]
-    // encoded in a way we can extract. We use a simpler approach with instance fields.
-
-    private String lastReadContent = "";
-    private String lastReadRemainder = "";
-
-    private long[] readIncremental(File file, long offset, String remainder) {
-        lastReadContent = "";
-        lastReadRemainder = "";
-
+    private static ReadResult readIncremental(File file, long offset, String remainder) {
         if (!file.exists() || file.length() <= offset) {
-            return new long[]{offset};
+            return new ReadResult(offset, "", remainder);
         }
 
         RandomAccessFile raf = null;
@@ -131,12 +157,12 @@ public class TaskOutputWatcher {
             raf.seek(offset);
             long available = raf.length() - offset;
             if (available <= 0) {
-                return new long[]{offset};
+                return new ReadResult(offset, "", remainder);
             }
             byte[] buf = new byte[(int) Math.min(available, 64 * 1024)];
             int read = raf.read(buf);
             if (read <= 0) {
-                return new long[]{offset};
+                return new ReadResult(offset, "", remainder);
             }
             long newOffset = offset + read;
             String chunk = remainder + new String(buf, 0, read, "UTF-8");
@@ -144,27 +170,17 @@ public class TaskOutputWatcher {
             // Split into complete lines + remainder
             int lastNewline = chunk.lastIndexOf('\n');
             if (lastNewline >= 0) {
-                lastReadContent = chunk.substring(0, lastNewline + 1);
-                lastReadRemainder = chunk.substring(lastNewline + 1);
+                return new ReadResult(newOffset, chunk.substring(0, lastNewline + 1), chunk.substring(lastNewline + 1));
             } else {
                 // No complete line yet — keep as remainder
-                lastReadRemainder = chunk;
+                return new ReadResult(newOffset, "", chunk);
             }
-            return new long[]{newOffset};
         } catch (Exception e) {
-            return new long[]{offset};
+            return new ReadResult(offset, "", remainder);
         } finally {
             if (raf != null) {
                 try { raf.close(); } catch (Exception ignore) {}
             }
         }
-    }
-
-    private String extractContent(long[] result) {
-        return lastReadContent;
-    }
-
-    private String extractRemainder(long[] result) {
-        return lastReadRemainder;
     }
 }

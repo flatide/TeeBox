@@ -503,8 +503,16 @@ public class RunManager {
             TaskOutputWatcher watcher = entry.getValue();
             Map<String, Object> matches = watcher.scan();
             applyWatcherMatches(watcher, matches);
+
+            // Remove if all rules matched or task is no longer alive
             if (watcher.isAllMatched()) {
                 toRemove.add(entry.getKey());
+            } else {
+                TaskObservation obs = managedTaskEngine.observe(entry.getKey());
+                if (obs == null || !obs.alive) {
+                    // Final scan already done above; remove watcher
+                    toRemove.add(entry.getKey());
+                }
             }
         }
         for (String taskId : toRemove) {

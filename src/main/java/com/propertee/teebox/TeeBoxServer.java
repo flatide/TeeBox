@@ -595,6 +595,35 @@ public class TeeBoxServer {
                 }
             }
         }
+        Object outputRules = raw.get("outputRules");
+        if (outputRules instanceof List) {
+            request.outputRules = new ArrayList<OutputPublishRule>();
+            @SuppressWarnings("unchecked")
+            List<Object> rawRules = (List<Object>) outputRules;
+            for (Object ruleObj : rawRules) {
+                if (!(ruleObj instanceof Map)) continue;
+                @SuppressWarnings("unchecked")
+                Map<String, Object> ruleMap = (Map<String, Object>) ruleObj;
+                OutputPublishRule rule = new OutputPublishRule();
+                Object stream = ruleMap.get("stream");
+                if (stream instanceof String) rule.stream = (String) stream;
+                Object pattern = ruleMap.get("pattern");
+                if (pattern instanceof String) rule.pattern = (String) pattern;
+                Object captureGroup = ruleMap.get("captureGroup");
+                if (captureGroup instanceof Number) rule.captureGroup = ((Number) captureGroup).intValue();
+                Object publishKey = ruleMap.get("publishKey");
+                if (publishKey instanceof String) rule.publishKey = (String) publishKey;
+                Object firstOnly = ruleMap.get("firstOnly");
+                if (firstOnly instanceof Boolean) rule.firstOnly = ((Boolean) firstOnly).booleanValue();
+                request.outputRules.add(rule);
+            }
+            // Validate regex patterns at registration time
+            try {
+                TaskOutputWatcher.validateRules(request.outputRules);
+            } catch (java.util.regex.PatternSyntaxException e) {
+                throw new IllegalArgumentException("Invalid outputRule regex: " + e.getMessage());
+            }
+        }
         return request;
     }
 
