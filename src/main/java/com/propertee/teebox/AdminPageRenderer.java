@@ -318,16 +318,35 @@ public class AdminPageRenderer {
 
         sb.append("<script>");
         sb.append("(function(){");
-        sb.append("function fetchFragment(url,targetId){");
+        // Save scroll state of all .task-out elements before refresh
+        sb.append("function saveScrollState(){");
+        sb.append("var state={};");
+        sb.append("var els=document.querySelectorAll('.task-out');");
+        sb.append("for(var i=0;i<els.length;i++){");
+        sb.append("var el=els[i];if(!el.id)continue;");
+        sb.append("var atBottom=el.scrollHeight-el.scrollTop-el.clientHeight<8;");
+        sb.append("state[el.id]={top:el.scrollTop,atBottom:atBottom};");
+        sb.append("}return state;}");
+        // Restore scroll state after refresh
+        sb.append("function restoreScrollState(state){");
+        sb.append("var els=document.querySelectorAll('.task-out');");
+        sb.append("for(var i=0;i<els.length;i++){");
+        sb.append("var el=els[i];if(!el.id||!state[el.id])continue;");
+        sb.append("if(state[el.id].atBottom){el.scrollTop=el.scrollHeight;}");
+        sb.append("else{el.scrollTop=state[el.id].top;}");
+        sb.append("}}");
+        sb.append("function fetchFragment(url,targetId,cb){");
         sb.append("var xhr=new XMLHttpRequest();");
         sb.append("xhr.open('GET',url,true);");
         sb.append("xhr.onreadystatechange=function(){");
         sb.append("if(xhr.readyState===4&&xhr.status===200){");
         sb.append("var el=document.getElementById(targetId);");
         sb.append("if(el)el.innerHTML=xhr.responseText;");
+        sb.append("if(cb)cb();");
         sb.append("}};xhr.send();}");
         sb.append("window.refreshPage=function(){");
-        sb.append("fetchFragment('/admin/fragments/run-detail/").append(urlPath(runId)).append("','run-detail-content');");
+        sb.append("var ss=saveScrollState();");
+        sb.append("fetchFragment('/admin/fragments/run-detail/").append(urlPath(runId)).append("','run-detail-content',function(){restoreScrollState(ss);});");
         sb.append("fetchFragment('/admin/fragments/nav-counts','nav-counts');");
         sb.append("};");
         sb.append("})();");
@@ -422,9 +441,10 @@ public class AdminPageRenderer {
         if (!tasks.isEmpty()) {
             sb.append("<div class='card'><h2>Task Output</h2>");
             boolean anyOutput = false;
+            int taskIdx = 0;
             for (TaskInfo task : tasks) {
-                String taskStdout = nullToEmpty(runManager.getTaskStdout(task.taskId));
-                String taskStderr = nullToEmpty(runManager.getTaskStderr(task.taskId));
+                String taskStdout = tailLines(nullToEmpty(runManager.getTaskStdout(task.taskId)), DEFAULT_TAIL_LINES);
+                String taskStderr = tailLines(nullToEmpty(runManager.getTaskStderr(task.taskId)), DEFAULT_TAIL_LINES);
                 if (taskStdout.length() > 0 || taskStderr.length() > 0) {
                     anyOutput = true;
                     sb.append("<div class='task-output-block'>");
@@ -435,13 +455,14 @@ public class AdminPageRenderer {
                     sb.append(" ").append(statusBadge(task.status));
                     sb.append("</div>");
                     if (taskStdout.length() > 0) {
-                        sb.append("<pre>").append(escape(taskStdout)).append("</pre>");
+                        sb.append("<pre class='task-out' id='task-out-").append(taskIdx).append("'>").append(escape(taskStdout)).append("</pre>");
                     }
                     if (taskStderr.length() > 0) {
-                        sb.append("<pre style='border-left:3px solid #fca5a5;'>").append(escape(taskStderr)).append("</pre>");
+                        sb.append("<pre class='task-out' style='border-left:3px solid #fca5a5;'>").append(escape(taskStderr)).append("</pre>");
                     }
                     sb.append("</div>");
                 }
+                taskIdx++;
             }
             if (!anyOutput) {
                 sb.append("<p class='empty'>No task output</p>");
@@ -478,16 +499,28 @@ public class AdminPageRenderer {
 
         sb.append("<script>");
         sb.append("(function(){");
-        sb.append("function fetchFragment(url,targetId){");
+        sb.append("function saveScrollState(){");
+        sb.append("var state={};var els=document.querySelectorAll('.task-out');");
+        sb.append("for(var i=0;i<els.length;i++){var el=els[i];if(!el.id)continue;");
+        sb.append("var atBottom=el.scrollHeight-el.scrollTop-el.clientHeight<8;");
+        sb.append("state[el.id]={top:el.scrollTop,atBottom:atBottom};}return state;}");
+        sb.append("function restoreScrollState(state){");
+        sb.append("var els=document.querySelectorAll('.task-out');");
+        sb.append("for(var i=0;i<els.length;i++){var el=els[i];if(!el.id||!state[el.id])continue;");
+        sb.append("if(state[el.id].atBottom){el.scrollTop=el.scrollHeight;}");
+        sb.append("else{el.scrollTop=state[el.id].top;}}}");
+        sb.append("function fetchFragment(url,targetId,cb){");
         sb.append("var xhr=new XMLHttpRequest();");
         sb.append("xhr.open('GET',url,true);");
         sb.append("xhr.onreadystatechange=function(){");
         sb.append("if(xhr.readyState===4&&xhr.status===200){");
         sb.append("var el=document.getElementById(targetId);");
         sb.append("if(el)el.innerHTML=xhr.responseText;");
+        sb.append("if(cb)cb();");
         sb.append("}};xhr.send();}");
         sb.append("window.refreshPage=function(){");
-        sb.append("fetchFragment('/admin/fragments/task-detail/").append(urlPath(taskId)).append("','task-detail-content');");
+        sb.append("var ss=saveScrollState();");
+        sb.append("fetchFragment('/admin/fragments/task-detail/").append(urlPath(taskId)).append("','task-detail-content',function(){restoreScrollState(ss);});");
         sb.append("fetchFragment('/admin/fragments/nav-counts','nav-counts');");
         sb.append("};");
         sb.append("})();");
@@ -542,10 +575,10 @@ public class AdminPageRenderer {
             sb.append("<div class='card'><h2>Observation</h2><pre>").append(escape(gson.toJson(obs))).append("</pre></div>");
         }
 
-        String taskStdout = nullToEmpty(runManager.getTaskStdout(taskId));
-        String taskStderr = nullToEmpty(runManager.getTaskStderr(taskId));
+        String taskStdout = tailLines(nullToEmpty(runManager.getTaskStdout(taskId)), DEFAULT_TAIL_LINES);
+        String taskStderr = tailLines(nullToEmpty(runManager.getTaskStderr(taskId)), DEFAULT_TAIL_LINES);
         if (taskStdout.length() > 0) {
-            sb.append("<div class='card'><h2>Stdout</h2><pre>").append(escape(taskStdout)).append("</pre></div>");
+            sb.append("<div class='card'><h2>Stdout</h2><pre class='task-out' id='task-stdout'>").append(escape(taskStdout)).append("</pre></div>");
         }
         if (taskStderr.length() > 0) {
             sb.append("<div class='card'><h2>Stderr</h2><pre>").append(escape(taskStderr)).append("</pre></div>");
@@ -1121,6 +1154,21 @@ public class AdminPageRenderer {
 
     private String nullToEmpty(String text) {
         return text != null ? text : "";
+    }
+
+    private static final int DEFAULT_TAIL_LINES = 1000;
+
+    private String tailLines(String text, int maxLines) {
+        if (text == null || text.length() == 0) return "";
+        String[] lines = text.split("\n", -1);
+        if (lines.length <= maxLines) return text;
+        StringBuilder sb = new StringBuilder();
+        int start = lines.length - maxLines;
+        for (int i = start; i < lines.length; i++) {
+            if (i > start) sb.append("\n");
+            sb.append(lines[i]);
+        }
+        return sb.toString();
     }
 
     private String tail(String text, int maxChars) {
