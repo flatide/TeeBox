@@ -136,6 +136,15 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                     return;
                 }
+                if ("POST".equals(method) && path.startsWith("/admin/scripts/delete/")) {
+                    String scriptId = path.substring("/admin/scripts/delete/".length());
+                    if (scriptId.length() == 0) {
+                        throw new IllegalArgumentException("Script ID is required");
+                    }
+                    runManager.deleteScript(scriptId);
+                    redirect(exchange, "/admin/scripts");
+                    return;
+                }
                 if ("POST".equals(method) && "/admin/scripts/update-source".equals(path)) {
                     Map<String, String> form = parseForm(exchange);
                     String scriptId = form.get("scriptId");

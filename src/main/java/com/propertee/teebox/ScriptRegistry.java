@@ -210,6 +210,28 @@ public class ScriptRegistry {
         return resolved;
     }
 
+    public synchronized boolean deleteScript(String scriptId) {
+        validateName("scriptId", scriptId);
+        File dir = scriptDir(scriptId);
+        if (!dir.exists()) {
+            return false;
+        }
+        deleteRecursive(dir);
+        return true;
+    }
+
+    private void deleteRecursive(File file) {
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteRecursive(child);
+                }
+            }
+        }
+        file.delete();
+    }
+
     private ScriptInfo requireScript(String scriptId) {
         validateName("scriptId", scriptId);
         ScriptInfo info = loadScript(scriptId);

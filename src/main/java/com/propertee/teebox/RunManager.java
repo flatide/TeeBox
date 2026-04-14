@@ -136,6 +136,10 @@ public class RunManager {
         return scriptRegistry.updateVersionContent(scriptId, version, content, outputRules);
     }
 
+    public boolean deleteScript(String scriptId) {
+        return scriptRegistry.deleteScript(scriptId);
+    }
+
     public ScriptInfo activateScriptVersion(String scriptId, String version) {
         return scriptRegistry.activateVersion(scriptId, version);
     }
