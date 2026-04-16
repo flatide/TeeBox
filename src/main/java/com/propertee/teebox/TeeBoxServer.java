@@ -149,6 +149,15 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
                     return;
                 }
+                if ("POST".equals(method) && path.startsWith("/admin/scripts/restore/")) {
+                    String scriptId = path.substring("/admin/scripts/restore/".length());
+                    if (scriptId.length() == 0) {
+                        throw new IllegalArgumentException("Script ID is required");
+                    }
+                    runManager.restoreScript(scriptId);
+                    redirect(exchange, "/admin/scripts");
+                    return;
+                }
                 if ("POST".equals(method) && path.startsWith("/admin/scripts/delete/")) {
                     String scriptId = path.substring("/admin/scripts/delete/".length());
                     if (scriptId.length() == 0) {
@@ -577,6 +586,17 @@ public class TeeBoxServer {
             boolean immediate = Boolean.TRUE.equals(raw.get("immediate"));
             ScriptInfo info = runManager.updateScriptSettings(scriptId, Math.max(0, maxConcurrent), immediate);
             writeJson(exchange, HttpURLConnection.HTTP_OK, info);
+            return;
+        }
+        // POST /api/publisher/scripts/{scriptId}/restore
+        if ("POST".equals(method) && path.startsWith("/api/publisher/scripts/") && path.endsWith("/restore")) {
+            String scriptId = path.substring("/api/publisher/scripts/".length(), path.length() - "/restore".length());
+            boolean restored = runManager.restoreScript(scriptId);
+            if (restored) {
+                writeJson(exchange, HttpURLConnection.HTTP_OK, errorMap("Restored"));
+            } else {
+                writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Script not found or not deleted"));
+            }
             return;
         }
         // DELETE /api/publisher/scripts/{scriptId}

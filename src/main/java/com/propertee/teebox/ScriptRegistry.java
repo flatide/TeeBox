@@ -32,6 +32,10 @@ public class ScriptRegistry {
     }
 
     public synchronized List<ScriptInfo> listScripts() {
+        return listScripts(false);
+    }
+
+    public synchronized List<ScriptInfo> listScripts(boolean includeDeleted) {
         File[] dirs = registryDir.listFiles();
         List<ScriptInfo> scripts = new ArrayList<ScriptInfo>();
         if (dirs == null) {
@@ -48,7 +52,7 @@ public class ScriptRegistry {
                 continue;
             }
             ScriptInfo info = loadScript(dir.getName());
-            if (info != null) {
+            if (info != null && (includeDeleted || info.deletedAt == 0)) {
                 scripts.add(info);
             }
         }
@@ -190,6 +194,9 @@ public class ScriptRegistry {
 
     public synchronized ResolvedScript resolve(String scriptId, String version) {
         ScriptInfo info = requireScript(scriptId);
+        if (info.deletedAt > 0) {
+            throw new IllegalArgumentException("Script is deleted: " + scriptId);
+        }
         String resolvedVersion = version != null && version.trim().length() > 0 ? version.trim() : info.activeVersion;
         if (resolvedVersion == null || resolvedVersion.length() == 0) {
             throw new IllegalArgumentException("No active version for script: " + scriptId);
@@ -219,12 +226,51 @@ public class ScriptRegistry {
         return info.copy();
     }
 
+    /** Soft-delete: mark script as deleted. Actual removal is deferred to purgeExpiredScripts. */
     public synchronized boolean deleteScript(String scriptId) {
         validateName("scriptId", scriptId);
-        File dir = scriptDir(scriptId);
-        if (!dir.exists()) {
-            return false;
+        ScriptInfo info = loadScript(scriptId);
+        if (info == null) return false;
+        if (info.deletedAt > 0) return true; // already soft-deleted
+        info.deletedAt = System.currentTimeMillis();
+        info.updatedAt = info.deletedAt;
+        saveScript(info);
+        return true;
+    }
+
+    /** Restore a soft-deleted script. */
+    public synchronized boolean restoreScript(String scriptId) {
+        validateName("scriptId", scriptId);
+        ScriptInfo info = loadScript(scriptId);
+        if (info == null || info.deletedAt == 0) return false;
+        info.deletedAt = 0;
+        info.updatedAt = System.currentTimeMillis();
+        saveScript(info);
+        return true;
+    }
+
+    /** Permanently delete scripts whose deletedAt exceeds the retention period. */
+    public synchronized List<String> purgeExpiredScripts(long retentionMs) {
+        List<String> purged = new ArrayList<String>();
+        long cutoff = System.currentTimeMillis() - retentionMs;
+        File[] dirs = registryDir.listFiles();
+        if (dirs == null) return purged;
+        for (File dir : dirs) {
+            if (!dir.isDirectory()) continue;
+            ScriptInfo info = loadScript(dir.getName());
+            if (info != null && info.deletedAt > 0 && info.deletedAt <= cutoff) {
+                deleteRecursive(dir);
+                purged.add(info.scriptId);
+            }
         }
+        return purged;
+    }
+
+    /** Immediate hard-delete (admin force). Bypasses soft-delete. */
+    public synchronized boolean hardDeleteScript(String scriptId) {
+        validateName("scriptId", scriptId);
+        File dir = scriptDir(scriptId);
+        if (!dir.exists()) return false;
         deleteRecursive(dir);
         return true;
     }

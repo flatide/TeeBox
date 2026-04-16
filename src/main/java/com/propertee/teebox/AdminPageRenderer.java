@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.propertee.task.TaskInfo;
 import com.propertee.task.TaskObservation;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -587,7 +588,13 @@ public class AdminPageRenderer {
     }
 
     public String renderScriptsPage() {
-        List<ScriptInfo> scripts = runManager.listScripts();
+        List<ScriptInfo> allScripts = runManager.listScripts(true);
+        List<ScriptInfo> scripts = new ArrayList<ScriptInfo>();
+        List<ScriptInfo> deletedScripts = new ArrayList<ScriptInfo>();
+        for (ScriptInfo s : allScripts) {
+            if (s.deletedAt > 0) deletedScripts.add(s);
+            else scripts.add(s);
+        }
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Scripts - TeeBox Admin"));
         sb.append(renderTopNav("scripts"));
@@ -625,6 +632,27 @@ public class AdminPageRenderer {
             sb.append("</tbody></table></div>");
         }
         sb.append("</div>");
+
+        // Deleted scripts section
+        if (!deletedScripts.isEmpty()) {
+            sb.append("<div class='card'>");
+            sb.append("<div class='card-header'><h2>Deleted Scripts (").append(deletedScripts.size()).append(")</h2>");
+            sb.append("<span class='dim' style='font-size:12px;'>Scheduled for permanent removal</span></div>");
+            sb.append("<div class='table-wrap'><table><thead><tr>");
+            sb.append("<th>Script ID</th><th>Deleted At</th><th></th>");
+            sb.append("</tr></thead><tbody>");
+            for (ScriptInfo script : deletedScripts) {
+                sb.append("<tr>");
+                sb.append("<td><span class='mono dim'>").append(escape(script.scriptId)).append("</span></td>");
+                sb.append("<td class='dim'>").append(escape(formatTime(script.deletedAt))).append("</td>");
+                sb.append("<td style='white-space:nowrap;'>");
+                sb.append("<form method='post' action='/admin/scripts/restore/").append(urlPath(script.scriptId)).append("' style='display:inline;'>");
+                sb.append("<button type='submit' class='btn btn-sm'>Restore</button></form>");
+                sb.append("</td>");
+                sb.append("</tr>");
+            }
+            sb.append("</tbody></table></div></div>");
+        }
 
         // Register Script modal
         sb.append("<div id='register-modal' class='modal-overlay' style='display:none'>");

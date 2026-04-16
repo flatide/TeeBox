@@ -28,6 +28,7 @@ public class RunManager {
     private static final int ARCHIVED_STDERR_LINES = 20;
     private static final long DEFAULT_RUN_RETENTION_MS = 24L * 60L * 60L * 1000L;
     private static final long DEFAULT_RUN_ARCHIVE_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L;
+    private static final long DEFAULT_SCRIPT_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L;
     private static final long FLUSH_INTERVAL_MS = 2000L;
     private static final long DEFAULT_MAINTENANCE_INTERVAL_MS = 60L * 1000L;
 
@@ -153,7 +154,11 @@ public class RunManager {
     }
 
     public List<ScriptInfo> listScripts() {
-        List<ScriptInfo> scripts = scriptRegistry.listScripts();
+        return listScripts(false);
+    }
+
+    public List<ScriptInfo> listScripts(boolean includeDeleted) {
+        List<ScriptInfo> scripts = scriptRegistry.listScripts(includeDeleted);
         List<ScriptInfo> result = new ArrayList<ScriptInfo>();
         for (ScriptInfo info : scripts) {
             result.add(info.copy());
@@ -199,6 +204,10 @@ public class RunManager {
 
     public boolean deleteScript(String scriptId) {
         return scriptRegistry.deleteScript(scriptId);
+    }
+
+    public boolean restoreScript(String scriptId) {
+        return scriptRegistry.restoreScript(scriptId);
     }
 
     public ScriptInfo activateScriptVersion(String scriptId, String version) {
@@ -347,6 +356,7 @@ public class RunManager {
                 try {
                     maintainRuns();
                     maintainTasks();
+                    maintainScripts();
                 } catch (Exception e) {
                     TeeBoxLog.warn("RunManager", "Maintenance failed", e);
                 }
@@ -572,6 +582,14 @@ public class RunManager {
 
     private void maintainTasks() {
         managedTaskEngine.archiveExpiredTasks();
+    }
+
+    private void maintainScripts() {
+        long retention = parseDurationProperty("scriptRetentionMs", DEFAULT_SCRIPT_RETENTION_MS);
+        List<String> purged = scriptRegistry.purgeExpiredScripts(retention);
+        for (String scriptId : purged) {
+            TeeBoxLog.info("RunManager", "Purged soft-deleted script: " + scriptId);
+        }
     }
 
     // --- Output publish watcher ---
