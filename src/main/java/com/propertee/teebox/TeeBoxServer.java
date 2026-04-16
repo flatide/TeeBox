@@ -244,6 +244,10 @@ public class TeeBoxServer {
             } catch (IllegalArgumentException e) {
                 TeeBoxLog.warn("AdminUI", "Bad request: " + e.getMessage());
                 writeHtml(exchange, HttpURLConnection.HTTP_BAD_REQUEST, pageRenderer.renderErrorPage("Bad request", e.getMessage()));
+            } catch (IllegalStateException e) {
+                // Expected operational state (e.g. draining) — no stack trace needed
+                TeeBoxLog.warn("AdminUI", "Rejected: " + e.getMessage());
+                writeHtml(exchange, HttpURLConnection.HTTP_CONFLICT, pageRenderer.renderErrorPage("Unavailable", e.getMessage()));
             } catch (Exception e) {
                 TeeBoxLog.error("AdminUI", "Server error: " + path, e);
                 writeHtml(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, pageRenderer.renderErrorPage("Server error", e.getMessage()));
@@ -318,6 +322,9 @@ public class TeeBoxServer {
             } catch (IllegalArgumentException e) {
                 TeeBoxLog.warn("API", "Bad request: " + e.getMessage());
                 writeJson(exchange, HttpURLConnection.HTTP_BAD_REQUEST, errorMap(e.getMessage()));
+            } catch (IllegalStateException e) {
+                TeeBoxLog.warn("API", "Rejected: " + e.getMessage());
+                writeJson(exchange, HttpURLConnection.HTTP_CONFLICT, errorMap(e.getMessage()));
             } catch (Exception e) {
                 TeeBoxLog.error("API", "Server error", e);
                 writeJson(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, errorMap(e.getMessage()));
