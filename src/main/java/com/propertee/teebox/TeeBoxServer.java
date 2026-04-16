@@ -482,7 +482,6 @@ public class TeeBoxServer {
             result.put("drainStartedAt", runManager.getDrainStartedAt());
             result.put("activeRuns", runManager.getActiveCount());
             result.put("queuedRuns", runManager.getQueuedCount());
-            result.put("pendingRuns", runManager.getPendingScriptRunsCount());
             writeJson(exchange, HttpURLConnection.HTTP_OK, result);
             return;
         }

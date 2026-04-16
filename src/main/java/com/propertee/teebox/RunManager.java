@@ -119,9 +119,10 @@ public class RunManager {
             synchronized (count) {
                 int current = count.get();
                 if (current >= maxPerScript) {
-                    // Queue for later
+                    // Mark as PENDING and enqueue for later
+                    runRegistry.markPending(run);
                     getPendingQueue(target.scriptId).add(new PendingRun(run, target.scriptFile));
-                    TeeBoxLog.info("RunManager", "Queued run " + run.runId + " for " + target.scriptId
+                    TeeBoxLog.info("RunManager", "Pending run " + run.runId + " for " + target.scriptId
                         + " (active=" + current + " max=" + maxPerScript + ")");
                     return run.copy();
                 }
@@ -289,7 +290,7 @@ public class RunManager {
     }
 
     public int getQueuedCount() {
-        return runExecutor.getQueue().size();
+        return runExecutor.getQueue().size() + getPendingScriptRunsCount();
     }
 
     public int getActiveCount() {
@@ -364,7 +365,7 @@ public class RunManager {
         health.healthy = true;
         health.uptimeMs = System.currentTimeMillis() - startTimeMs;
         health.activeRuns = runExecutor.getActiveCount();
-        health.queuedRuns = runExecutor.getQueue().size();
+        health.queuedRuns = runExecutor.getQueue().size() + getPendingScriptRunsCount();
         health.maxConcurrentRuns = runExecutor.getMaximumPoolSize();
         health.completedRuns = runExecutor.getCompletedTaskCount();
 
@@ -506,6 +507,7 @@ public class RunManager {
             if (next != null) {
                 // Slot transferred to pending run — count stays the same
                 TeeBoxLog.info("RunManager", "Dequeuing run " + next.run.runId + " for " + scriptId);
+                runRegistry.markQueued(next.run);
                 submitToExecutor(next.run, next.scriptFile, runExecutor);
             } else {
                 // No pending runs — release slot (never go below 0)

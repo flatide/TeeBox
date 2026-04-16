@@ -41,8 +41,10 @@ public class AdminPageRenderer {
     public String renderIndexPage() {
         List<RunInfo> running = runManager.listRuns("RUNNING", 0, -1);
         List<RunInfo> queued = runManager.listRuns("QUEUED", 0, -1);
+        List<RunInfo> pending = runManager.listRuns("PENDING", 0, -1);
         List<RunInfo> activeRuns = new java.util.ArrayList<RunInfo>(running);
         activeRuns.addAll(queued);
+        activeRuns.addAll(pending);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("TeeBox Admin"));
         sb.append(renderTopNav("dashboard"));
@@ -53,8 +55,7 @@ public class AdminPageRenderer {
             sb.append("<h2 style='color:#92400e;'>Draining for Shutdown</h2>");
             sb.append("<p>Server is waiting for in-flight runs to complete. New runs are rejected.</p>");
             sb.append("<p><span class='mono'>active=").append(runManager.getActiveCount()).append("</span> ");
-            sb.append("<span class='mono'>queued=").append(runManager.getQueuedCount()).append("</span> ");
-            sb.append("<span class='mono'>pending=").append(runManager.getPendingScriptRunsCount()).append("</span></p>");
+            sb.append("<span class='mono'>queued=").append(runManager.getQueuedCount()).append("</span></p>");
             sb.append("</div>");
         }
 
@@ -227,6 +228,7 @@ public class AdminPageRenderer {
         sb.append("<select id='status-filter' onchange='filterRuns()'>");
         sb.append("<option value=''>All</option>");
         sb.append("<option value='QUEUED'>QUEUED</option>");
+        sb.append("<option value='PENDING'>PENDING</option>");
         sb.append("<option value='RUNNING'>RUNNING</option>");
         sb.append("<option value='COMPLETED'>COMPLETED</option>");
         sb.append("<option value='FAILED'>FAILED</option>");

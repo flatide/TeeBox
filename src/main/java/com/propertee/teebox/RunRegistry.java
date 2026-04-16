@@ -93,6 +93,20 @@ public class RunRegistry {
         }
     }
 
+    public void markPending(RunInfo run) {
+        synchronized (run) {
+            run.status = RunStatus.PENDING;
+            saveRunWithIndex(run);
+        }
+    }
+
+    public void markQueued(RunInfo run) {
+        synchronized (run) {
+            run.status = RunStatus.QUEUED;
+            saveRunWithIndex(run);
+        }
+    }
+
     public void markStarted(RunInfo run) {
         synchronized (run) {
             run.status = RunStatus.RUNNING;
