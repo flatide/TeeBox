@@ -567,6 +567,33 @@ public class TeeBoxServer {
             writeJson(exchange, HttpURLConnection.HTTP_OK, info);
             return;
         }
+        // PUT /api/publisher/scripts/{scriptId}/settings
+        if ("PUT".equals(method) && path.startsWith("/api/publisher/scripts/") && path.endsWith("/settings")) {
+            String scriptId = path.substring("/api/publisher/scripts/".length(), path.length() - "/settings".length());
+            Map<String, Object> raw = parseJsonBody(exchange);
+            int maxConcurrent = 0;
+            Object maxObj = raw.get("maxConcurrentRuns");
+            if (maxObj instanceof Number) maxConcurrent = ((Number) maxObj).intValue();
+            boolean immediate = Boolean.TRUE.equals(raw.get("immediate"));
+            ScriptInfo info = runManager.updateScriptSettings(scriptId, Math.max(0, maxConcurrent), immediate);
+            writeJson(exchange, HttpURLConnection.HTTP_OK, info);
+            return;
+        }
+        // DELETE /api/publisher/scripts/{scriptId}
+        if ("DELETE".equals(method) && path.startsWith("/api/publisher/scripts/")) {
+            String scriptId = path.substring("/api/publisher/scripts/".length());
+            if (scriptId.contains("/")) {
+                writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Not found"));
+                return;
+            }
+            boolean deleted = runManager.deleteScript(scriptId);
+            if (deleted) {
+                writeJson(exchange, HttpURLConnection.HTTP_OK, errorMap("Deleted"));
+            } else {
+                writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Script not found"));
+            }
+            return;
+        }
         writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Not found"));
     }
 
