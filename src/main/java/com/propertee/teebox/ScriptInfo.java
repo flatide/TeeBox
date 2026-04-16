@@ -8,6 +8,8 @@ public class ScriptInfo {
     public String activeVersion;
     public long createdAt;
     public long updatedAt;
+    public int maxConcurrentRuns;   // 0 = unlimited (use global limit)
+    public boolean immediate;       // bypass global queue
     public List<ScriptVersionInfo> versions = new ArrayList<ScriptVersionInfo>();
 
     public ScriptInfo copy() {
@@ -16,6 +18,8 @@ public class ScriptInfo {
         copy.activeVersion = activeVersion;
         copy.createdAt = createdAt;
         copy.updatedAt = updatedAt;
+        copy.maxConcurrentRuns = maxConcurrentRuns;
+        copy.immediate = immediate;
         for (ScriptVersionInfo version : versions) {
             copy.versions.add(version.copy());
         }

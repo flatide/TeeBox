@@ -700,7 +700,23 @@ public class AdminPageRenderer {
         sb.append("<div class='detail-item'><div class='detail-label'>Created</div><div class='detail-value dim'>").append(escape(formatTime(script.createdAt))).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Updated</div><div class='detail-value dim'>").append(escape(formatTime(script.updatedAt))).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Total Versions</div><div class='detail-value'>").append(script.versions.size()).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Max Concurrent</div><div class='detail-value'>").append(script.maxConcurrentRuns > 0 ? script.maxConcurrentRuns : "<span class='dim'>unlimited</span>").append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Immediate</div><div class='detail-value'>").append(script.immediate ? statusBadge("YES") : "<span class='dim'>no</span>").append("</div></div>");
         sb.append("</div></div>");
+
+        // Execution settings card
+        sb.append("<div class='card'>");
+        sb.append("<div class='card-header'><h2>Execution Settings</h2></div>");
+        sb.append("<form method='post' action='/admin/scripts/settings/").append(urlPath(scriptId)).append("' class='form-grid'>");
+        sb.append("<div style='display:flex;gap:16px;align-items:end;'>");
+        sb.append("<div class='form-row' style='flex:1'><label>Max Concurrent Runs</label>");
+        sb.append("<input type='number' name='maxConcurrentRuns' value='").append(script.maxConcurrentRuns).append("' min='0' style='width:80px;'/>");
+        sb.append("<span class='dim' style='font-size:11px;margin-left:4px;'>0 = unlimited</span></div>");
+        sb.append("<div class='form-row'><label class='checkbox-label'><input type='checkbox' name='immediate'");
+        if (script.immediate) sb.append(" checked");
+        sb.append("/> Immediate (bypass queue)</label></div>");
+        sb.append("<div class='form-row'><button type='submit' class='btn btn-sm'>Save</button></div>");
+        sb.append("</div></form></div>");
 
         sb.append("<div class='card'>");
         sb.append("<h2>Versions (").append(script.versions.size()).append(")</h2>");

@@ -42,8 +42,20 @@ public class RunManager {
     private final long maintenanceIntervalMs;
     private final java.util.concurrent.ConcurrentHashMap<String, Future<?>> activeRuns = new java.util.concurrent.ConcurrentHashMap<String, Future<?>>();
     private final java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher> outputWatchers = new java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher>();
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger> scriptActiveCount = new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>();
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<PendingRun>> scriptPendingQueue = new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<PendingRun>>();
+    private final ThreadPoolExecutor immediateExecutor;
     private final long startTimeMs = System.currentTimeMillis();
     private volatile boolean shutdownRequested = false;
+
+    private static class PendingRun {
+        final RunInfo run;
+        final File scriptFile;
+        PendingRun(RunInfo run, File scriptFile) {
+            this.run = run;
+            this.scriptFile = scriptFile;
+        }
+    }
 
     public RunManager(File dataDir, int maxConcurrentRuns) {
         this(dataDir, maxConcurrentRuns, null);
@@ -65,6 +77,7 @@ public class RunManager {
         this.systemInfoCollector = teeBoxConfig != null ? new SystemInfoCollector(teeBoxConfig) : null;
         this.maintenanceIntervalMs = parseDurationProperty("maintenanceIntervalMs", DEFAULT_MAINTENANCE_INTERVAL_MS);
         this.runExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(Math.max(1, maxConcurrentRuns));
+        this.immediateExecutor = (ThreadPoolExecutor) Executors.newCachedThreadPool();
         this.maintenanceScheduler = Executors.newSingleThreadScheduledExecutor();
         startMaintenanceScheduler();
         maintainRuns();
@@ -85,14 +98,58 @@ public class RunManager {
         run.properties = sanitizeProperties(request.props);
         runRegistry.register(run);
 
-        Future<?> future = runExecutor.submit(new Runnable() {
+        ScriptInfo scriptInfo = scriptRegistry.loadScript(target.scriptId);
+
+        // Immediate scripts bypass global queue
+        if (scriptInfo != null && scriptInfo.immediate) {
+            submitToExecutor(run, target.scriptFile, immediateExecutor);
+            return run.copy();
+        }
+
+        // Check per-script concurrency limit
+        int maxPerScript = scriptInfo != null ? scriptInfo.maxConcurrentRuns : 0;
+        if (maxPerScript > 0) {
+            java.util.concurrent.atomic.AtomicInteger count = getScriptActiveCount(target.scriptId);
+            if (count.get() >= maxPerScript) {
+                // Queue for later
+                getPendingQueue(target.scriptId).add(new PendingRun(run, target.scriptFile));
+                TeeBoxLog.info("RunManager", "Queued run " + run.runId + " for " + target.scriptId
+                    + " (active=" + count.get() + " max=" + maxPerScript + ")");
+                return run.copy();
+            }
+            count.incrementAndGet();
+        }
+
+        submitToExecutor(run, target.scriptFile, runExecutor);
+        return run.copy();
+    }
+
+    private void submitToExecutor(final RunInfo run, final File scriptFile, ThreadPoolExecutor executor) {
+        Future<?> future = executor.submit(new Runnable() {
             @Override
             public void run() {
-                executeRun(run, target.scriptFile);
+                executeRun(run, scriptFile);
             }
         });
         activeRuns.put(run.runId, future);
-        return run.copy();
+    }
+
+    private java.util.concurrent.atomic.AtomicInteger getScriptActiveCount(String scriptId) {
+        java.util.concurrent.atomic.AtomicInteger count = scriptActiveCount.get(scriptId);
+        if (count == null) {
+            scriptActiveCount.putIfAbsent(scriptId, new java.util.concurrent.atomic.AtomicInteger(0));
+            count = scriptActiveCount.get(scriptId);
+        }
+        return count;
+    }
+
+    private java.util.concurrent.ConcurrentLinkedQueue<PendingRun> getPendingQueue(String scriptId) {
+        java.util.concurrent.ConcurrentLinkedQueue<PendingRun> queue = scriptPendingQueue.get(scriptId);
+        if (queue == null) {
+            scriptPendingQueue.putIfAbsent(scriptId, new java.util.concurrent.ConcurrentLinkedQueue<PendingRun>());
+            queue = scriptPendingQueue.get(scriptId);
+        }
+        return queue;
     }
 
     public List<ScriptInfo> listScripts() {
@@ -134,6 +191,10 @@ public class RunManager {
 
     public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content, List<OutputPublishRule> outputRules) {
         return scriptRegistry.updateVersionContent(scriptId, version, content, outputRules);
+    }
+
+    public ScriptInfo updateScriptSettings(String scriptId, int maxConcurrentRuns, boolean immediate) {
+        return scriptRegistry.updateScriptSettings(scriptId, maxConcurrentRuns, immediate);
     }
 
     public boolean deleteScript(String scriptId) {
@@ -256,6 +317,7 @@ public class RunManager {
         runRegistry.flushDirty();
         managedTaskEngine.shutdown();
         runExecutor.shutdown();
+        immediateExecutor.shutdown();
         try {
             if (!runExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
                 runExecutor.shutdownNow();
@@ -354,6 +416,27 @@ public class RunManager {
             runRegistry.markFailed(run, error != null ? error.getMessage() : "Unknown error");
         } finally {
             activeRuns.remove(run.runId);
+            dequeueNextRun(run.scriptId);
+        }
+    }
+
+    private void dequeueNextRun(String scriptId) {
+        if (scriptId == null) return;
+        java.util.concurrent.ConcurrentLinkedQueue<PendingRun> queue = scriptPendingQueue.get(scriptId);
+        if (queue == null || queue.isEmpty()) {
+            // No pending runs — just decrement count
+            java.util.concurrent.atomic.AtomicInteger count = scriptActiveCount.get(scriptId);
+            if (count != null) count.decrementAndGet();
+            return;
+        }
+        // Dequeue next — count stays the same (slot transferred)
+        PendingRun next = queue.poll();
+        if (next != null) {
+            TeeBoxLog.info("RunManager", "Dequeuing run " + next.run.runId + " for " + scriptId);
+            submitToExecutor(next.run, next.scriptFile, runExecutor);
+        } else {
+            java.util.concurrent.atomic.AtomicInteger count = scriptActiveCount.get(scriptId);
+            if (count != null) count.decrementAndGet();
         }
     }
 

@@ -210,6 +210,15 @@ public class ScriptRegistry {
         return resolved;
     }
 
+    public synchronized ScriptInfo updateScriptSettings(String scriptId, int maxConcurrentRuns, boolean immediate) {
+        ScriptInfo info = requireScript(scriptId);
+        info.maxConcurrentRuns = maxConcurrentRuns;
+        info.immediate = immediate;
+        info.updatedAt = System.currentTimeMillis();
+        saveScript(info);
+        return info.copy();
+    }
+
     public synchronized boolean deleteScript(String scriptId) {
         validateName("scriptId", scriptId);
         File dir = scriptDir(scriptId);

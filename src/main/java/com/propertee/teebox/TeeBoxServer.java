@@ -136,6 +136,19 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                     return;
                 }
+                if ("POST".equals(method) && path.startsWith("/admin/scripts/settings/")) {
+                    String scriptId = path.substring("/admin/scripts/settings/".length());
+                    Map<String, String> form = parseForm(exchange);
+                    int maxConcurrent = 0;
+                    String maxStr = form.get("maxConcurrentRuns");
+                    if (maxStr != null && maxStr.trim().length() > 0) {
+                        try { maxConcurrent = Integer.parseInt(maxStr.trim()); } catch (NumberFormatException ignore) {}
+                    }
+                    boolean immediate = "on".equals(form.get("immediate")) || "true".equals(form.get("immediate"));
+                    runManager.updateScriptSettings(scriptId, Math.max(0, maxConcurrent), immediate);
+                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
+                    return;
+                }
                 if ("POST".equals(method) && path.startsWith("/admin/scripts/delete/")) {
                     String scriptId = path.substring("/admin/scripts/delete/".length());
                     if (scriptId.length() == 0) {
