@@ -112,18 +112,21 @@ public class RunManager {
             return run.copy();
         }
 
-        // Check per-script concurrency limit
+        // Check per-script concurrency limit (atomic check-and-increment)
         int maxPerScript = scriptInfo != null ? scriptInfo.maxConcurrentRuns : 0;
         if (maxPerScript > 0) {
             java.util.concurrent.atomic.AtomicInteger count = getScriptActiveCount(target.scriptId);
-            if (count.get() >= maxPerScript) {
-                // Queue for later
-                getPendingQueue(target.scriptId).add(new PendingRun(run, target.scriptFile));
-                TeeBoxLog.info("RunManager", "Queued run " + run.runId + " for " + target.scriptId
-                    + " (active=" + count.get() + " max=" + maxPerScript + ")");
-                return run.copy();
+            synchronized (count) {
+                int current = count.get();
+                if (current >= maxPerScript) {
+                    // Queue for later
+                    getPendingQueue(target.scriptId).add(new PendingRun(run, target.scriptFile));
+                    TeeBoxLog.info("RunManager", "Queued run " + run.runId + " for " + target.scriptId
+                        + " (active=" + current + " max=" + maxPerScript + ")");
+                    return run.copy();
+                }
+                count.incrementAndGet();
             }
-            count.incrementAndGet();
         }
 
         submitToExecutor(run, target.scriptFile, runExecutor);
@@ -493,21 +496,22 @@ public class RunManager {
 
     private void dequeueNextRun(String scriptId) {
         if (scriptId == null) return;
-        java.util.concurrent.ConcurrentLinkedQueue<PendingRun> queue = scriptPendingQueue.get(scriptId);
-        if (queue == null || queue.isEmpty()) {
-            // No pending runs — just decrement count
-            java.util.concurrent.atomic.AtomicInteger count = scriptActiveCount.get(scriptId);
-            if (count != null) count.decrementAndGet();
-            return;
-        }
-        // Dequeue next — count stays the same (slot transferred)
-        PendingRun next = queue.poll();
-        if (next != null) {
-            TeeBoxLog.info("RunManager", "Dequeuing run " + next.run.runId + " for " + scriptId);
-            submitToExecutor(next.run, next.scriptFile, runExecutor);
-        } else {
-            java.util.concurrent.atomic.AtomicInteger count = scriptActiveCount.get(scriptId);
-            if (count != null) count.decrementAndGet();
+        java.util.concurrent.atomic.AtomicInteger count = scriptActiveCount.get(scriptId);
+        // If no counter exists, this script had unlimited concurrency — nothing to decrement
+        if (count == null) return;
+
+        synchronized (count) {
+            java.util.concurrent.ConcurrentLinkedQueue<PendingRun> queue = scriptPendingQueue.get(scriptId);
+            PendingRun next = queue != null ? queue.poll() : null;
+            if (next != null) {
+                // Slot transferred to pending run — count stays the same
+                TeeBoxLog.info("RunManager", "Dequeuing run " + next.run.runId + " for " + scriptId);
+                submitToExecutor(next.run, next.scriptFile, runExecutor);
+            } else {
+                // No pending runs — release slot (never go below 0)
+                int current = count.get();
+                if (current > 0) count.decrementAndGet();
+            }
         }
     }
 
