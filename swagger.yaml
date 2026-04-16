@@ -464,6 +464,21 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+    delete:
+      summary: Delete script and all versions
+      tags: [Publisher]
+      parameters:
+        - name: scriptId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Script deleted
+        '404':
+          description: Script not found
+
   /api/publisher/scripts/{scriptId}/versions:
     post:
       tags: [Publisher]
@@ -518,6 +533,35 @@ paths:
                 $ref: '#/components/schemas/ScriptInfo'
         '400':
           $ref: '#/components/responses/BadRequest'
+
+  /api/publisher/scripts/{scriptId}/settings:
+    put:
+      summary: Update script execution settings
+      tags: [Publisher]
+      parameters:
+        - name: scriptId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                maxConcurrentRuns:
+                  type: integer
+                  description: Max concurrent runs (0 = unlimited)
+                  default: 0
+                immediate:
+                  type: boolean
+                  description: Bypass global queue
+                  default: false
+      responses:
+        '200':
+          description: Updated script info
 
 # ══════════════════════════════════════════════════════════════
 components:
@@ -724,6 +768,10 @@ components:
           items:
             type: string
           description: Ring buffer of stderr (max 200 lines)
+        published:
+          type: object
+          description: Captured output values from task stdout/stderr
+          additionalProperties: true
 
     RunStatus:
       type: string
@@ -802,6 +850,10 @@ components:
         errorMessage:
           type: string
           nullable: true
+        published:
+          type: object
+          description: Captured output values from task stdout/stderr
+          additionalProperties: true
 
     ClientRunStatus:
       type: object
@@ -854,6 +906,10 @@ components:
         errorMessage:
           type: string
           nullable: true
+        published:
+          type: object
+          description: Captured output values from task stdout/stderr
+          additionalProperties: true
 
     ClientTaskSummary:
       type: object
@@ -1063,6 +1119,27 @@ components:
           type: boolean
           default: false
           description: Whether to immediately activate this version
+        outputRules:
+          type: array
+          items:
+            type: object
+            properties:
+              stream:
+                type: string
+                enum: [stdout, stderr]
+                default: stdout
+              pattern:
+                type: string
+                description: Regex pattern for output capture
+              captureGroup:
+                type: integer
+                default: 1
+              publishKey:
+                type: string
+                description: Key name for published value
+              firstOnly:
+                type: boolean
+                default: true
 
     # ── System ──
 

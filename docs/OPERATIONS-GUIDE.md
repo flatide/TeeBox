@@ -107,6 +107,74 @@ Publisher API로 스크립트 등록 → Client API로 run 제출 → TeeBox가 
 - job status polling은 별도 짧은 스크립트로 분리하고 외부 스케줄러나 cron에서 주기 호출
 - 하나의 ProperTee run 안에서 background job 후 장시간 `wait` 하거나 polling loop를 유지하는 패턴은 비권장
 
+### Per-Script Concurrency Control
+
+Each script can have its own concurrency settings:
+
+- **maxConcurrentRuns**: Maximum number of simultaneous runs for this script (0 = unlimited, uses global limit)
+- **immediate**: When true, runs bypass the global queue and execute immediately on a separate thread pool
+
+Configure via Admin UI (Script detail → Execution Settings) or REST API:
+
+```bash
+# Set max 3 concurrent runs
+curl -X PUT http://host:18080/api/publisher/scripts/my-script/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"maxConcurrentRuns": 3, "immediate": false}'
+```
+
+When the limit is reached, new runs stay in QUEUED status until a slot opens. Runs are dequeued automatically when a previous run completes.
+
+### Task Output Capture
+
+TeeBox can watch task stdout/stderr for regex patterns and publish matched values to the run metadata. This is configured per script version via output rules.
+
+**Registering a script with output rules:**
+
+```bash
+curl -X POST http://host:18080/api/publisher/scripts \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "scriptId": "deploy",
+    "version": "v1",
+    "content": "result = SHELL(\"./deploy.sh\")",
+    "activate": true,
+    "outputRules": [{
+      "stream": "stdout",
+      "pattern": "Job <(\\d+)> is submitted",
+      "captureGroup": 1,
+      "publishKey": "jobId",
+      "firstOnly": true
+    }]
+  }'
+```
+
+**Retrieving captured values:**
+
+```bash
+curl http://host:18080/api/client/runs/{runId}
+# Response includes: "published": {"jobId": "12345", "jobId.detectedAt": 1712345678000}
+```
+
+Rules can also be configured via the Admin UI on the script detail page.
+
+**How it works:**
+- Only the first task created by the run is watched (prevents false matches from auxiliary tasks)
+- The watcher incrementally reads the task's stdout.log file
+- Matching happens per-line with configurable capture group
+- `firstOnly: true` means only the first match is published (recommended)
+- Captured values are persisted immediately and visible in both API and Admin UI
+
+### Script Deletion
+
+Scripts can be deleted via Admin UI (Scripts list → Delete button) or REST API:
+
+```bash
+curl -X DELETE http://host:18080/api/publisher/scripts/my-script
+```
+
+This removes the script directory and all versions. Running runs are not affected.
+
 ---
 
 ## 4. 프로세스 관리

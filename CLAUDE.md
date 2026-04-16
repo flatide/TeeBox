@@ -40,22 +40,37 @@ ProperTee TeeBox is an HTTP API and admin UI service for remote ProperTee script
 ### Key Classes
 
 - **`TeeBoxServer`** — Routes requests across 3 API namespaces (`/api/client`, `/api/publisher`, `/api/admin`) with independent Bearer token auth, plus `/admin` HTML UI and `/health` endpoint.
-- **`RunManager`** — Central coordinator. Receives `RunRequest`, resolves script via registry, submits to `ThreadPoolExecutor`, tracks state via `RunRegistry` (in-memory) + `RunStore` (disk). Background `ScheduledExecutorService` handles flush (2s) and maintenance/retention (60s).
+- **`RunManager`** — Central coordinator. Receives `RunRequest`, resolves script via registry, submits to `ThreadPoolExecutor`, tracks state via `RunRegistry` (in-memory) + `RunStore` (disk). Background `ScheduledExecutorService` handles flush (2s) and maintenance/retention (60s). Per-script concurrency control with pending queue and dequeue-on-completion. Separate `immediateExecutor` for scripts marked as immediate.
 - **`ManagedTaskEngine`** — Implements `TaskRunner`, wraps `DefaultTaskRunner` (from core) with disk persistence, indexing, archival, multi-instance ownership (Java 17 ProcessHandle), and querying. Control plane layer over core's lightweight process execution.
-- **`ScriptRegistry`** — Version-controlled script store in `dataDir/script-registry/`. Validates IDs, parses syntax, computes SHA-256.
+- **`ScriptRegistry`** — Version-controlled script store in `dataDir/script-registry/`. Validates IDs, parses syntax, computes SHA-256. Supports per-script execution settings (`maxConcurrentRuns`, `immediate`) and `outputRules` for task output capture.
 - **`ScriptExecutor`** — Stateless. Parses script → creates interpreter with builtins → runs scheduler → collects result. Receives `TaskRunner` interface (not concrete type).
 - **`RunRegistry`** — In-memory `ConcurrentHashMap` cache with ring buffers (max 200 lines stdout/stderr). Retention: active (<24h), archived (24h-7d, compressed logs), purged (>7d, deleted).
 - **`RunStore`** — File-based persistence (`dataDir/runs/`). Atomic writes via temp file + rename. Synchronized methods.
 - **`AdminPageRenderer`** — Server-rendered HTML via string concatenation. Dashboard, script list, run/task detail pages.
+- **`TaskOutputWatcher`** — Incrementally reads task stdout/stderr files, matches regex patterns from script metadata, publishes captured values to RunInfo.published.
+- **`OutputWatchingTaskRunner`** — TaskRunner wrapper that auto-registers output watchers for the first task created in a run.
+- **`OutputPublishRule`** — Data model for output capture rules: stream, pattern, captureGroup, publishKey, firstOnly.
 - **`TeeBoxClient`** — Java HTTP client wrapper for API endpoints. Submits runs via `/api/client/scripts/{scriptId}/runs`.
 
 ### 3 API Namespaces
 
 - **Client** (`/api/client`) — Run submission & polling
-- **Publisher** (`/api/publisher`) — Script registration & version activation
+- **Publisher** (`/api/publisher`) — Script registration, version activation, execution settings, script deletion
 - **Admin** (`/api/admin`) — System inspection, run/task detail, kill operations
 
 Full API spec in `swagger.yaml` (OpenAPI 3.0).
+
+### Publisher API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/publisher/scripts` | List all scripts |
+| POST | `/api/publisher/scripts` | Register script version (with optional outputRules) |
+| GET | `/api/publisher/scripts/{id}` | Get script detail |
+| POST | `/api/publisher/scripts/{id}/versions` | Add version |
+| POST | `/api/publisher/scripts/{id}/activate` | Activate version |
+| PUT | `/api/publisher/scripts/{id}/settings` | Update execution settings (maxConcurrentRuns, immediate) |
+| DELETE | `/api/publisher/scripts/{id}` | Delete script |
 
 ## Configuration
 
