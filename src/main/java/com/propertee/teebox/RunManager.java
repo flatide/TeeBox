@@ -48,6 +48,8 @@ public class RunManager {
     private final ThreadPoolExecutor immediateExecutor;
     private final long startTimeMs = System.currentTimeMillis();
     private volatile boolean shutdownRequested = false;
+    private volatile boolean draining = false;
+    private volatile long drainStartedAt = 0;
 
     private static class PendingRun {
         final RunInfo run;
@@ -85,6 +87,9 @@ public class RunManager {
     }
 
     public RunInfo submit(final RunRequest request) {
+        if (draining) {
+            throw new IllegalStateException("Server is draining for shutdown; new runs are rejected");
+        }
         final ResolvedRunTarget target = resolveRunTarget(request);
         final RunInfo run = new RunInfo();
         run.runId = createRunId();
@@ -293,6 +298,62 @@ public class RunManager {
             return null;
         }
         return systemInfoCollector.collect();
+    }
+
+    public boolean isDraining() {
+        return draining;
+    }
+
+    public long getDrainStartedAt() {
+        return drainStartedAt;
+    }
+
+    public int getPendingScriptRunsCount() {
+        int total = 0;
+        for (java.util.concurrent.ConcurrentLinkedQueue<PendingRun> q : scriptPendingQueue.values()) {
+            total += q.size();
+        }
+        return total;
+    }
+
+    /**
+     * Initiate graceful shutdown: reject new runs, wait for all in-flight to complete,
+     * then exit the JVM. Returns immediately; drain happens on a background thread.
+     *
+     * @param maxWaitMs timeout after which shutdown is forced even if runs are still pending
+     */
+    public synchronized void startDraining(final long maxWaitMs) {
+        if (draining) return;
+        draining = true;
+        drainStartedAt = System.currentTimeMillis();
+        TeeBoxLog.info("RunManager", "Draining started — new runs will be rejected");
+
+        Thread drainThread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                long deadline = System.currentTimeMillis() + maxWaitMs;
+                while (System.currentTimeMillis() < deadline) {
+                    int active = runExecutor.getActiveCount() + immediateExecutor.getActiveCount();
+                    int queued = runExecutor.getQueue().size() + immediateExecutor.getQueue().size();
+                    int pending = getPendingScriptRunsCount();
+                    if (active == 0 && queued == 0 && pending == 0) {
+                        TeeBoxLog.info("RunManager", "Drain complete — shutting down");
+                        System.exit(0);
+                        return;
+                    }
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+                TeeBoxLog.warn("RunManager", "Drain timeout exceeded — forcing shutdown");
+                System.exit(0);
+            }
+        }, "teebox-drain");
+        drainThread.setDaemon(false);
+        drainThread.start();
     }
 
     public HealthStatus getHealthStatus() {

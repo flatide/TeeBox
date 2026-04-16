@@ -149,6 +149,11 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
                     return;
                 }
+                if ("POST".equals(method) && "/admin/shutdown".equals(path)) {
+                    runManager.startDraining(5L * 60L * 1000L);
+                    redirect(exchange, "/admin");
+                    return;
+                }
                 if ("POST".equals(method) && path.startsWith("/admin/scripts/restore/")) {
                     String scriptId = path.substring("/admin/scripts/restore/".length());
                     if (scriptId.length() == 0) {
@@ -443,6 +448,35 @@ public class TeeBoxServer {
             HealthStatus health = runManager.getHealthStatus();
             int statusCode = health.healthy ? HttpURLConnection.HTTP_OK : 503;
             writeJson(exchange, statusCode, health);
+            return;
+        }
+        if ("POST".equals(method) && "/api/admin/shutdown".equals(path)) {
+            long maxWaitMs = 5L * 60L * 1000L; // 5 minutes default
+            try {
+                Map<String, Object> body = parseJsonBody(exchange);
+                Object timeout = body.get("maxWaitMs");
+                if (timeout instanceof Number) {
+                    maxWaitMs = ((Number) timeout).longValue();
+                }
+            } catch (Exception ignore) {
+                // no body or invalid — use default
+            }
+            runManager.startDraining(maxWaitMs);
+            Map<String, Object> result = new LinkedHashMap<String, Object>();
+            result.put("draining", Boolean.TRUE);
+            result.put("maxWaitMs", maxWaitMs);
+            result.put("drainStartedAt", runManager.getDrainStartedAt());
+            writeJson(exchange, HttpURLConnection.HTTP_OK, result);
+            return;
+        }
+        if ("GET".equals(method) && "/api/admin/drain-status".equals(path)) {
+            Map<String, Object> result = new LinkedHashMap<String, Object>();
+            result.put("draining", runManager.isDraining());
+            result.put("drainStartedAt", runManager.getDrainStartedAt());
+            result.put("activeRuns", runManager.getActiveCount());
+            result.put("queuedRuns", runManager.getQueuedCount());
+            result.put("pendingRuns", runManager.getPendingScriptRunsCount());
+            writeJson(exchange, HttpURLConnection.HTTP_OK, result);
             return;
         }
         if ("GET".equals(method) && "/api/admin/system".equals(path)) {

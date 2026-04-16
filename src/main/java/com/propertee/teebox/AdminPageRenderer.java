@@ -47,6 +47,29 @@ public class AdminPageRenderer {
         sb.append(pageStart("TeeBox Admin"));
         sb.append(renderTopNav("dashboard"));
 
+        // Drain banner
+        if (runManager.isDraining()) {
+            sb.append("<div class='card' style='background:#fef3c7;border-color:#f59e0b;'>");
+            sb.append("<h2 style='color:#92400e;'>Draining for Shutdown</h2>");
+            sb.append("<p>Server is waiting for in-flight runs to complete. New runs are rejected.</p>");
+            sb.append("<p><span class='mono'>active=").append(runManager.getActiveCount()).append("</span> ");
+            sb.append("<span class='mono'>queued=").append(runManager.getQueuedCount()).append("</span> ");
+            sb.append("<span class='mono'>pending=").append(runManager.getPendingScriptRunsCount()).append("</span></p>");
+            sb.append("</div>");
+        }
+
+        // Shutdown card
+        sb.append("<div class='card'>");
+        sb.append("<div class='card-header'><h2>Server Control</h2></div>");
+        if (runManager.isDraining()) {
+            sb.append("<p class='dim'>Drain in progress — shutdown when all runs complete.</p>");
+        } else {
+            sb.append("<form method='post' action='/admin/shutdown' style='display:inline;' onsubmit='return confirm(\"Drain and shut down server?\\nNew runs will be rejected. Existing runs will complete first.\")'>");
+            sb.append("<button type='submit' class='btn-danger btn-sm'>Graceful Shutdown</button></form>");
+            sb.append(" <span class='dim' style='font-size:12px;'>Rejects new runs, waits for queue to drain, then exits</span>");
+        }
+        sb.append("</div>");
+
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Active Runs</h2>");
         sb.append("<div class='card-actions'>");
