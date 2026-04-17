@@ -626,7 +626,7 @@ paths:
                   default: 0
                 immediate:
                   type: boolean
-                  description: Bypass global queue
+                  description: Bypass global queue (per-script concurrency limit still applies)
                   default: false
       responses:
         '200':
@@ -1156,7 +1156,7 @@ components:
           default: 0
         immediate:
           type: boolean
-          description: Bypass global queue for this script
+          description: Bypass global queue for this script (per-script concurrency limit still applies)
           default: false
         deletedAt:
           type: integer

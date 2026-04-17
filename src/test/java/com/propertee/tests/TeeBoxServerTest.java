@@ -694,6 +694,156 @@ public class TeeBoxServerTest {
         return false;
     }
 
+    @Test
+    public void perScriptConcurrencyLimitShouldQueueExcessRuns() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // Register script with maxConcurrentRuns=1
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("limited", "v1",
+                "SHELL(\"" + testServer.script("sleep2") + "\")\n",
+                "limited test", Arrays.asList("test"), true);
+
+            // Set maxConcurrentRuns=1 via settings API
+            Map<String, Object> settings = new LinkedHashMap<String, Object>();
+            settings.put("maxConcurrentRuns", Double.valueOf(1));
+            settings.put("immediate", Boolean.FALSE);
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/limited/settings", "PUT", settings, null, 200);
+
+            // Submit 2 runs — first should run, second should be PENDING
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> run1 = postJson(testServer.baseUrl + "/api/client/scripts/limited/runs", runPayload, 202);
+            Map<String, Object> run2 = postJson(testServer.baseUrl + "/api/client/scripts/limited/runs", runPayload, 202);
+            String runId1 = (String) run1.get("runId");
+            String runId2 = (String) run2.get("runId");
+
+            // Wait briefly for first run to start
+            Thread.sleep(500);
+
+            // Check statuses
+            Map<String, Object> detail2 = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId2, 200);
+            String status2 = (String) detail2.get("status");
+            Assert.assertTrue("Second run should be PENDING or QUEUED, got " + status2,
+                "PENDING".equals(status2) || "QUEUED".equals(status2));
+
+            // Wait for both to complete
+            waitForRunStatus(testServer.baseUrl, runId1, "COMPLETED", 10000L);
+            waitForRunStatus(testServer.baseUrl, runId2, "COMPLETED", 10000L);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void immediateShouldRespectMaxConcurrentRuns() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // Register immediate script with maxConcurrentRuns=1
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("imm_limited", "v1",
+                "SHELL(\"" + testServer.script("sleep2") + "\")\n",
+                "immediate limited test", Arrays.asList("test"), true);
+
+            // Set immediate=true AND maxConcurrentRuns=1
+            Map<String, Object> settings = new LinkedHashMap<String, Object>();
+            settings.put("maxConcurrentRuns", Double.valueOf(1));
+            settings.put("immediate", Boolean.TRUE);
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/imm_limited/settings", "PUT", settings, null, 200);
+
+            // Submit 2 runs
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> run1 = postJson(testServer.baseUrl + "/api/client/scripts/imm_limited/runs", runPayload, 202);
+            Map<String, Object> run2 = postJson(testServer.baseUrl + "/api/client/scripts/imm_limited/runs", runPayload, 202);
+            String runId1 = (String) run1.get("runId");
+            String runId2 = (String) run2.get("runId");
+
+            // Wait briefly for first to start
+            Thread.sleep(500);
+
+            // Second should be PENDING even though immediate=true
+            Map<String, Object> detail2 = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId2, 200);
+            String status2 = (String) detail2.get("status");
+            Assert.assertTrue("Immediate script should still be PENDING when over limit, got " + status2,
+                "PENDING".equals(status2) || "QUEUED".equals(status2));
+
+            // Both should complete eventually
+            waitForRunStatus(testServer.baseUrl, runId1, "COMPLETED", 10000L);
+            waitForRunStatus(testServer.baseUrl, runId2, "COMPLETED", 10000L);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void drainShouldRejectNewRuns() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("drain_test", "v1",
+                "PRINT(\"hello\")\n",
+                "drain test", Arrays.asList("test"), true);
+
+            // Start drain
+            postJson(testServer.baseUrl + "/api/admin/shutdown", new LinkedHashMap<String, Object>(), 200);
+
+            // Verify drain status
+            Map<String, Object> drainStatus = getJsonMap(testServer.baseUrl + "/api/admin/drain-status", 200);
+            Assert.assertEquals("Should be draining", Boolean.TRUE, drainStatus.get("draining"));
+
+            // New run should be rejected (409)
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            assertStatus(testServer.baseUrl + "/api/client/scripts/drain_test/runs", "POST", runPayload, null, 409);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void scriptSoftDeleteAndRestore() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // Register script
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("del_test", "v1",
+                "PRINT(\"hello\")\n",
+                "delete test", Arrays.asList("test"), true);
+
+            // Verify it exists
+            getJsonMap(testServer.baseUrl + "/api/publisher/scripts/del_test", 200);
+
+            // Soft-delete
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/del_test", "DELETE", null, null, 200);
+
+            // Script should not be in active list
+            List<Map<String, Object>> scripts = getJsonList(testServer.baseUrl + "/api/publisher/scripts", 200);
+            Assert.assertFalse("Deleted script should not appear in list", containsScript(scripts, "del_test"));
+
+            // Run should fail (script is deleted)
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            assertStatus(testServer.baseUrl + "/api/client/scripts/del_test/runs", "POST", runPayload, null, 400);
+
+            // Restore
+            postJson(testServer.baseUrl + "/api/publisher/scripts/del_test/restore", new LinkedHashMap<String, Object>(), 200);
+
+            // Should be back in list
+            scripts = getJsonList(testServer.baseUrl + "/api/publisher/scripts", 200);
+            Assert.assertTrue("Restored script should appear in list", containsScript(scripts, "del_test"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    private boolean containsScript(List<Map<String, Object>> scripts, String scriptId) {
+        for (Map<String, Object> s : scripts) {
+            if (scriptId.equals(s.get("scriptId"))) return true;
+        }
+        return false;
+    }
+
     private boolean containsRun(List<Map<String, Object>> runs, String runId) {
         for (Map<String, Object> run : runs) {
             if (runId.equals(run.get("runId"))) {

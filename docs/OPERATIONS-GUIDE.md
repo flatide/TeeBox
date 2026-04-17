@@ -112,7 +112,16 @@ Recommended operational patterns:
 Each script can have its own concurrency settings:
 
 - **maxConcurrentRuns**: Maximum number of simultaneous runs for this script (0 = unlimited, uses global limit)
-- **immediate**: When true, runs bypass the global queue and execute immediately on a separate thread pool
+- **immediate**: When true, runs bypass the global queue and execute on a separate thread pool. The per-script concurrency limit (`maxConcurrentRuns`) still applies.
+
+Immediate scripts bypass the global thread pool queue but still respect the per-script concurrency limit. The `immediate` flag only controls which executor is used, not whether concurrency limits are enforced.
+
+| Configuration | Executor | Concurrency limit |
+|---------------|----------|-------------------|
+| `immediate=true, maxConcurrentRuns=0` | Immediate executor | Unlimited |
+| `immediate=true, maxConcurrentRuns=3` | Immediate executor | PENDING if 3 already running |
+| `immediate=false, maxConcurrentRuns=3` | Global executor | PENDING if 3 already running |
+| `immediate=false, maxConcurrentRuns=0` | Global executor | Unlimited (global pool limit) |
 
 Configure via Admin UI (Script detail → Execution Settings) or REST API:
 
@@ -123,7 +132,7 @@ curl -X PUT http://host:18080/api/publisher/scripts/my-script/settings \
   -d '{"maxConcurrentRuns": 3, "immediate": false}'
 ```
 
-When the limit is reached, new runs stay in QUEUED status until a slot opens. Runs are dequeued automatically when a previous run completes.
+When the per-script limit is reached, new runs enter PENDING status until a slot opens. Runs are dequeued automatically when a previous run completes.
 
 ### Task Output Capture
 
