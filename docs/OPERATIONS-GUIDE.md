@@ -109,6 +109,12 @@ Recommended operational patterns:
 
 ### Per-Script Concurrency Control
 
+> **Note:** There are two separate concurrency limits:
+> - **Global limit** (`propertee.teebox.maxRuns` in server config): Total concurrent runs across all scripts. Managed by the global thread pool.
+> - **Per-script limit** (`maxConcurrentRuns` in script settings): Max concurrent runs for a specific script. Applies independently of the global limit.
+>
+> Immediate scripts bypass the global thread pool queue entirely (they use a separate unlimited thread pool), but still respect their own per-script limit.
+
 Each script can have its own concurrency settings:
 
 - **maxConcurrentRuns**: Maximum number of simultaneous runs for this script (0 = unlimited, uses global limit)

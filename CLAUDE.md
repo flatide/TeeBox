@@ -102,7 +102,9 @@ Full API spec in `swagger.yaml` (OpenAPI 3.0).
 
 Settings loaded from: system properties (highest priority) → config file (`--config` / `-c`) → defaults.
 
-All properties prefixed `propertee.teebox.*`: `bind`, `port` (default 18080), `scriptsRoot`, `dataDir` (both required), `maxRuns` (default 4), `apiToken` (fallback), `clientApiToken`, `publisherApiToken`, `adminApiToken`, `runRetentionMs` (24h), `runArchiveRetentionMs` (7d).
+All properties prefixed `propertee.teebox.*`: `bind`, `port` (default 18080), `scriptsRoot`, `dataDir` (both required), `maxRuns` (default 4, global concurrent run limit -- controls the global thread pool size for all scripts combined), `apiToken` (fallback), `clientApiToken`, `publisherApiToken`, `adminApiToken`, `runRetentionMs` (24h), `runArchiveRetentionMs` (7d).
+
+Note: `maxRuns` (server config) and per-script `maxConcurrentRuns` (script execution settings) are independent. `maxRuns` bounds the global thread pool; `maxConcurrentRuns` is set per script via the Publisher API and limits how many runs of that specific script can execute concurrently. Immediate scripts bypass the global thread pool entirely but still respect their own `maxConcurrentRuns`.
 
 ## Dependencies
 
@@ -120,7 +122,9 @@ Runs are submitted exclusively via the script registry: `POST /api/client/script
 
 ## Concurrency Model
 
-- `ThreadPoolExecutor` for script execution (bounded by `maxRuns`)
+- `ThreadPoolExecutor` for script execution (bounded by global `maxRuns` config)
+- Separate `immediateExecutor` (unbounded) for scripts with `immediate=true` (bypasses global queue)
+- Per-script `maxConcurrentRuns` (set via Publisher API) limits concurrent runs for a specific script, independent of the global pool size
 - `ScheduledExecutorService` for background maintenance
 - `ConcurrentHashMap` for run cache
 - `synchronized` blocks for file I/O in `RunStore` and `ScriptRegistry`

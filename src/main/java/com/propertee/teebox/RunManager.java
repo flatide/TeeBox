@@ -111,9 +111,9 @@ public class RunManager {
 
         ScriptInfo scriptInfo = scriptRegistry.loadScript(target.scriptId);
         boolean isImmediate = scriptInfo != null && scriptInfo.immediate;
+        int maxPerScript = scriptInfo != null ? scriptInfo.maxConcurrentRuns : 0;
 
         // Check per-script concurrency limit (applies to both immediate and normal)
-        int maxPerScript = scriptInfo != null ? scriptInfo.maxConcurrentRuns : 0;
         if (maxPerScript > 0) {
             java.util.concurrent.atomic.AtomicInteger count = getScriptActiveCount(target.scriptId);
             synchronized (count) {
