@@ -167,13 +167,25 @@ Rules can also be configured via the Admin UI on the script detail page.
 
 ### Script Deletion
 
-Scripts can be deleted via Admin UI (Scripts list → Delete button) or REST API:
+Scripts use soft-delete with a retention period:
 
-```bash
-curl -X DELETE http://host:18080/api/publisher/scripts/my-script
-```
+1. **Delete** (Admin UI "Delete" button or `DELETE /api/publisher/scripts/{id}`):
+   - Marks `deletedAt = now` on the script
+   - Script is hidden from normal list
+   - Cannot be run (resolve fails)
+   - Appears in "Deleted Scripts" section
 
-This removes the script directory and all versions. Running runs are not affected.
+2. **Retention** (default 7 days, configurable via `propertee.teebox.scriptRetentionMs`):
+   - Script data remains on disk
+   - Can be restored during this window
+
+3. **Restore** (Admin UI "Restore" button or `POST /api/publisher/scripts/{id}/restore`):
+   - Clears `deletedAt`
+   - Script becomes active again
+
+4. **Purge** (automatic):
+   - Background maintenance (every 60s) permanently removes scripts past retention
+   - Deletes the script directory and all versions
 
 ---
 
@@ -206,6 +218,33 @@ TeeBox는 process group kill을 우선 시도하고, 필요 시 하위 프로세
 ### Shell에서 직접 kill (비권장)
 
 프로세스 중단은 반드시 TeeBox UI 또는 Admin API를 사용해야 합니다. Shell에서 `kill <PID>`로 단일 프로세스만 종료하면 자식 프로세스가 orphan으로 남을 수 있으며, TeeBox의 lifecycle 관리와 불일치가 발생합니다.
+
+### Graceful Shutdown
+
+For maintenance, trigger a drain mode that rejects new runs and waits for in-flight runs to complete before exiting:
+
+**Via Admin UI:** Dashboard → "Graceful Shutdown" button
+
+**Via REST API:**
+```bash
+curl -X POST http://host:18080/api/admin/shutdown \
+  -H 'Content-Type: application/json' \
+  -d '{"maxWaitMs": 300000}'
+```
+
+**Behavior:**
+- Immediately sets `draining=true`; all new `submit()` calls return HTTP 409 Conflict
+- Background thread polls active/queued/pending counts every second
+- When all counts reach 0, calls `System.exit(0)` which triggers JVM shutdown hook
+- If `maxWaitMs` (default 5 min) elapses, forces shutdown
+
+**Monitoring drain progress:**
+```bash
+curl http://host:18080/api/admin/drain-status
+# {"draining": true, "drainStartedAt": 1712345678000, "activeRuns": 2, "queuedRuns": 3}
+```
+
+**Note:** This does not support a "cancel drain" operation. Once initiated, the server will shut down.
 
 ---
 
@@ -303,6 +342,26 @@ run detail 페이지에서 확인 가능한 정보:
 - **Task Output**: 각 task(외부 프로세스)의 stdout/stderr
 - **Input Properties**: run에 전달된 입력값
 - 실행 중인 run은 auto-refresh로 출력이 실시간 추적됨
+
+### Run Status Lifecycle
+
+Runs transition through these states:
+
+| Status | Meaning |
+|--------|---------|
+| QUEUED | Run is in global thread pool queue, waiting for a worker |
+| PENDING | Run is blocked by per-script concurrency limit (`maxConcurrentRuns`) |
+| RUNNING | Run is actively executing |
+| COMPLETED | Run finished successfully |
+| FAILED | Run finished with error |
+| SERVER_RESTARTED | Run was interrupted by server restart |
+
+**Typical transitions:**
+- `QUEUED → RUNNING → COMPLETED/FAILED` — normal flow
+- `PENDING → QUEUED → RUNNING → COMPLETED/FAILED` — when blocked by script limit
+- `RUNNING → SERVER_RESTARTED` — if server killed mid-execution
+
+The dashboard Active Runs section shows QUEUED + PENDING + RUNNING. The "queued" counter in the top bar counts QUEUED + PENDING together.
 
 ### 로깅
 

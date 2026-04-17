@@ -40,9 +40,9 @@ ProperTee TeeBox is an HTTP API and admin UI service for remote ProperTee script
 ### Key Classes
 
 - **`TeeBoxServer`** — Routes requests across 3 API namespaces (`/api/client`, `/api/publisher`, `/api/admin`) with independent Bearer token auth, plus `/admin` HTML UI and `/health` endpoint.
-- **`RunManager`** — Central coordinator. Receives `RunRequest`, resolves script via registry, submits to `ThreadPoolExecutor`, tracks state via `RunRegistry` (in-memory) + `RunStore` (disk). Background `ScheduledExecutorService` handles flush (2s) and maintenance/retention (60s). Per-script concurrency control with pending queue and dequeue-on-completion. Separate `immediateExecutor` for scripts marked as immediate.
+- **`RunManager`** — Central coordinator. Receives `RunRequest`, resolves script via registry, submits to `ThreadPoolExecutor`, tracks state via `RunRegistry` (in-memory) + `RunStore` (disk). Background `ScheduledExecutorService` handles flush (2s) and maintenance/retention (60s). Per-script concurrency control with pending queue and dequeue-on-completion. Separate `immediateExecutor` for scripts marked as immediate. Supports graceful shutdown (drain mode: rejects new runs, waits for in-flight to complete, then exits).
 - **`ManagedTaskEngine`** — Implements `TaskRunner`, wraps `DefaultTaskRunner` (from core) with disk persistence, indexing, archival, multi-instance ownership (Java 17 ProcessHandle), and querying. Control plane layer over core's lightweight process execution.
-- **`ScriptRegistry`** — Version-controlled script store in `dataDir/script-registry/`. Validates IDs, parses syntax, computes SHA-256. Supports per-script execution settings (`maxConcurrentRuns`, `immediate`) and `outputRules` for task output capture.
+- **`ScriptRegistry`** — Version-controlled script store in `dataDir/script-registry/`. Validates IDs, parses syntax, computes SHA-256. Supports per-script execution settings (`maxConcurrentRuns`, `immediate`) and `outputRules` for task output capture. Soft-delete with retention period: DELETE marks `deletedAt`, background maintenance purges after 7 days (configurable via `propertee.teebox.scriptRetentionMs`).
 - **`ScriptExecutor`** — Stateless. Parses script → creates interpreter with builtins → runs scheduler → collects result. Receives `TaskRunner` interface (not concrete type).
 - **`RunRegistry`** — In-memory `ConcurrentHashMap` cache with ring buffers (max 200 lines stdout/stderr). Retention: active (<24h), archived (24h-7d, compressed logs), purged (>7d, deleted).
 - **`RunStore`** — File-based persistence (`dataDir/runs/`). Atomic writes via temp file + rename. Synchronized methods.
@@ -70,7 +70,33 @@ Full API spec in `swagger.yaml` (OpenAPI 3.0).
 | POST | `/api/publisher/scripts/{id}/versions` | Add version |
 | POST | `/api/publisher/scripts/{id}/activate` | Activate version |
 | PUT | `/api/publisher/scripts/{id}/settings` | Update execution settings (maxConcurrentRuns, immediate) |
-| DELETE | `/api/publisher/scripts/{id}` | Delete script |
+| DELETE | `/api/publisher/scripts/{id}` | Delete script (soft-delete) |
+| POST | `/api/publisher/scripts/{id}/restore` | Restore a soft-deleted script |
+
+### Admin API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/admin/health` | Server health status |
+| GET | `/api/admin/system` | System info |
+| GET | `/api/admin/drain-status` | Current drain status with counts |
+| POST | `/api/admin/shutdown` | Initiate graceful shutdown (body: `{"maxWaitMs": 300000}`) |
+| GET | `/api/admin/runs` | List runs with filters |
+| GET | `/api/admin/runs/{runId}` | Run detail |
+| GET | `/api/admin/tasks` | List tasks |
+| GET | `/api/admin/tasks/{taskId}` | Task detail |
+| POST | `/api/admin/tasks/{taskId}/kill` | Kill task |
+| POST | `/api/admin/runs/{runId}/kill-tasks` | Kill all tasks for a run |
+
+### Run Status
+
+`RunInfo.status` values:
+- `QUEUED` — waiting in the global thread pool queue
+- `PENDING` — blocked by per-script concurrency limit (`maxConcurrentRuns`)
+- `RUNNING` — script is executing
+- `COMPLETED` — finished successfully
+- `FAILED` — terminated with an error
+- `SERVER_RESTARTED` — run was active when the server restarted and could not be resumed
 
 ## Configuration
 

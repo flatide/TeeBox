@@ -404,6 +404,59 @@ paths:
                     type: boolean
                     description: Whether the task was successfully killed
 
+  /api/admin/shutdown:
+    post:
+      summary: Initiate graceful shutdown (drain mode)
+      tags: [Admin]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                maxWaitMs:
+                  type: integer
+                  description: Timeout in ms before forced shutdown
+                  default: 300000
+      responses:
+        '200':
+          description: Drain started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  draining:
+                    type: boolean
+                  maxWaitMs:
+                    type: integer
+                  drainStartedAt:
+                    type: integer
+                    format: int64
+
+  /api/admin/drain-status:
+    get:
+      summary: Get current drain status
+      tags: [Admin]
+      responses:
+        '200':
+          description: Drain status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  draining:
+                    type: boolean
+                  drainStartedAt:
+                    type: integer
+                    format: int64
+                  activeRuns:
+                    type: integer
+                  queuedRuns:
+                    type: integer
+
   # ── Publisher API ───────────────────────────────────────────
 
   /api/publisher/scripts:
@@ -533,6 +586,22 @@ paths:
                 $ref: '#/components/schemas/ScriptInfo'
         '400':
           $ref: '#/components/responses/BadRequest'
+
+  /api/publisher/scripts/{scriptId}/restore:
+    post:
+      summary: Restore a soft-deleted script
+      tags: [Publisher]
+      parameters:
+        - name: scriptId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Script restored
+        '404':
+          description: Script not found or not deleted
 
   /api/publisher/scripts/{scriptId}/settings:
     put:
@@ -775,7 +844,15 @@ components:
 
     RunStatus:
       type: string
-      enum: [QUEUED, RUNNING, COMPLETED, FAILED, SERVER_RESTARTED]
+      enum: [QUEUED, PENDING, RUNNING, COMPLETED, FAILED, SERVER_RESTARTED]
+      description: |
+        Run execution status:
+          * `QUEUED` - waiting in the global run queue
+          * `PENDING` - blocked by per-script concurrency limit
+          * `RUNNING` - currently executing
+          * `COMPLETED` - finished successfully
+          * `FAILED` - finished with an error
+          * `SERVER_RESTARTED` - was interrupted by a server restart
 
     RunThreadInfo:
       type: object
@@ -1073,6 +1150,19 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ScriptVersionInfo'
+        maxConcurrentRuns:
+          type: integer
+          description: Max concurrent runs (0 = unlimited)
+          default: 0
+        immediate:
+          type: boolean
+          description: Bypass global queue for this script
+          default: false
+        deletedAt:
+          type: integer
+          format: int64
+          description: Soft-delete timestamp (0 = active)
+          default: 0
 
     ScriptVersionInfo:
       type: object
