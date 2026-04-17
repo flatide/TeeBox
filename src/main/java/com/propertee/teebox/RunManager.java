@@ -54,9 +54,14 @@ public class RunManager {
     private static class PendingRun {
         final RunInfo run;
         final File scriptFile;
+        final boolean immediate;
         PendingRun(RunInfo run, File scriptFile) {
+            this(run, scriptFile, false);
+        }
+        PendingRun(RunInfo run, File scriptFile, boolean immediate) {
             this.run = run;
             this.scriptFile = scriptFile;
+            this.immediate = immediate;
         }
     }
 
@@ -105,14 +110,9 @@ public class RunManager {
         runRegistry.register(run);
 
         ScriptInfo scriptInfo = scriptRegistry.loadScript(target.scriptId);
+        boolean isImmediate = scriptInfo != null && scriptInfo.immediate;
 
-        // Immediate scripts bypass global queue
-        if (scriptInfo != null && scriptInfo.immediate) {
-            submitToExecutor(run, target.scriptFile, immediateExecutor);
-            return run.copy();
-        }
-
-        // Check per-script concurrency limit (atomic check-and-increment)
+        // Check per-script concurrency limit (applies to both immediate and normal)
         int maxPerScript = scriptInfo != null ? scriptInfo.maxConcurrentRuns : 0;
         if (maxPerScript > 0) {
             java.util.concurrent.atomic.AtomicInteger count = getScriptActiveCount(target.scriptId);
@@ -121,7 +121,7 @@ public class RunManager {
                 if (current >= maxPerScript) {
                     // Mark as PENDING and enqueue for later
                     runRegistry.markPending(run);
-                    getPendingQueue(target.scriptId).add(new PendingRun(run, target.scriptFile));
+                    getPendingQueue(target.scriptId).add(new PendingRun(run, target.scriptFile, isImmediate));
                     TeeBoxLog.info("RunManager", "Pending run " + run.runId + " for " + target.scriptId
                         + " (active=" + current + " max=" + maxPerScript + ")");
                     return run.copy();
@@ -130,7 +130,8 @@ public class RunManager {
             }
         }
 
-        submitToExecutor(run, target.scriptFile, runExecutor);
+        // Immediate scripts bypass global queue; normal scripts use global executor
+        submitToExecutor(run, target.scriptFile, isImmediate ? immediateExecutor : runExecutor);
         return run.copy();
     }
 
@@ -508,7 +509,7 @@ public class RunManager {
                 // Slot transferred to pending run — count stays the same
                 TeeBoxLog.info("RunManager", "Dequeuing run " + next.run.runId + " for " + scriptId);
                 runRegistry.markQueued(next.run);
-                submitToExecutor(next.run, next.scriptFile, runExecutor);
+                submitToExecutor(next.run, next.scriptFile, next.immediate ? immediateExecutor : runExecutor);
             } else {
                 // No pending runs — release slot (never go below 0)
                 int current = count.get();
