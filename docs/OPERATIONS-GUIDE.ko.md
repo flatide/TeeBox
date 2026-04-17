@@ -336,13 +336,41 @@ run detail 페이지에서 확인 가능한 정보:
 - **Input Properties**: run에 전달된 입력값
 - 실행 중인 run은 auto-refresh로 출력이 실시간 추적됨
 
-### 감사 로그
+### 로깅
 
-task 실행 시 stderr에 구조화된 감사 로그 출력:
+Log4j2 기반. 콘솔(stderr)과 파일에 동시 출력.
+
+**로그 파일 위치**: `propertee.teebox.logDir` 시스템 프로퍼티로 설정 (기본: `logs/`)
+
 ```
-[AUDIT] ALLOWED runId=... command=... ts=...
-[AUDIT] BLOCKED runId=... command=... reason=... ts=...
+logs/
+  teebox.log              # 현재 로그
+  teebox-2026-03-24-1.log.gz  # 롤링된 로그
 ```
+
+**롤링 정책:**
+- 50MB 또는 매일 롤링
+- 최대 30개 파일 보관, 이후 자동 삭제
+
+**설정 변경**: `conf/log4j2.xml` 편집, 또는 `PROPERTEE_TEEBOX_LOG4J` 환경 변수로 별도 설정 파일 지정.
+
+**로그 형식:**
+```
+2026-03-24 10:30:15.123 [INFO ] [AUDIT] ALLOWED runId=run-abc command=/path/script.sh
+2026-03-24 10:30:20.456 [ERROR] [RunManager] Run failed: run-abc -- RuntimeException: ...
+```
+
+**주요 로그 컴포넌트:**
+
+| 컴포넌트 | 내용 |
+|----------|------|
+| `TeeBox` | 서버 시작/종료 |
+| `AUDIT` | Task 명령 허용/차단 |
+| `API` | API 요청 에러 |
+| `AdminUI` | Admin UI 에러 |
+| `RunManager` | Run 실행 실패, flush/maintenance 에러 |
+| `TaskEngine` | Task 인덱스/라이프사이클 에러, 프로세스 그룹 kill 실패 |
+| `RunStore` | Run store I/O 에러 |
 
 ### 안전한 종료 (Graceful Shutdown)
 
