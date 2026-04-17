@@ -291,11 +291,11 @@ public class RunManager {
     }
 
     public int getQueuedCount() {
-        return runExecutor.getQueue().size() + getPendingScriptRunsCount();
+        return runExecutor.getQueue().size() + immediateExecutor.getQueue().size() + getPendingScriptRunsCount();
     }
 
     public int getActiveCount() {
-        return runExecutor.getActiveCount();
+        return runExecutor.getActiveCount() + immediateExecutor.getActiveCount();
     }
 
     public SystemInfo getSystemInfo() {
@@ -365,8 +365,8 @@ public class RunManager {
         HealthStatus health = new HealthStatus();
         health.healthy = true;
         health.uptimeMs = System.currentTimeMillis() - startTimeMs;
-        health.activeRuns = runExecutor.getActiveCount();
-        health.queuedRuns = runExecutor.getQueue().size() + getPendingScriptRunsCount();
+        health.activeRuns = runExecutor.getActiveCount() + immediateExecutor.getActiveCount();
+        health.queuedRuns = runExecutor.getQueue().size() + immediateExecutor.getQueue().size() + getPendingScriptRunsCount();
         health.maxConcurrentRuns = runExecutor.getMaximumPoolSize();
         health.completedRuns = runExecutor.getCompletedTaskCount();
 
