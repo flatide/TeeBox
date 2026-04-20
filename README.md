@@ -88,8 +88,8 @@ Useful settings:
 `propertee-teebox-dist.zip` is the recommended GitHub release artifact. It does not include a Java runtime, so deploy targets should install a Linux x86_64 Java 21 runtime separately under `runtime/`.
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 If you need a prebundled internal package instead, build `propertee-teebox-dist-with-runtime.zip` locally with:

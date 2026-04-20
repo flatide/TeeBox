@@ -7,7 +7,7 @@ import java.util.zip.GZIPInputStream
 import java.security.MessageDigest
 
 group = 'com.propertee'
-version = '0.5.0'
+version = '0.6.0'
 
 ext {
     defaultRuntimeLinuxX64Url = 'https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz'
