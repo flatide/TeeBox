@@ -648,7 +648,6 @@ public class AdminPageRenderer {
                 sb.append("<td class='dim'>").append(escape(formatTime(script.createdAt))).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.updatedAt))).append("</td>");
                 sb.append("<td style='white-space:nowrap;'>");
-                sb.append("<a href='/admin/scripts/").append(urlPath(script.scriptId)).append("#run' class='btn btn-sm'>Run</a> ");
                 sb.append("<form method='post' action='/admin/scripts/delete/").append(urlPath(script.scriptId)).append("' style='display:inline;' onsubmit='return confirm(\"Delete script ").append(escape(script.scriptId).replace("'", "\\'")).append("?\")'>");
                 sb.append("<button type='submit' class='btn-danger btn-sm'>Delete</button></form>");
                 sb.append("</td>");
