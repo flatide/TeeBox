@@ -81,6 +81,9 @@ task teeBoxDist(type: Copy) {
     from('deploy/teebox/README.md') {
         into '.'
     }
+    from('LICENSE') {
+        into '.'
+    }
     from('deploy/teebox/log4j2.xml') {
         into 'conf'
     }
