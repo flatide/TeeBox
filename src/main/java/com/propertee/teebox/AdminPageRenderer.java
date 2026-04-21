@@ -13,11 +13,23 @@ public class AdminPageRenderer {
     private final TeeBoxConfig config;
     private final RunManager runManager;
     private final Gson gson;
+    private boolean loggedIn = true;
+    private boolean loginRequired = false;
 
     public AdminPageRenderer(TeeBoxConfig config, RunManager runManager, Gson gson) {
         this.config = config;
         this.runManager = runManager;
         this.gson = gson;
+        this.loginRequired = config.adminUser != null && config.adminUser.length() > 0
+            && config.adminPassword != null && config.adminPassword.length() > 0;
+    }
+
+    public void setLoggedIn(boolean loggedIn) {
+        this.loggedIn = loggedIn;
+    }
+
+    private boolean isReadOnly() {
+        return loginRequired && !loggedIn;
     }
 
     private String renderTopNav(String activePage) {
@@ -34,6 +46,14 @@ public class AdminPageRenderer {
         sb.append("<span class='tag tag-nav'>queued ").append(runManager.getQueuedCount()).append("</span>");
         sb.append("</div>");
         sb.append("<label class='auto-toggle'><input type='checkbox' id='auto-refresh-toggle'/> Auto-refresh</label>");
+        if (loginRequired) {
+            if (loggedIn) {
+                sb.append("<form method='post' action='/admin/logout' style='margin-left:8px;display:inline;'>");
+                sb.append("<button type='submit' class='btn btn-sm' style='font-size:11px;'>Logout</button></form>");
+            } else {
+                sb.append("<a href='/admin/login' class='btn btn-sm' style='margin-left:8px;font-size:11px;'>Login</a>");
+            }
+        }
         sb.append("</div>");
         return sb.toString();
     }
@@ -60,16 +80,18 @@ public class AdminPageRenderer {
         }
 
         // Shutdown card
-        sb.append("<div class='card'>");
-        sb.append("<div class='card-header'><h2>Server Control</h2></div>");
-        if (runManager.isDraining()) {
-            sb.append("<p class='dim'>Drain in progress — shutdown when all runs complete.</p>");
-        } else {
-            sb.append("<form method='post' action='/admin/shutdown' style='display:inline;' onsubmit='return confirm(\"Drain and shut down server?\\nNew runs will be rejected. Existing runs will complete first.\")'>");
-            sb.append("<button type='submit' class='btn-danger btn-sm'>Graceful Shutdown</button></form>");
-            sb.append(" <span class='dim' style='font-size:12px;'>Rejects new runs, waits for queue to drain, then exits</span>");
+        if (!isReadOnly()) {
+            sb.append("<div class='card'>");
+            sb.append("<div class='card-header'><h2>Server Control</h2></div>");
+            if (runManager.isDraining()) {
+                sb.append("<p class='dim'>Drain in progress — shutdown when all runs complete.</p>");
+            } else {
+                sb.append("<form method='post' action='/admin/shutdown' style='display:inline;' onsubmit='return confirm(\"Drain and shut down server?\\nNew runs will be rejected. Existing runs will complete first.\")'>");
+                sb.append("<button type='submit' class='btn-danger btn-sm'>Graceful Shutdown</button></form>");
+                sb.append(" <span class='dim' style='font-size:12px;'>Rejects new runs, waits for queue to drain, then exits</span>");
+            }
+            sb.append("</div>");
         }
-        sb.append("</div>");
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Active Runs</h2>");
@@ -390,8 +412,11 @@ public class AdminPageRenderer {
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>").append(escape(runId)).append("</h2>");
-        sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/kill-tasks'>");
-        sb.append("<button type='submit' class='btn-danger btn-sm'>Kill All Tasks</button></form></div>");
+        if (!isReadOnly()) {
+            sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/kill-tasks'>");
+            sb.append("<button type='submit' class='btn-danger btn-sm'>Kill All Tasks</button></form>");
+        }
+        sb.append("</div>");
         sb.append("<div class='detail-grid'>");
         sb.append("<div class='detail-item'><div class='detail-label'>Script</div><div class='detail-value'><code>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? "@" + escape(run.version) : "").append("</code></div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(renderRunStatusWithTaskWarnings(run, tasks)).append("</div></div>");
@@ -563,8 +588,11 @@ public class AdminPageRenderer {
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>").append(escape(taskId)).append("</h2>");
-        sb.append("<form method='post' action='/admin/tasks/").append(urlPath(taskId)).append("/kill'>");
-        sb.append("<button type='submit' class='btn-danger btn-sm'>Kill Task</button></form></div>");
+        if (!isReadOnly()) {
+            sb.append("<form method='post' action='/admin/tasks/").append(urlPath(taskId)).append("/kill'>");
+            sb.append("<button type='submit' class='btn-danger btn-sm'>Kill Task</button></form>");
+        }
+        sb.append("</div>");
         if (info.timeoutExceeded) {
             sb.append("<div class='callout callout-warn'>Task exceeded its configured timeout. This is a warning only; automatic kill is not performed.</div>");
         }
@@ -626,7 +654,9 @@ public class AdminPageRenderer {
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Registered Scripts (").append(scripts.size()).append(")</h2>");
-        sb.append("<div class='card-actions'><button class='btn btn-sm' onclick='document.getElementById(\"register-modal\").style.display=\"flex\"'>Register Script</button></div>");
+        if (!isReadOnly()) {
+            sb.append("<div class='card-actions'><button class='btn btn-sm' onclick='document.getElementById(\"register-modal\").style.display=\"flex\"'>Register Script</button></div>");
+        }
         sb.append("</div>");
         if (scripts.isEmpty()) {
             sb.append("<p class='empty'>No scripts registered</p>");
@@ -647,10 +677,12 @@ public class AdminPageRenderer {
                 sb.append("<td class='center'>").append(script.versions.size()).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.createdAt))).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.updatedAt))).append("</td>");
-                sb.append("<td style='white-space:nowrap;'>");
-                sb.append("<form method='post' action='/admin/scripts/delete/").append(urlPath(script.scriptId)).append("' style='display:inline;' onsubmit='return confirm(\"Delete script ").append(escape(script.scriptId).replace("'", "\\'")).append("?\")'>");
-                sb.append("<button type='submit' class='btn-danger btn-sm'>Delete</button></form>");
-                sb.append("</td>");
+                if (!isReadOnly()) {
+                    sb.append("<td style='white-space:nowrap;'>");
+                    sb.append("<form method='post' action='/admin/scripts/delete/").append(urlPath(script.scriptId)).append("' style='display:inline;' onsubmit='return confirm(\"Delete script ").append(escape(script.scriptId).replace("'", "\\'")).append("?\")'>");
+                    sb.append("<button type='submit' class='btn-danger btn-sm'>Delete</button></form>");
+                    sb.append("</td>");
+                }
                 sb.append("</tr>");
             }
             sb.append("</tbody></table></div>");
@@ -756,7 +788,8 @@ public class AdminPageRenderer {
         sb.append("<div class='detail-item'><div class='detail-label'>Immediate</div><div class='detail-value'>").append(script.immediate ? statusBadge("YES") + " <span class='dim'>(bypass global queue)</span>" : "<span class='dim'>no</span>").append("</div></div>");
         sb.append("</div></div>");
 
-        // Execution settings card
+        // Execution settings card (admin only)
+        if (!isReadOnly()) {
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Execution Settings</h2></div>");
         sb.append("<form method='post' action='/admin/scripts/settings/").append(urlPath(scriptId)).append("' class='form-grid'>");
@@ -769,6 +802,7 @@ public class AdminPageRenderer {
         sb.append("/> Immediate (bypass global queue, use separate thread pool)</label></div>");
         sb.append("<div class='form-row'><button type='submit' class='btn btn-sm'>Save</button></div>");
         sb.append("</div></form></div>");
+        } // end isReadOnly check for Execution Settings
 
         sb.append("<div class='card'>");
         sb.append("<h2>Versions (").append(script.versions.size()).append(")</h2>");
@@ -818,31 +852,34 @@ public class AdminPageRenderer {
             if (content != null) {
                 sb.append("<div class='card'>");
                 sb.append("<div class='card-header'><h2>Active Version Source (").append(escape(script.activeVersion)).append(")</h2></div>");
-                sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid'>");
-                sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
-                sb.append("<input type='hidden' name='version' value='").append(escape(script.activeVersion)).append("'/>");
-                sb.append("<textarea name='content' rows='12' style='font-family:\"SF Mono\",SFMono-Regular,Consolas,\"Liberation Mono\",Menlo,monospace;font-size:12px;padding:12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;line-height:1.6;background:#1e293b;color:#e2e8f0;'>").append(escape(content)).append("</textarea>");
-
-                // Output capture rule editor
-                OutputPublishRule activeRule = findActiveOutputRule(script);
-                sb.append("<details style='margin-top:8px;'");
-                if (activeRule != null) sb.append(" open");
-                sb.append("><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule</summary>");
-                sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
-                sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' value='").append(activeRule != null ? escape(activeRule.pattern) : "").append("' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
-                sb.append("<div class='form-row'><label>Publish Key</label><input type='text' name='publishKey' value='").append(activeRule != null ? escape(activeRule.publishKey) : "").append("' placeholder='jobId'/></div>");
-                sb.append("<div style='display:flex;gap:12px;'>");
-                sb.append("<div class='form-row' style='flex:1'><label>Capture Group</label><input type='number' name='captureGroup' value='").append(activeRule != null ? activeRule.captureGroup : 1).append("' min='0' style='width:60px;'/></div>");
-                sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'>");
-                sb.append("<option value='stdout'").append(activeRule == null || !"stderr".equals(activeRule.stream) ? " selected" : "").append(">stdout</option>");
-                sb.append("<option value='stderr'").append(activeRule != null && "stderr".equals(activeRule.stream) ? " selected" : "").append(">stderr</option>");
-                sb.append("</select></div></div></div></details>");
-
-                sb.append("<div class='form-row-inline'><button type='submit'>Save</button></div>");
-                sb.append("</form></div>");
+                if (isReadOnly()) {
+                    sb.append("<pre>").append(escape(content)).append("</pre>");
+                } else {
+                    sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid'>");
+                    sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
+                    sb.append("<input type='hidden' name='version' value='").append(escape(script.activeVersion)).append("'/>");
+                    sb.append("<textarea name='content' rows='12' style='font-family:\"SF Mono\",SFMono-Regular,Consolas,\"Liberation Mono\",Menlo,monospace;font-size:12px;padding:12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;line-height:1.6;background:#1e293b;color:#e2e8f0;'>").append(escape(content)).append("</textarea>");
+                    OutputPublishRule activeRule = findActiveOutputRule(script);
+                    sb.append("<details style='margin-top:8px;'");
+                    if (activeRule != null) sb.append(" open");
+                    sb.append("><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule</summary>");
+                    sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
+                    sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' value='").append(activeRule != null ? escape(activeRule.pattern) : "").append("' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
+                    sb.append("<div class='form-row'><label>Publish Key</label><input type='text' name='publishKey' value='").append(activeRule != null ? escape(activeRule.publishKey) : "").append("' placeholder='jobId'/></div>");
+                    sb.append("<div style='display:flex;gap:12px;'>");
+                    sb.append("<div class='form-row' style='flex:1'><label>Capture Group</label><input type='number' name='captureGroup' value='").append(activeRule != null ? activeRule.captureGroup : 1).append("' min='0' style='width:60px;'/></div>");
+                    sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'>");
+                    sb.append("<option value='stdout'").append(activeRule == null || !"stderr".equals(activeRule.stream) ? " selected" : "").append(">stdout</option>");
+                    sb.append("<option value='stderr'").append(activeRule != null && "stderr".equals(activeRule.stream) ? " selected" : "").append(">stderr</option>");
+                    sb.append("</select></div></div></div></details>");
+                    sb.append("<div class='form-row-inline'><button type='submit'>Save</button></div>");
+                    sb.append("</form>");
+                }
+                sb.append("</div>");
             }
         }
 
+        if (!isReadOnly()) {
         sb.append("<div class='card'>");
         sb.append("<h2>Run Script</h2>");
         sb.append("<form method='post' action='/admin/submit' class='form-grid'>");
@@ -859,7 +896,26 @@ public class AdminPageRenderer {
         sb.append("<label class='checkbox-label'><input type='checkbox' name='warnLoops'/> Warn Loops</label>");
         sb.append("<button type='submit'>Run</button>");
         sb.append("</div></form></div>");
+        } // end isReadOnly check for Run Script
 
+        sb.append(pageEnd());
+        return sb.toString();
+    }
+
+    public String renderLoginPage(String errorMessage) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(pageStart("Login - TeeBox Admin"));
+        sb.append("<div style='max-width:360px;margin:80px auto;'>");
+        sb.append("<div class='card'>");
+        sb.append("<h2 style='text-align:center;margin-bottom:16px;'>TeeBox Login</h2>");
+        if (errorMessage != null) {
+            sb.append("<p style='color:#dc2626;font-size:13px;text-align:center;margin-bottom:12px;'>").append(escape(errorMessage)).append("</p>");
+        }
+        sb.append("<form method='post' action='/admin/login' class='form-grid'>");
+        sb.append("<div class='form-row'><label>Username</label><input type='text' name='user' required autofocus/></div>");
+        sb.append("<div class='form-row'><label>Password</label><input type='password' name='password' required/></div>");
+        sb.append("<div class='form-row-inline' style='justify-content:center;'><button type='submit'>Login</button></div>");
+        sb.append("</form></div></div>");
         sb.append(pageEnd());
         return sb.toString();
     }

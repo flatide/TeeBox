@@ -15,6 +15,8 @@ public class TeeBoxConfig {
     public String clientApiToken;
     public String publisherApiToken;
     public String adminApiToken;
+    public String adminUser;
+    public String adminPassword;
     public static TeeBoxConfig fromArgs(String[] args) {
         File configFile = resolveConfigFile(args);
         Properties fileProps = loadProperties(configFile);
@@ -60,6 +62,14 @@ public class TeeBoxConfig {
             config.adminApiToken = adminApiToken.trim();
         }
         config.dataDir = canonicalFile(new File(dataDir.trim()));
+        String adminUser = getSetting("adminUser", fileProps);
+        if (adminUser != null && adminUser.trim().length() > 0) {
+            config.adminUser = adminUser.trim();
+        }
+        String adminPassword = getSetting("adminPassword", fileProps);
+        if (adminPassword != null && adminPassword.trim().length() > 0) {
+            config.adminPassword = adminPassword.trim();
+        }
         return config;
     }
 

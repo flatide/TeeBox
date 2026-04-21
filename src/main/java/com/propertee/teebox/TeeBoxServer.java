@@ -32,11 +32,13 @@ public class TeeBoxServer {
     private final RunManager runManager;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private final AdminPageRenderer pageRenderer;
+    private final AdminSessionManager sessionManager;
     private final HttpServer server;
 
     public TeeBoxServer(TeeBoxConfig config) throws IOException {
         this.config = config;
         this.runManager = new RunManager(config.dataDir, config.maxConcurrentRuns, config);
+        this.sessionManager = new AdminSessionManager(config.adminUser, config.adminPassword);
         this.pageRenderer = new AdminPageRenderer(config, runManager, gson);
         this.server = HttpServer.create(new InetSocketAddress(config.bindAddress, config.port), 0);
         this.server.setExecutor(Executors.newCachedThreadPool());
@@ -94,6 +96,42 @@ public class TeeBoxServer {
             String method = exchange.getRequestMethod();
             String path = exchange.getRequestURI().getPath();
             try {
+                // Login page
+                if ("GET".equals(method) && "/admin/login".equals(path)) {
+                    writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderLoginPage(null));
+                    return;
+                }
+                // Login action
+                if ("POST".equals(method) && "/admin/login".equals(path)) {
+                    Map<String, String> form = parseForm(exchange);
+                    String token = sessionManager.login(form.get("user"), form.get("password"));
+                    if (token != null) {
+                        exchange.getResponseHeaders().add("Set-Cookie", "teebox-session=" + token + "; HttpOnly; Path=/admin; Max-Age=28800");
+                        redirect(exchange, "/admin");
+                    } else {
+                        writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderLoginPage("Invalid username or password"));
+                    }
+                    return;
+                }
+                // Logout
+                if ("POST".equals(method) && "/admin/logout".equals(path)) {
+                    String token = getSessionToken(exchange);
+                    sessionManager.logout(token);
+                    exchange.getResponseHeaders().add("Set-Cookie", "teebox-session=; HttpOnly; Path=/admin; Max-Age=0");
+                    redirect(exchange, "/admin");
+                    return;
+                }
+
+                // Auth check: POST requests require login (if login is configured)
+                boolean loggedIn = !sessionManager.isLoginRequired() || sessionManager.isValidSession(getSessionToken(exchange));
+                if ("POST".equals(method) && !loggedIn) {
+                    redirect(exchange, "/admin/login");
+                    return;
+                }
+
+                // Pass login state to page renderer
+                pageRenderer.setLoggedIn(loggedIn);
+
                 if ("GET".equals(method) && "/admin".equals(path)) {
                     writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderIndexPage());
                     return;
@@ -1066,6 +1104,18 @@ public class TeeBoxServer {
         } catch (NumberFormatException e) {
             return defaultValue;
         }
+    }
+
+    private String getSessionToken(HttpExchange exchange) {
+        String cookieHeader = exchange.getRequestHeaders().getFirst("Cookie");
+        if (cookieHeader == null) return null;
+        for (String part : cookieHeader.split(";")) {
+            String trimmed = part.trim();
+            if (trimmed.startsWith("teebox-session=")) {
+                return trimmed.substring("teebox-session=".length());
+            }
+        }
+        return null;
     }
 
     private String trimToNull(String value) {
