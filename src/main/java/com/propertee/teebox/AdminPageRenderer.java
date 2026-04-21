@@ -701,10 +701,12 @@ public class AdminPageRenderer {
                 sb.append("<tr>");
                 sb.append("<td><span class='mono dim'>").append(escape(script.scriptId)).append("</span></td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.deletedAt))).append("</td>");
-                sb.append("<td style='white-space:nowrap;'>");
-                sb.append("<form method='post' action='/admin/scripts/restore/").append(urlPath(script.scriptId)).append("' style='display:inline;'>");
-                sb.append("<button type='submit' class='btn btn-sm'>Restore</button></form>");
-                sb.append("</td>");
+                if (!isReadOnly()) {
+                    sb.append("<td style='white-space:nowrap;'>");
+                    sb.append("<form method='post' action='/admin/scripts/restore/").append(urlPath(script.scriptId)).append("' style='display:inline;'>");
+                    sb.append("<button type='submit' class='btn btn-sm'>Restore</button></form>");
+                    sb.append("</td>");
+                }
                 sb.append("</tr>");
             }
             sb.append("</tbody></table></div></div>");
