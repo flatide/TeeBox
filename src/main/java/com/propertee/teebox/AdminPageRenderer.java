@@ -1107,7 +1107,7 @@ public class AdminPageRenderer {
             sb.append("<td class='mono center'>").append(task.pid).append("</td>");
             sb.append("<td class='center'>").append(task.alive ? statusBadge("RUNNING") : "<span class='dim'>no</span>").append("</td>");
             sb.append("<td class='dim'>").append(formatElapsed(task.elapsedMs)).append("</td>");
-            if (includeKill) {
+            if (includeKill && !isReadOnly()) {
                 sb.append("<td>");
                 if (task.alive) {
                     sb.append("<form method='post' action='/admin/tasks/").append(urlPath(task.taskId)).append("/kill'><button type='submit' class='btn-danger btn-sm'>Kill</button></form>");
