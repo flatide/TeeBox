@@ -129,3 +129,4 @@ Token behavior:
 - Demo scripts: [demo/teebox/README.md](/Users/journey/Flatide/propertee-teebox/demo/teebox/README.md)
 - Operations guide: [docs/OPERATIONS-GUIDE.md](/Users/journey/Flatide/propertee-teebox/docs/OPERATIONS-GUIDE.md)
 - Korean operations guide: [docs/OPERATIONS-GUIDE.ko.md](/Users/journey/Flatide/propertee-teebox/docs/OPERATIONS-GUIDE.ko.md)
+- API curl examples: [docs/API-EXAMPLES.md](/Users/journey/Flatide/propertee-teebox/docs/API-EXAMPLES.md)
