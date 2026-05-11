@@ -42,6 +42,7 @@ public class RunManager {
     private final ScheduledExecutorService maintenanceScheduler;
     private final long maintenanceIntervalMs;
     private final java.util.concurrent.ConcurrentHashMap<String, Future<?>> activeRuns = new java.util.concurrent.ConcurrentHashMap<String, Future<?>>();
+    private final java.util.List<Runnable> extraMaintenanceTasks = new java.util.concurrent.CopyOnWriteArrayList<Runnable>();
     private final java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher> outputWatchers = new java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher>();
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger> scriptActiveCount = new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>();
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<PendingRun>> scriptPendingQueue = new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<PendingRun>>();
@@ -218,6 +219,13 @@ public class RunManager {
 
     public boolean restoreScript(String scriptId) {
         return scriptRegistry.restoreScript(scriptId);
+    }
+
+    /** Register an additional maintenance task to run on every maintenance cycle. */
+    public void addMaintenanceTask(Runnable task) {
+        if (task != null) {
+            extraMaintenanceTasks.add(task);
+        }
     }
 
     public ScriptInfo activateScriptVersion(String scriptId, String version) {
@@ -423,6 +431,13 @@ public class RunManager {
                     maintainRuns();
                     maintainTasks();
                     maintainScripts();
+                    for (Runnable task : extraMaintenanceTasks) {
+                        try {
+                            task.run();
+                        } catch (Exception e) {
+                            TeeBoxLog.warn("RunManager", "Extra maintenance task failed", e);
+                        }
+                    }
                 } catch (Exception e) {
                     TeeBoxLog.warn("RunManager", "Maintenance failed", e);
                 }
@@ -657,6 +672,46 @@ public class RunManager {
         List<String> purged = scriptRegistry.purgeExpiredScripts(retention);
         for (String scriptId : purged) {
             TeeBoxLog.info("RunManager", "Purged soft-deleted script: " + scriptId);
+            // Clean up concurrency tracking for purged scripts
+            cleanupScriptTracking(scriptId);
+        }
+        // Also clean up tracking entries for scripts that are idle and unknown
+        // (script was deleted but never had active runs, or all runs completed long ago)
+        cleanupIdleScriptTracking();
+    }
+
+    /** Remove concurrency tracking entries for a specific script, if safe. */
+    private void cleanupScriptTracking(String scriptId) {
+        java.util.concurrent.atomic.AtomicInteger count = scriptActiveCount.get(scriptId);
+        if (count != null) {
+            synchronized (count) {
+                java.util.concurrent.ConcurrentLinkedQueue<PendingRun> q = scriptPendingQueue.get(scriptId);
+                boolean queueEmpty = q == null || q.isEmpty();
+                if (count.get() == 0 && queueEmpty) {
+                    scriptActiveCount.remove(scriptId);
+                    scriptPendingQueue.remove(scriptId);
+                }
+            }
+        }
+    }
+
+    /** Sweep tracking maps for entries that are idle and whose scripts no longer exist. */
+    private void cleanupIdleScriptTracking() {
+        for (java.util.Map.Entry<String, java.util.concurrent.atomic.AtomicInteger> entry : scriptActiveCount.entrySet()) {
+            String scriptId = entry.getKey();
+            java.util.concurrent.atomic.AtomicInteger count = entry.getValue();
+            synchronized (count) {
+                java.util.concurrent.ConcurrentLinkedQueue<PendingRun> q = scriptPendingQueue.get(scriptId);
+                boolean queueEmpty = q == null || q.isEmpty();
+                if (count.get() == 0 && queueEmpty) {
+                    // Only remove if the script doesn't exist anymore — otherwise
+                    // leaving the entry costs little and avoids recreation churn for active scripts
+                    if (scriptRegistry.loadScript(scriptId) == null) {
+                        scriptActiveCount.remove(scriptId);
+                        scriptPendingQueue.remove(scriptId);
+                    }
+                }
+            }
         }
     }
 

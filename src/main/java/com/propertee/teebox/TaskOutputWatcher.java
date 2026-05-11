@@ -174,6 +174,10 @@ public class TaskOutputWatcher {
         }
     }
 
+    /** Max size of the unflushed remainder buffer. Beyond this, the buffer is treated
+     *  as a "long line" — matched as-is then cleared to prevent unbounded growth. */
+    private static final int MAX_REMAINDER_BYTES = 1024 * 1024;
+
     private static ReadResult readIncremental(File file, long offset, String remainder) {
         if (!file.exists() || file.length() <= offset) {
             return new ReadResult(offset, "", remainder);
@@ -199,10 +203,13 @@ public class TaskOutputWatcher {
             int lastNewline = chunk.lastIndexOf('\n');
             if (lastNewline >= 0) {
                 return new ReadResult(newOffset, chunk.substring(0, lastNewline + 1), chunk.substring(lastNewline + 1));
-            } else {
-                // No complete line yet — keep as remainder
-                return new ReadResult(newOffset, "", chunk);
             }
+            // No complete line yet — keep as remainder, but cap to prevent unbounded growth
+            if (chunk.length() > MAX_REMAINDER_BYTES) {
+                // Treat oversized buffer as content (flush) and drop remainder
+                return new ReadResult(newOffset, chunk, "");
+            }
+            return new ReadResult(newOffset, "", chunk);
         } catch (Exception e) {
             return new ReadResult(offset, "", remainder);
         } finally {

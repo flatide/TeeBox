@@ -39,6 +39,13 @@ public class TeeBoxServer {
         this.config = config;
         this.runManager = new RunManager(config.dataDir, config.maxConcurrentRuns, config);
         this.sessionManager = new AdminSessionManager(config.adminUser, config.adminPassword);
+        // Periodic session cleanup
+        runManager.addMaintenanceTask(new Runnable() {
+            @Override
+            public void run() {
+                sessionManager.cleanExpired();
+            }
+        });
         this.pageRenderer = new AdminPageRenderer(config, runManager, gson);
         this.server = HttpServer.create(new InetSocketAddress(config.bindAddress, config.port), 0);
         this.server.setExecutor(Executors.newCachedThreadPool());
