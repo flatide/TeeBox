@@ -991,6 +991,16 @@ public class ManagedTaskEngine implements TaskRunner {
 
     // ---- Archival ----
 
+    /** Remove the in-memory task entry from the underlying runner.
+     *  Called after archive so the runner's tasks map doesn't grow unboundedly. */
+    private void removeRunnerTask(String taskId) {
+        if (runner instanceof UnixTaskRunner) {
+            ((UnixTaskRunner) runner).removeTask(taskId);
+        } else if (runner instanceof SimulatedTaskRunner) {
+            ((SimulatedTaskRunner) runner).removeTask(taskId);
+        }
+    }
+
     private void archiveTask(Task task) {
         if (task == null || task.archived) {
             return;
@@ -1020,6 +1030,12 @@ public class ManagedTaskEngine implements TaskRunner {
         deleteQuietly(task.commandPidFile);
         deleteQuietly(task.commandFile);
         updateTaskIndex(task);
+
+        // Release in-memory state once the task is durably archived to disk.
+        // Subsequent queries will load from archive.json on demand.
+        removeRunnerTask(task.taskId);
+        lifecycles.remove(task.taskId);
+        taskLocks.remove(task.taskId);
     }
 
     private void deleteArchivedTask(Task task) {
@@ -1029,6 +1045,7 @@ public class ManagedTaskEngine implements TaskRunner {
         removeTaskIndex(task.taskId);
         lifecycles.remove(task.taskId);
         taskLocks.remove(task.taskId);
+        removeRunnerTask(task.taskId);
         deleteQuietly(task.archiveFile);
         deleteQuietly(task.metaFile);
         deleteQuietly(task.stdoutFile);

@@ -34,6 +34,7 @@ public class TeeBoxServer {
     private final AdminPageRenderer pageRenderer;
     private final AdminSessionManager sessionManager;
     private final HttpServer server;
+    private final java.util.concurrent.ExecutorService httpExecutor;
 
     public TeeBoxServer(TeeBoxConfig config) throws IOException {
         this.config = config;
@@ -48,7 +49,8 @@ public class TeeBoxServer {
         });
         this.pageRenderer = new AdminPageRenderer(config, runManager, gson);
         this.server = HttpServer.create(new InetSocketAddress(config.bindAddress, config.port), 0);
-        this.server.setExecutor(Executors.newCachedThreadPool());
+        this.httpExecutor = Executors.newCachedThreadPool();
+        this.server.setExecutor(this.httpExecutor);
         registerContexts();
     }
 
@@ -59,6 +61,15 @@ public class TeeBoxServer {
     public void stop() {
         server.stop(5);
         runManager.shutdown();
+        httpExecutor.shutdown();
+        try {
+            if (!httpExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                httpExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            httpExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     public int getPort() {

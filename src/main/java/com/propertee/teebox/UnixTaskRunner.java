@@ -105,6 +105,13 @@ public class UnixTaskRunner implements TaskRunner {
         return task;
     }
 
+    /** Remove an in-memory task entry. Used to release memory after archive. */
+    public void removeTask(String taskId) {
+        if (taskId != null) {
+            tasks.remove(taskId);
+        }
+    }
+
     public Task getTask(String taskId) {
         if (taskId == null) return null;
         Task task = tasks.get(taskId);

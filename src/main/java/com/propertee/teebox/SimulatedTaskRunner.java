@@ -105,6 +105,13 @@ public class SimulatedTaskRunner implements TaskRunner {
         return task;
     }
 
+    /** Remove an in-memory task entry. Used to release memory after archive. */
+    public void removeTask(String taskId) {
+        if (taskId != null) {
+            tasks.remove(taskId);
+        }
+    }
+
     @Override
     public Task getTask(String taskId) {
         Task task = tasks.get(taskId);
