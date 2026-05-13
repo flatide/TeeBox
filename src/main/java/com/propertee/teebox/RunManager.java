@@ -401,12 +401,17 @@ public class RunManager {
         managedTaskEngine.shutdown();
         runExecutor.shutdown();
         immediateExecutor.shutdown();
+        awaitExecutorTermination(runExecutor, 30);
+        awaitExecutorTermination(immediateExecutor, 30);
+    }
+
+    private void awaitExecutorTermination(ThreadPoolExecutor executor, long seconds) {
         try {
-            if (!runExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
-                runExecutor.shutdownNow();
+            if (!executor.awaitTermination(seconds, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
             }
         } catch (InterruptedException e) {
-            runExecutor.shutdownNow();
+            executor.shutdownNow();
             Thread.currentThread().interrupt();
         }
     }

@@ -251,6 +251,7 @@ public class SimulatedTaskRunner implements TaskRunner {
             entry.getValue().cancel(false);
         }
         completions.clear();
+        tasks.clear();
         scheduler.shutdownNow();
     }
 

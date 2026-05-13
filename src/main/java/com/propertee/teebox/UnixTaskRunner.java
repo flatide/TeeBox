@@ -228,7 +228,7 @@ public class UnixTaskRunner implements TaskRunner {
     }
 
     public void shutdown() {
-        // no-op: in-memory state only
+        tasks.clear();
     }
 
     // ---- internal methods ----

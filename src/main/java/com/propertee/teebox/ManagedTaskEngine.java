@@ -161,7 +161,32 @@ public class ManagedTaskEngine implements TaskRunner {
     }
 
     public TaskLifecycle getLifecycle(String taskId) {
-        return taskId != null ? lifecycles.get(taskId) : null;
+        if (taskId == null) return null;
+        TaskLifecycle lc = lifecycles.get(taskId);
+        if (lc != null) return lc;
+        // Fall back to archive.json for archived tasks (lifecycle is stripped
+        // from in-memory map at archive time to avoid leaks)
+        return loadLifecycleFromArchive(taskId);
+    }
+
+    /** Read lifecycle data from archive.json without populating the in-memory cache.
+     *  Used for archived task queries; returns null if archive doesn't exist or
+     *  doesn't contain lifecycle info. */
+    private TaskLifecycle loadLifecycleFromArchive(String taskId) {
+        File taskDir = getTaskDir(taskId);
+        File archiveFile = new File(taskDir, "archive.json");
+        if (!archiveFile.exists()) return null;
+        FileInputStream fis = null;
+        try {
+            fis = new FileInputStream(archiveFile);
+            String json = readStream(fis);
+            JsonObject obj = gson.fromJson(json, JsonObject.class);
+            return TaskLifecycle.readFromJson(obj);
+        } catch (Exception e) {
+            return null;
+        } finally {
+            closeQuietly(fis);
+        }
     }
 
     // ---- TaskRunner interface methods ----
@@ -951,27 +976,32 @@ public class ManagedTaskEngine implements TaskRunner {
             if (!metaFile.exists() && archiveFile.exists()) {
                 task.archived = true;
             }
-            // Parse lifecycle from JSON (if present) or migrate from task status
-            try {
-                JsonObject obj = gson.fromJson(json, JsonObject.class);
-                TaskLifecycle lc = TaskLifecycle.readFromJson(obj);
-                if (lc != null) {
-                    lifecycles.put(task.taskId, lc);
-                } else if (!lifecycles.containsKey(task.taskId)) {
-                    lc = TaskLifecycle.normalizeFromRunner(task);
-                    if (!isTransientStatus(task.status)) {
-                        lc.markPersisted();
+            // Parse lifecycle from JSON (if present) or migrate from task status.
+            // Skip populating in-memory lifecycles for archived tasks — they are
+            // terminal and persisted on disk; keeping them in memory would
+            // re-leak after archiveTask() removes them.
+            if (!task.archived) {
+                try {
+                    JsonObject obj = gson.fromJson(json, JsonObject.class);
+                    TaskLifecycle lc = TaskLifecycle.readFromJson(obj);
+                    if (lc != null) {
+                        lifecycles.put(task.taskId, lc);
+                    } else if (!lifecycles.containsKey(task.taskId)) {
+                        lc = TaskLifecycle.normalizeFromRunner(task);
+                        if (!isTransientStatus(task.status)) {
+                            lc.markPersisted();
+                        }
+                        lifecycles.put(task.taskId, lc);
                     }
-                    lifecycles.put(task.taskId, lc);
-                }
-            } catch (Exception e) {
-                TeeBoxLog.warn("TaskEngine", "Failed to parse lifecycle for task " + task.taskId, e);
-                if (!lifecycles.containsKey(task.taskId)) {
-                    TaskLifecycle lc = TaskLifecycle.normalizeFromRunner(task);
-                    if (!isTransientStatus(task.status)) {
-                        lc.markPersisted();
+                } catch (Exception e) {
+                    TeeBoxLog.warn("TaskEngine", "Failed to parse lifecycle for task " + task.taskId, e);
+                    if (!lifecycles.containsKey(task.taskId)) {
+                        TaskLifecycle lc = TaskLifecycle.normalizeFromRunner(task);
+                        if (!isTransientStatus(task.status)) {
+                            lc.markPersisted();
+                        }
+                        lifecycles.put(task.taskId, lc);
                     }
-                    lifecycles.put(task.taskId, lc);
                 }
             }
             return task;
