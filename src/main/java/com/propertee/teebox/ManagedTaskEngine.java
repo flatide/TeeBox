@@ -523,6 +523,13 @@ public class ManagedTaskEngine implements TaskRunner {
     }
 
     @Override
+    public void releaseTask(String taskId) {
+        // Admin UI/API needs to inspect task history; eviction happens via
+        // archiveTask() based on retention policy.
+    }
+
+    @Override
+
     public void shutdown() {
         runner.shutdown();
     }

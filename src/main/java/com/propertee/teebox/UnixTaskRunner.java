@@ -227,6 +227,12 @@ public class UnixTaskRunner implements TaskRunner {
         return map;
     }
 
+    @Override
+    public void releaseTask(String taskId) {
+        // TeeBox keeps task metadata for admin UI/API inspection; do not release here.
+        // ManagedTaskEngine.archiveTask() handles eviction via removeTask().
+    }
+
     public void shutdown() {
         tasks.clear();
     }

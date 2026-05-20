@@ -44,5 +44,6 @@ class OutputWatchingTaskRunner implements TaskRunner {
     @Override public String getCombinedOutput(String taskId) { return delegate.getCombinedOutput(taskId); }
     @Override public Integer getExitCode(String taskId) { return delegate.getExitCode(taskId); }
     @Override public Map<String, Object> getStatusMap(String taskId) { return delegate.getStatusMap(taskId); }
+    @Override public void releaseTask(String taskId) { delegate.releaseTask(taskId); }
     @Override public void shutdown() { delegate.shutdown(); }
 }

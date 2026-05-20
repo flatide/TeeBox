@@ -246,6 +246,11 @@ public class SimulatedTaskRunner implements TaskRunner {
     }
 
     @Override
+    public void releaseTask(String taskId) {
+        // TeeBox keeps task metadata for admin UI/API inspection; do not release here.
+    }
+
+    @Override
     public void shutdown() {
         for (Map.Entry<String, ScheduledFuture<?>> entry : completions.entrySet()) {
             entry.getValue().cancel(false);
