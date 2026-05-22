@@ -5,6 +5,7 @@ import com.propertee.runtime.TypeChecker;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -253,6 +254,12 @@ public class RunRegistry {
         run.threads = new ArrayList<RunThreadInfo>();
         run.stdoutLines = trimTail(run.stdoutLines, archivedStdoutLines);
         run.stderrLines = trimTail(run.stderrLines, archivedStderrLines);
+        // Drop large heap-resident fields. resultSummary is already a 300-char
+        // truncation, so the full resultData object can be released. Input
+        // properties may also be large. published is typically small
+        // (captured key-value pairs) and useful for retrospective inspection.
+        run.resultData = null;
+        run.properties = new LinkedHashMap<String, Object>();
     }
 
     private List<String> trimTail(List<String> lines, int maxLines) {

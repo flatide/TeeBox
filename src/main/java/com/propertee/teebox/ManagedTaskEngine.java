@@ -1044,8 +1044,10 @@ public class ManagedTaskEngine implements TaskRunner {
         }
         task.archived = true;
         task.alive = false;
-        task.stdoutTail = tailLines(readFile(task.stdoutFile), 50);
-        task.stderrTail = tailLines(readFile(task.stderrFile), 20);
+        // Read only the tail of each file to avoid OOM on huge outputs.
+        // 256KB is generous for ~50 lines / ~20 lines of typical output.
+        task.stdoutTail = tailLines(readFileTail(task.stdoutFile, 256 * 1024), 50);
+        task.stderrTail = tailLines(readFileTail(task.stderrFile, 256 * 1024), 20);
 
         Writer writer = null;
         try {
@@ -1372,6 +1374,34 @@ public class ManagedTaskEngine implements TaskRunner {
             return "";
         } finally {
             closeQuietly(fis);
+        }
+    }
+
+    /** Read only the last `maxBytes` bytes of a file. Returns the suffix as a UTF-8 string.
+     *  Used during archive to avoid loading multi-GB stdout/stderr into heap. */
+    private String readFileTail(File file, int maxBytes) {
+        if (file == null || !file.exists() || maxBytes <= 0) return "";
+        java.io.RandomAccessFile raf = null;
+        try {
+            raf = new java.io.RandomAccessFile(file, "r");
+            long len = raf.length();
+            long start = Math.max(0, len - maxBytes);
+            raf.seek(start);
+            int toRead = (int) Math.min(maxBytes, len - start);
+            byte[] buf = new byte[toRead];
+            int total = 0;
+            while (total < toRead) {
+                int n = raf.read(buf, total, toRead - total);
+                if (n <= 0) break;
+                total += n;
+            }
+            return new String(buf, 0, total, "UTF-8");
+        } catch (IOException e) {
+            return "";
+        } finally {
+            if (raf != null) {
+                try { raf.close(); } catch (IOException ignore) {}
+            }
         }
     }
 
