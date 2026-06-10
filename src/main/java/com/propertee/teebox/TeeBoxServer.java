@@ -181,14 +181,13 @@ public class TeeBoxServer {
                     if (scriptId == null || scriptId.trim().length() == 0) {
                         throw new IllegalArgumentException("Script ID is required");
                     }
-                    if (version == null || version.trim().length() == 0) {
-                        throw new IllegalArgumentException("Version is required");
-                    }
                     if (content == null || content.trim().length() == 0) {
                         throw new IllegalArgumentException("Script content is required");
                     }
+                    // Version is optional: blank => registry auto-assigns the next sequential integer.
+                    String trimmedVersion = (version != null && version.trim().length() > 0) ? version.trim() : null;
                     List<OutputPublishRule> outputRules = parseOutputRuleFromForm(form);
-                    runManager.registerScriptVersion(scriptId.trim(), version.trim(), content, description, new ArrayList<String>(), activate, outputRules);
+                    runManager.registerScriptVersion(scriptId.trim(), trimmedVersion, content, description, new ArrayList<String>(), activate, outputRules);
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                     return;
                 }
@@ -202,6 +201,20 @@ public class TeeBoxServer {
                     }
                     boolean immediate = "on".equals(form.get("immediate")) || "true".equals(form.get("immediate"));
                     runManager.updateScriptSettings(scriptId, Math.max(0, maxConcurrent), immediate);
+                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
+                    return;
+                }
+                if ("POST".equals(method) && path.startsWith("/admin/scripts/activate/")) {
+                    String scriptId = path.substring("/admin/scripts/activate/".length());
+                    if (scriptId.length() == 0) {
+                        throw new IllegalArgumentException("Script ID is required");
+                    }
+                    Map<String, String> form = parseForm(exchange);
+                    String version = form.get("version");
+                    if (version == null || version.trim().length() == 0) {
+                        throw new IllegalArgumentException("Version is required");
+                    }
+                    runManager.activateScriptVersion(scriptId, version.trim());
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
                     return;
                 }

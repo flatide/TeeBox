@@ -719,7 +719,7 @@ public class AdminPageRenderer {
         sb.append("<button class='btn-refresh' onclick='document.getElementById(\"register-modal\").style.display=\"none\"'>Close</button></div>");
         sb.append("<form method='post' action='/admin/scripts/register' class='form-grid' id='register-form'>");
         sb.append("<div class='form-row'><label>Script ID</label><input type='text' name='scriptId' placeholder='calc_sum' required/></div>");
-        sb.append("<div class='form-row'><label>Version</label><input type='text' name='version' placeholder='v1' required/></div>");
+        sb.append("<div class='form-row'><label>Version <span class='dim'>(blank = auto)</span></label><input type='text' name='version' placeholder='auto (next #)'/></div>");
         sb.append("<div class='form-row'><label>Description</label><input type='text' name='description' placeholder=''/></div>");
         sb.append("<div class='form-row'><label>Script File</label>");
         sb.append("<input type='file' id='script-file' accept='.tee,.txt' style='font-size:13px;'/>");
@@ -813,6 +813,7 @@ public class AdminPageRenderer {
         } else {
             sb.append("<div class='table-wrap'><table><thead><tr>");
             sb.append("<th>Version</th><th>Status</th><th>Description</th><th>Labels</th><th>SHA-256</th><th>Created</th>");
+            if (!isReadOnly()) sb.append("<th>Action</th>");
             sb.append("</tr></thead><tbody>");
             for (ScriptVersionInfo version : script.versions) {
                 sb.append("<tr>");
@@ -843,6 +844,17 @@ public class AdminPageRenderer {
                 }
                 sb.append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(version.createdAt))).append("</td>");
+                if (!isReadOnly()) {
+                    sb.append("<td>");
+                    if (version.active) {
+                        sb.append("<span class='dim'>active</span>");
+                    } else {
+                        sb.append("<form method='post' action='/admin/scripts/activate/").append(urlPath(scriptId)).append("' style='display:inline'>");
+                        sb.append("<input type='hidden' name='version' value='").append(escape(version.version)).append("'/>");
+                        sb.append("<button type='submit' class='btn btn-sm'>Set active</button></form>");
+                    }
+                    sb.append("</td>");
+                }
                 sb.append("</tr>");
             }
             sb.append("</tbody></table></div>");

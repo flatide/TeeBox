@@ -100,7 +100,6 @@ public class ScriptRegistry {
                                                    boolean activate,
                                                    List<OutputPublishRule> outputRules) {
         validateName("scriptId", scriptId);
-        validateName("version", version);
         if (content == null || content.trim().length() == 0) {
             throw new IllegalArgumentException("content is required");
         }
@@ -113,8 +112,18 @@ public class ScriptRegistry {
             info.scriptId = scriptId;
             info.createdAt = now;
         }
-        if (findVersion(info, version) != null) {
-            throw new IllegalArgumentException("Script version already exists: " + scriptId + "@" + version);
+
+        // Version is optional: blank/null => auto-assign the next sequential integer ("1","2",...).
+        // An explicit version (any [A-Za-z0-9._-] label, e.g. legacy "v1") is still honored.
+        String resolvedVersion;
+        if (version == null || version.trim().length() == 0) {
+            resolvedVersion = nextAutoVersion(info);
+        } else {
+            resolvedVersion = version.trim();
+            validateName("version", resolvedVersion);
+        }
+        if (findVersion(info, resolvedVersion) != null) {
+            throw new IllegalArgumentException("Script version already exists: " + scriptId + "@" + resolvedVersion);
         }
 
         File scriptDir = scriptDir(scriptId);
@@ -123,11 +132,11 @@ public class ScriptRegistry {
             versionsDir.mkdirs();
         }
 
-        File scriptFile = new File(versionsDir, version + ".tee");
+        File scriptFile = new File(versionsDir, resolvedVersion + ".tee");
         writeFile(scriptFile, content);
 
         ScriptVersionInfo versionInfo = new ScriptVersionInfo();
-        versionInfo.version = version;
+        versionInfo.version = resolvedVersion;
         versionInfo.description = description != null ? description : "";
         versionInfo.labels = sanitizeLabels(labels);
         versionInfo.sha256 = sha256(content);
@@ -141,7 +150,7 @@ public class ScriptRegistry {
         }
         info.versions.add(versionInfo);
         if (activate || info.activeVersion == null || info.activeVersion.length() == 0) {
-            info.activeVersion = version;
+            info.activeVersion = resolvedVersion;
         }
         info.updatedAt = now;
         markActiveVersion(info);
@@ -373,6 +382,30 @@ public class ScriptRegistry {
                 return a.createdAt < b.createdAt ? 1 : -1;
             }
         });
+    }
+
+    /**
+     * Next sequential integer version label ("1", "2", ...). Computed as (highest purely-numeric
+     * existing version) + 1, then bumped past any already-taken label. Non-numeric legacy versions
+     * (e.g. "v1") are ignored for the max but still reserve their label, so numbering never collides.
+     */
+    private String nextAutoVersion(ScriptInfo info) {
+        int max = 0;
+        if (info != null) {
+            for (ScriptVersionInfo v : info.versions) {
+                if (v.version != null && v.version.length() <= 9 && v.version.matches("\\d+")) {
+                    int n = Integer.parseInt(v.version);
+                    if (n > max) {
+                        max = n;
+                    }
+                }
+            }
+        }
+        int candidate = max + 1;
+        while (findVersion(info, String.valueOf(candidate)) != null) {
+            candidate++;
+        }
+        return String.valueOf(candidate);
     }
 
     private ScriptVersionInfo findVersion(ScriptInfo info, String version) {
