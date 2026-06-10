@@ -647,6 +647,33 @@ public class TeeBoxServer {
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
+        if ("GET".equals(method) && path.startsWith("/api/publisher/scripts/") && path.endsWith("/content")) {
+            String scriptId = path.substring("/api/publisher/scripts/".length(), path.length() - "/content".length());
+            ScriptInfo info = runManager.getScript(scriptId);
+            if (info == null) {
+                writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Script not found"));
+                return;
+            }
+            String version = trimToNull(parseQuery(exchange).get("version"));
+            if (version == null) {
+                version = info.activeVersion;
+            }
+            if (version == null || version.length() == 0) {
+                writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("No active version for script: " + scriptId));
+                return;
+            }
+            String content = runManager.getScriptVersionContent(scriptId, version);
+            if (content == null) {
+                writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Unknown script version: " + scriptId + "@" + version));
+                return;
+            }
+            Map<String, Object> payload = new LinkedHashMap<String, Object>();
+            payload.put("scriptId", scriptId);
+            payload.put("version", version);
+            payload.put("content", content);
+            writeJson(exchange, HttpURLConnection.HTTP_OK, payload);
+            return;
+        }
         if ("GET".equals(method) && path.startsWith("/api/publisher/scripts/")) {
             String scriptId = path.substring("/api/publisher/scripts/".length());
             if (scriptId.endsWith("/activate") || scriptId.endsWith("/versions")) {
