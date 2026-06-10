@@ -221,6 +221,14 @@ public class SimulatedTaskRunner implements TaskRunner {
     }
 
     @Override
+    public String getCombinedOutput(String taskId, int maxBytes) {
+        // Simulated runner output is tiny by construction; just trim if requested.
+        String combined = getCombinedOutput(taskId);
+        if (maxBytes <= 0 || combined.length() <= maxBytes) return combined;
+        return combined.substring(combined.length() - maxBytes);
+    }
+
+    @Override
     public Integer getExitCode(String taskId) {
         Task task = tasks.get(taskId);
         return task != null ? task.exitCode : null;

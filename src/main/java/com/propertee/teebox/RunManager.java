@@ -290,6 +290,15 @@ public class RunManager {
         return managedTaskEngine.getStderr(taskId);
     }
 
+    /** Bounded tail read; preferred for admin UI / API to avoid OOM on huge outputs. */
+    public String getTaskStdoutTail(String taskId, int maxBytes) {
+        return managedTaskEngine.getStdoutTail(taskId, maxBytes);
+    }
+
+    public String getTaskStderrTail(String taskId, int maxBytes) {
+        return managedTaskEngine.getStderrTail(taskId, maxBytes);
+    }
+
     public boolean killTask(String taskId) {
         return managedTaskEngine.killTask(taskId);
     }

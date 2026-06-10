@@ -14,6 +14,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
+import java.io.RandomAccessFile;
 import java.io.Writer;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -200,6 +201,44 @@ public class UnixTaskRunner implements TaskRunner {
         Task task = tasks.get(taskId);
         if (task == null) return "";
         return combineOutputs(task);
+    }
+
+    @Override
+    public String getCombinedOutput(String taskId, int maxBytes) {
+        if (maxBytes <= 0) return "";
+        Task task = tasks.get(taskId);
+        if (task == null) return "";
+        int stdoutBudget = (int) ((long) maxBytes * 3L / 4L);
+        int stderrBudget = maxBytes - stdoutBudget;
+        String stdout = readFileTail(task.stdoutFile, stdoutBudget);
+        String stderr = readFileTail(task.stderrFile, stderrBudget);
+        if (stderr.length() == 0) return stdout;
+        if (stdout.length() == 0) return stderr;
+        return stdout + "\n" + stderr;
+    }
+
+    private String readFileTail(File file, int maxBytes) {
+        if (file == null || !file.exists() || maxBytes <= 0) return "";
+        RandomAccessFile raf = null;
+        try {
+            raf = new RandomAccessFile(file, "r");
+            long len = raf.length();
+            long start = Math.max(0L, len - maxBytes);
+            raf.seek(start);
+            int toRead = (int) Math.min((long) maxBytes, len - start);
+            byte[] buf = new byte[toRead];
+            int total = 0;
+            while (total < toRead) {
+                int n = raf.read(buf, total, toRead - total);
+                if (n <= 0) break;
+                total += n;
+            }
+            return new String(buf, 0, total, "UTF-8");
+        } catch (IOException e) {
+            return "";
+        } finally {
+            closeQuietly(raf);
+        }
     }
 
     public Integer getExitCode(String taskId) {

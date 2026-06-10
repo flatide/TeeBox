@@ -21,7 +21,6 @@ public class RunRegistry {
     private final RunStore runStore;
     private final ConcurrentHashMap<String, RunInfo> runs = new ConcurrentHashMap<String, RunInfo>();
     private final Set<String> dirtyRunIds = new HashSet<String>();
-    private final Set<String> indexDirtyRunIds = new HashSet<String>();
     private final Object dirtyLock = new Object();
 
     public RunRegistry(File dataDir,
@@ -170,29 +169,18 @@ public class RunRegistry {
 
     public void flushDirty() {
         List<String> runIds;
-        List<String> indexIds;
         synchronized (dirtyLock) {
-            if (dirtyRunIds.isEmpty() && indexDirtyRunIds.isEmpty()) {
+            if (dirtyRunIds.isEmpty()) {
                 return;
             }
             runIds = new ArrayList<String>(dirtyRunIds);
             dirtyRunIds.clear();
-            indexIds = new ArrayList<String>(indexDirtyRunIds);
-            indexDirtyRunIds.clear();
         }
         for (String runId : runIds) {
             RunInfo run = runs.get(runId);
             if (run != null) {
                 synchronized (run) {
                     runStore.saveRunFile(run.copy());
-                }
-            }
-        }
-        for (String runId : indexIds) {
-            RunInfo run = runs.get(runId);
-            if (run != null) {
-                synchronized (run) {
-                    runStore.save(run.copy());
                 }
             }
         }
@@ -314,7 +302,6 @@ public class RunRegistry {
     private void saveRunWithIndex(RunInfo run) {
         synchronized (dirtyLock) {
             dirtyRunIds.remove(run.runId);
-            indexDirtyRunIds.remove(run.runId);
         }
         runStore.save(run.copy());
     }

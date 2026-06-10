@@ -467,6 +467,66 @@ public class ManagedTaskEngine implements TaskRunner {
     }
 
     @Override
+    public String getCombinedOutput(String taskId, int maxBytes) {
+        if (maxBytes <= 0) return "";
+        Task inMemory = runner.getTask(taskId);
+        if (inMemory != null) {
+            return combineBounded(inMemory.stdoutFile, inMemory.stderrFile, maxBytes);
+        }
+        Task task = getTaskFromDisk(taskId);
+        if (task == null) return "";
+        if (task.archived) {
+            String stdout = task.stdoutTail != null ? task.stdoutTail : "";
+            String stderr = task.stderrTail != null ? task.stderrTail : "";
+            if (stderr.length() == 0) return trimTail(stdout, maxBytes);
+            if (stdout.length() == 0) return trimTail(stderr, maxBytes);
+            return trimTail(stdout + "\n" + stderr, maxBytes);
+        }
+        return combineBounded(task.stdoutFile, task.stderrFile, maxBytes);
+    }
+
+    private String combineBounded(File stdoutFile, File stderrFile, int maxBytes) {
+        // Split the byte budget between stdout and stderr (stdout typically larger).
+        int stdoutBudget = (int) ((long) maxBytes * 3L / 4L);
+        int stderrBudget = maxBytes - stdoutBudget;
+        String stdout = readFileTail(stdoutFile, stdoutBudget);
+        String stderr = readFileTail(stderrFile, stderrBudget);
+        if (stderr.length() == 0) return stdout;
+        if (stdout.length() == 0) return stderr;
+        return stdout + "\n" + stderr;
+    }
+
+    private static String trimTail(String s, int maxBytes) {
+        if (s == null || maxBytes <= 0) return "";
+        if (s.length() <= maxBytes) return s;
+        return s.substring(s.length() - maxBytes);
+    }
+
+    /** Bounded tail read for admin UI / API. Avoids loading multi-GB stdout into heap. */
+    public String getStdoutTail(String taskId, int maxBytes) {
+        Task inMemory = runner.getTask(taskId);
+        if (inMemory != null) {
+            return readFileTail(inMemory.stdoutFile, maxBytes);
+        }
+        Task task = getTaskFromDisk(taskId);
+        if (task == null) return "";
+        if (task.archived) return task.stdoutTail != null ? task.stdoutTail : "";
+        return readFileTail(task.stdoutFile, maxBytes);
+    }
+
+    /** Bounded tail read for admin UI / API. */
+    public String getStderrTail(String taskId, int maxBytes) {
+        Task inMemory = runner.getTask(taskId);
+        if (inMemory != null) {
+            return readFileTail(inMemory.stderrFile, maxBytes);
+        }
+        Task task = getTaskFromDisk(taskId);
+        if (task == null) return "";
+        if (task.archived) return task.stderrTail != null ? task.stderrTail : "";
+        return readFileTail(task.stderrFile, maxBytes);
+    }
+
+    @Override
     public Integer getExitCode(String taskId) {
         Task inMemory = runner.getTask(taskId);
         if (inMemory != null) {

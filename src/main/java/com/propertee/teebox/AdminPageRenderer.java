@@ -494,8 +494,8 @@ public class AdminPageRenderer {
             boolean anyOutput = false;
             int taskIdx = 0;
             for (TaskInfo task : tasks) {
-                String taskStdout = tailLines(nullToEmpty(runManager.getTaskStdout(task.taskId)), DEFAULT_TAIL_LINES);
-                String taskStderr = tailLines(nullToEmpty(runManager.getTaskStderr(task.taskId)), DEFAULT_TAIL_LINES);
+                String taskStdout = tailLines(nullToEmpty(runManager.getTaskStdoutTail(task.taskId, DEFAULT_TAIL_BYTES)), DEFAULT_TAIL_LINES);
+                String taskStderr = tailLines(nullToEmpty(runManager.getTaskStderrTail(task.taskId, DEFAULT_TAIL_BYTES)), DEFAULT_TAIL_LINES);
                 if (taskStdout.length() > 0 || taskStderr.length() > 0) {
                     anyOutput = true;
                     sb.append("<div class='task-output-block'>");
@@ -629,8 +629,8 @@ public class AdminPageRenderer {
             sb.append("<div class='card'><h2>Observation</h2><pre>").append(escape(gson.toJson(obs))).append("</pre></div>");
         }
 
-        String taskStdout = tailLines(nullToEmpty(runManager.getTaskStdout(taskId)), DEFAULT_TAIL_LINES);
-        String taskStderr = tailLines(nullToEmpty(runManager.getTaskStderr(taskId)), DEFAULT_TAIL_LINES);
+        String taskStdout = tailLines(nullToEmpty(runManager.getTaskStdoutTail(taskId, DEFAULT_TAIL_BYTES)), DEFAULT_TAIL_LINES);
+        String taskStderr = tailLines(nullToEmpty(runManager.getTaskStderrTail(taskId, DEFAULT_TAIL_BYTES)), DEFAULT_TAIL_LINES);
         if (taskStdout.length() > 0) {
             sb.append("<div class='card'><h2>Stdout</h2><pre class='task-out' id='task-stdout'>").append(escape(taskStdout)).append("</pre></div>");
         }
@@ -1299,6 +1299,8 @@ public class AdminPageRenderer {
     }
 
     private static final int DEFAULT_TAIL_LINES = 1000;
+    // Byte budget for bounded tail reads. Generous for 1000 lines of typical output.
+    private static final int DEFAULT_TAIL_BYTES = 1024 * 1024;
 
     private String tailLines(String text, int maxLines) {
         if (text == null || text.length() == 0) return "";

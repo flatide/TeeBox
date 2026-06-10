@@ -985,8 +985,9 @@ public class TeeBoxServer {
         Map<String, Object> detail = new LinkedHashMap<String, Object>();
         detail.put("task", info);
         detail.put("observation", runManager.observeTask(taskId));
-        detail.put("stdoutTail", tail(runManager.getTaskStdout(taskId), 4000));
-        detail.put("stderrTail", tail(runManager.getTaskStderr(taskId), 4000));
+        // 64KB is generous for the 4000-char tail and avoids loading multi-GB outputs.
+        detail.put("stdoutTail", tail(runManager.getTaskStdoutTail(taskId, 64 * 1024), 4000));
+        detail.put("stderrTail", tail(runManager.getTaskStderrTail(taskId, 64 * 1024), 4000));
         return detail;
     }
 
