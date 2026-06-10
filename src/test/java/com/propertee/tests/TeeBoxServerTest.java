@@ -174,6 +174,178 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void clientRunAndWaitShouldReturnResultSynchronously() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("sync_result", "v1",
+                "return {\"ok\": true, \"value\": 42}\n",
+                "runAndWait happy path", Arrays.asList("test"), true);
+
+            Map<String, Object> result = client.runAndWait("sync_result", null,
+                new LinkedHashMap<String, Object>(), 8000L);
+
+            Assert.assertEquals("COMPLETED", result.get("status"));
+            Assert.assertEquals(Boolean.TRUE, result.get("hasExplicitReturn"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> data = (Map<String, Object>) result.get("resultData");
+            Assert.assertEquals(Boolean.TRUE, data.get("ok"));
+            Assert.assertEquals(42.0, ((Number) data.get("value")).doubleValue(), 0.0);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void clientRunAndWaitShouldThrowOnTimeout() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("sync_slow", "v1",
+                "result = SHELL(\"sleep 5\")\n",
+                "runAndWait timeout path", Arrays.asList("test"), true);
+
+            long start = System.currentTimeMillis();
+            try {
+                client.runAndWait("sync_slow", null, new LinkedHashMap<String, Object>(), 500L);
+                Assert.fail("Expected runAndWait to time out before the run finished");
+            } catch (IOException expected) {
+                // Client-side wait gives up; the run keeps executing server-side. The message
+                // carries the runId so the caller can re-poll instead of losing the run.
+                String message = expected.getMessage();
+                Assert.assertNotNull(message);
+                Assert.assertTrue("message should mention timeout: " + message, message.contains("Timed out"));
+            }
+            long elapsed = System.currentTimeMillis() - start;
+            Assert.assertTrue("should give up near the 500ms budget, was " + elapsed + "ms", elapsed < 4000L);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void scriptVersionsShouldAutoIncrementAndResolveActive() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+
+            // register without a version -> auto "1", activated
+            Map<String, Object> reg = client.registerScript("autover", "return {\"v\": 1}\n", true);
+            Assert.assertEquals("1", reg.get("activeVersion"));
+
+            // update without a version -> auto "2", NOT activated (active stays "1")
+            Map<String, Object> upd = client.addScriptVersion("autover", "return {\"v\": 2}\n", false);
+            Assert.assertEquals("1", upd.get("activeVersion"));
+
+            List<String> versions = versionLabels(client.getScript("autover"));
+            Assert.assertEquals(2, versions.size());
+            Assert.assertTrue(versions.contains("1") && versions.contains("2"));
+
+            // version-less run resolves the ACTIVE version (1), not the latest (2)
+            Map<String, Object> r1 = client.runAndWait("autover", null, new LinkedHashMap<String, Object>(), 8000L);
+            Assert.assertEquals(1.0, resultValue(r1, "v"), 0.0);
+
+            // promote 2, then version-less run resolves 2
+            client.activateScript("autover", "2");
+            Assert.assertEquals("2", client.getScript("autover").get("activeVersion"));
+            Map<String, Object> r2 = client.runAndWait("autover", null, new LinkedHashMap<String, Object>(), 8000L);
+            Assert.assertEquals(2.0, resultValue(r2, "v"), 0.0);
+
+            // a third auto version continues the sequence -> "3"
+            Map<String, Object> v3 = client.addScriptVersion("autover", "return {\"v\": 3}\n", true);
+            Assert.assertEquals("3", v3.get("activeVersion"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void adminUiShouldSetActiveVersion() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("uiver", "return {\"v\": 1}\n", true);    // version "1", active
+            client.addScriptVersion("uiver", "return {\"v\": 2}\n", false); // version "2", active still "1"
+            Assert.assertEquals("1", client.getScript("uiver").get("activeVersion"));
+
+            int code = postForm(testServer.baseUrl + "/admin/scripts/activate/uiver", "version=2", null);
+            Assert.assertTrue("expected a redirect, got " + code, code >= 300 && code < 400);
+
+            Assert.assertEquals("2", client.getScript("uiver").get("activeVersion"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void scriptListAndContentShouldBeRetrievable() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            String src1 = "return {\"v\": 1}\n";
+            String src2 = "return {\"v\": 2}\n";
+            client.registerScript("content_test", src1, true);   // auto "1", active
+            client.addScriptVersion("content_test", src2, true);  // auto "2", active
+
+            // list includes the script
+            List<Map<String, Object>> scripts = client.listScripts();
+            boolean found = false;
+            for (Map<String, Object> s : scripts) {
+                if ("content_test".equals(s.get("scriptId"))) found = true;
+            }
+            Assert.assertTrue("listScripts should include content_test", found);
+
+            // content of the active version (2)
+            Map<String, Object> active = client.getScriptContent("content_test", null);
+            Assert.assertEquals("2", active.get("version"));
+            Assert.assertEquals(src2, active.get("content"));
+
+            // content of a specific version (1)
+            Map<String, Object> v1 = client.getScriptContent("content_test", "1");
+            Assert.assertEquals(src1, v1.get("content"));
+
+            // unknown version -> 404 -> IOException
+            try {
+                client.getScriptContent("content_test", "999");
+                Assert.fail("expected an error for unknown version");
+            } catch (IOException expected) {
+                // expected
+            }
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void outputPublishShouldBeTrackableWithSplitTokens() throws Exception {
+        // Distinct publisher/client tokens: register needs the publisher token, submit/track the client token.
+        TestServer testServer = createServer(null, "client-secret", "publisher-secret", null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, "client-secret", "publisher-secret", null);
+
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "jobid:\\s*(\\S+)");
+            rule.put("captureGroup", Integer.valueOf(1));
+            rule.put("publishKey", "jobId");
+            rule.put("firstOnly", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            rules.add(rule);
+
+            // register with a capture rule (publisher token); SHELL prints the id then lingers
+            client.registerScript("published_job",
+                "result = SHELL(\"echo jobid: ABC123; sleep 2\")\n", true, rules);
+
+            // submit (client token) and wait for the published id to appear mid-run
+            String runId = (String) client.submitRun("published_job", null, new LinkedHashMap<String, Object>()).get("runId");
+            Object jobId = client.waitForPublished(runId, "jobId", 8000L);
+            Assert.assertEquals("ABC123", jobId);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void serverShouldRequireBearerTokenWhenConfigured() throws Exception {
         TestServer testServer = createServer("secret-token");
         try {
@@ -1012,6 +1184,44 @@ public class TeeBoxServerTest {
         int status = conn.getResponseCode();
         Assert.assertEquals(expectedStatus, status);
         return readJsonMap(conn);
+    }
+
+    private int postForm(String url, String formBody, String bearerToken) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setInstanceFollowRedirects(false);
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        if (bearerToken != null) {
+            conn.setRequestProperty("Authorization", "Bearer " + bearerToken);
+        }
+        OutputStream out = conn.getOutputStream();
+        try {
+            out.write(formBody.getBytes("UTF-8"));
+        } finally {
+            out.close();
+        }
+        int code = conn.getResponseCode();
+        conn.disconnect();
+        return code;
+    }
+
+    private List<String> versionLabels(Map<String, Object> scriptDetail) {
+        List<String> out = new ArrayList<String>();
+        Object versions = scriptDetail.get("versions");
+        if (versions instanceof List) {
+            for (Object item : (List<?>) versions) {
+                if (item instanceof Map) {
+                    out.add(String.valueOf(((Map<?, ?>) item).get("version")));
+                }
+            }
+        }
+        return out;
+    }
+
+    private double resultValue(Map<String, Object> runResult, String key) {
+        Map<?, ?> data = (Map<?, ?>) runResult.get("resultData");
+        return ((Number) data.get(key)).doubleValue();
     }
 
     private Map<String, Object> getJsonMap(String url, int expectedStatus) throws IOException {
