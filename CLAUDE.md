@@ -8,7 +8,7 @@ ProperTee TeeBox is an HTTP API and admin UI service for remote ProperTee script
 
 ## Build & Run Commands
 
-Requires the **sibling repo `../propertee-java`** to be checked out: `propertee-core` is resolved through a Gradle **composite build**, not from a Maven repo (`settings.gradle` declares `includeBuild('../propertee-java')` with a `dependencySubstitution` mapping `com.propertee:propertee-core` → `project(':propertee-core')`). The `0.4.0` Maven coordinate in `build.gradle` is only a substitution key; the code is built from `../propertee-java/propertee-core`.
+Requires the **sibling repo `../propertee-java`** to be checked out: `propertee-core` is resolved through a Gradle **composite build**, not from a Maven repo (`settings.gradle` declares `includeBuild('../propertee-java')` with a `dependencySubstitution` mapping `com.flatide:propertee-core` → `project(':propertee-core')`). The `0.4.0` Maven coordinate in `build.gradle` is only a substitution key; the code is built from `../propertee-java/propertee-core`.
 
 ```bash
 # Build (compile + test). Gradle 9.3.1 wrapper.
@@ -18,10 +18,10 @@ Requires the **sibling repo `../propertee-java`** to be checked out: `propertee-
 ./gradlew test
 
 # Run a single test class
-./gradlew test --tests "com.propertee.tests.TeeBoxServerTest"
+./gradlew test --tests "com.flatide.tests.TeeBoxServerTest"
 
 # Run a single test method
-./gradlew test --tests "com.propertee.tests.TeeBoxServerTest.testMethodName"
+./gradlew test --tests "com.flatide.tests.TeeBoxServerTest.testMethodName"
 
 # Run dev server (only dataDir is required)
 ./gradlew run -Dpropertee.teebox.dataDir=/tmp/propertee-teebox-data
@@ -30,7 +30,7 @@ Requires the **sibling repo `../propertee-java`** to be checked out: `propertee-
 ./gradlew teeBoxZip
 ```
 
-The only entry point / `mainClass` is **`com.propertee.teebox.TeeBoxMain`**. NOTE: `AGENTS.md` and `README.md` still reference a `TeeBoxUpstreamMockMain` class and a `./gradlew runTeeBoxUpstream` task — both have been **removed** and no longer exist (no such class in `src`, no such Gradle task). Treat those doc references as stale.
+The only entry point / `mainClass` is **`com.flatide.teebox.TeeBoxMain`**. NOTE: `AGENTS.md` and `README.md` still reference a `TeeBoxUpstreamMockMain` class and a `./gradlew runTeeBoxUpstream` task — both have been **removed** and no longer exist (no such class in `src`, no such Gradle task). Treat those doc references as stale.
 
 ### Distribution Tasks (Gradle group `distribution`)
 
@@ -179,7 +179,7 @@ Runner selection is **by platform, not config** (`ManagedTaskEngine.createRunner
 - **`UnixTaskRunner`** — Launches detached `/bin/sh` scripts, preferring `setsid` so each task is its own process-group leader (`pgid == pid`); a wrapper script captures `$?` to an exit-code file. Used on Linux (deploy target) and macOS (dev).
 - **`SimulatedTaskRunner`** — Windows-only; launches no real process, writes a placeholder stdout and schedules synthetic COMPLETED after ~250ms. Dev/UI testing only.
 
-### Task lifecycle model (`com.propertee.teebox.lifecycle`)
+### Task lifecycle model (`com.flatide.teebox.lifecycle`)
 
 The **authoritative** task state; core `Task.status` is *derived* from it (`syncStatusFromLifecycle`).
 
@@ -247,14 +247,14 @@ There is **no `scriptsRoot`** setting — `TeeBoxConfig` has no such field and n
 
 ## Dependencies
 
-- `com.propertee:propertee-core` (version 0.4.0) — supplied via **composite build** from `../propertee-java` (dependency substitution; not fetched from Maven). Provides `ScriptParser`, builtins, `Scheduler`, `TaskRunner`.
+- `com.flatide:propertee-core` (version 0.4.0) — supplied via **composite build** from `../propertee-java` (dependency substitution; not fetched from Maven). Provides `ScriptParser`, builtins, `Scheduler`, `TaskRunner`.
 - `com.google.code.gson:gson:2.11.0` — JSON serialization
 - `org.apache.logging.log4j:log4j-api` / `log4j-core` 2.24.3 — logging
 - `junit:junit:4.13.2` — tests
 
 ## Testing
 
-Tests live in `src/test/java/com/propertee/tests/`. Integration tests (`TeeBoxServerTest`) start a live server with temp directories.
+Tests live in `src/test/java/com/flatide/tests/`. Integration tests (`TeeBoxServerTest`) start a live server with temp directories.
 
 | Test class | Coverage |
 |------------|----------|
@@ -287,7 +287,7 @@ Three distinct layers, often confused:
 
 ## Embeddable client (`client/`)
 
-`client/com/propertee/teebox/client/TeeBoxClient.java` is a **standalone, zero-dependency, Java 7** client for embedding TeeBox into other (often legacy) programs. It is a **single self-contained source file** — copy it into the host project; it has no Gradle module and is **not part of this repo's build**. It uses only the JDK (`HttpURLConnection` + a tiny built-in JSON parser/writer in the nested `TeeBoxClient.Json`), so it never conflicts with a host's Gson/Jackson. Scope: register/update scripts (`registerScript` / `addScriptVersion` / `activateScriptVersion`; each has an overload that omits the version so the server auto-increments it), list/read scripts (`listScripts` / `getScript` / `getScriptContent`), run (`submitRun`), and track (`getRunStatus` / `getRunResult` / `getRunTasksSummary` / `waitForRunTerminal` / `runAndWait` / `waitForPublished`). Register/add-version overloads accept `outputRules` (build them with the static `outputRule(...)` helper) so callers can capture a long job's id from stdout and await it via `waitForPublished(runId, key, timeoutMs)`. No auth by default (internal-network target); set a shared token with `setBearerToken(...)`, or per-namespace tokens with `setClientApiToken(...)` / `setPublisherApiToken(...)` when the operator splits `clientApiToken`/`publisherApiToken` (the client picks the right token per request path). **Distinct from** the in-module `com.propertee.teebox.TeeBoxClient` (Java 17, depends on Gson, used only by the test suite). Local JDKs can't target bytecode 7 (`javac --release 7` is unsupported on JDK 17+); verify with `javac --release 8` and keep the source free of Java 8+ APIs/syntax (no lambdas/streams/`java.time`).
+`client/com/flatide/teebox/client/TeeBoxClient.java` is a **standalone, zero-dependency, Java 7** client for embedding TeeBox into other (often legacy) programs. It is a **single self-contained source file** — copy it into the host project; it has no Gradle module and is **not part of this repo's build**. It uses only the JDK (`HttpURLConnection` + a tiny built-in JSON parser/writer in the nested `TeeBoxClient.Json`), so it never conflicts with a host's Gson/Jackson. Scope: register/update scripts (`registerScript` / `addScriptVersion` / `activateScriptVersion`; each has an overload that omits the version so the server auto-increments it), list/read scripts (`listScripts` / `getScript` / `getScriptContent`), run (`submitRun`), and track (`getRunStatus` / `getRunResult` / `getRunTasksSummary` / `waitForRunTerminal` / `runAndWait` / `waitForPublished`). Register/add-version overloads accept `outputRules` (build them with the static `outputRule(...)` helper) so callers can capture a long job's id from stdout and await it via `waitForPublished(runId, key, timeoutMs)`. No auth by default (internal-network target); set a shared token with `setBearerToken(...)`, or per-namespace tokens with `setClientApiToken(...)` / `setPublisherApiToken(...)` when the operator splits `clientApiToken`/`publisherApiToken` (the client picks the right token per request path). **Distinct from** the in-module `com.flatide.teebox.TeeBoxClient` (Java 17, depends on Gson, used only by the test suite). Local JDKs can't target bytecode 7 (`javac --release 7` is unsupported on JDK 17+); verify with `javac --release 8` and keep the source free of Java 8+ APIs/syntax (no lambdas/streams/`java.time`).
 
 ## Concurrency Model
 

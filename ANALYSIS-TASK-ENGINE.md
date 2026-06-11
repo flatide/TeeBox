@@ -291,7 +291,7 @@ TeeBox는 폐쇄망 실행 프록시이므로 단순 실행기만으로는 부�
 
 ### Phase 1: propertee-core (propertee-java 레포)
 
-1. `TaskRunner` 인터페이스 정의 (`com.propertee.task.TaskRunner`)
+1. `TaskRunner` 인터페이스 정의 (`com.flatide.task.TaskRunner`)
    - execute, getTask, waitForCompletion, killTask, observe, stdout/stderr/combinedOutput, exitCode, statusMap, shutdown
    - killRun, queryTasks, listTasks는 **포함하지 않음** (control plane 전용)
 2. `DefaultTaskRunner` 구현 — 현재 TaskEngine에서 경량 부분 추출

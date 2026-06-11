@@ -1,6 +1,6 @@
 # TeeBox Demo
 
-This folder contains sample scripts for the TeeBox admin server added in `com.propertee.teebox`.
+This folder contains sample scripts for the TeeBox admin server added in `com.flatide.teebox`.
 
 ## Start the server
 

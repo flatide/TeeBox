@@ -14,15 +14,15 @@ TeeBox is the ProperTee execution service module. It exposes an HTTP admin UI an
 
 ## Main Components
 
-- [TeeBoxMain.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/TeeBoxMain.java)
+- [TeeBoxMain.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/flatide/teebox/TeeBoxMain.java)
   - process entry point
-- [TeeBoxServer.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/TeeBoxServer.java)
+- [TeeBoxServer.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/flatide/teebox/TeeBoxServer.java)
   - HTTP routing and API/admin handlers
-- [RunManager.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/RunManager.java)
+- [RunManager.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/flatide/teebox/RunManager.java)
   - run lifecycle and task lookup
-- [RunRegistry.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/RunRegistry.java)
+- [RunRegistry.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/flatide/teebox/RunRegistry.java)
   - persistent run storage and indexing
-- [AdminPageRenderer.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/propertee/teebox/AdminPageRenderer.java)
+- [AdminPageRenderer.java](/Users/journey/Flatide/propertee-teebox/src/main/java/com/flatide/teebox/AdminPageRenderer.java)
   - server-rendered admin UI
 
 ## Quick Start

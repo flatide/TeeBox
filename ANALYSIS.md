@@ -353,7 +353,7 @@ C. **Run 완료 시 즉시 아카이브 판정:**
 ### 소스 (19개)
 
 ```
-src/main/java/com/propertee/teebox/
+src/main/java/com/flatide/teebox/
 ├── TeeBoxMain.java              (진입점)
 ├── TeeBoxServer.java            (HTTP 서버, 37KB)
 ├── TeeBoxConfig.java            (설정)
@@ -378,7 +378,7 @@ src/main/java/com/propertee/teebox/
 ### 테스트 (2개)
 
 ```
-src/test/java/com/propertee/tests/
+src/test/java/com/flatide/tests/
 ├── TeeBoxServerTest.java        (통합 테스트, 14개 케이스)
 └── TeeBoxConfigTest.java        (단위 테스트, 3개 케이스)
 ```

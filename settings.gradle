@@ -2,6 +2,6 @@ rootProject.name = 'propertee-teebox'
 
 includeBuild('../propertee-java') {
     dependencySubstitution {
-        substitute module('com.propertee:propertee-core') using project(':propertee-core')
+        substitute module('com.flatide:propertee-core') using project(':propertee-core')
     }
 }

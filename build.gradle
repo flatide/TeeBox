@@ -6,7 +6,7 @@ plugins {
 import java.util.zip.GZIPInputStream
 import java.security.MessageDigest
 
-group = 'com.propertee'
+group = 'com.flatide'
 version = '0.6.0'
 
 ext {
@@ -24,7 +24,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.propertee:propertee-core:0.4.0'
+    implementation 'com.flatide:propertee-core:0.4.0'
     implementation 'com.google.code.gson:gson:2.11.0'
     implementation 'org.apache.logging.log4j:log4j-api:2.24.3'
     implementation 'org.apache.logging.log4j:log4j-core:2.24.3'
@@ -32,7 +32,7 @@ dependencies {
 }
 
 application {
-    mainClass = 'com.propertee.teebox.TeeBoxMain'
+    mainClass = 'com.flatide.teebox.TeeBoxMain'
 }
 
 run {
@@ -54,7 +54,7 @@ task teeBoxJar(type: Jar) {
     archiveBaseName = 'propertee-teebox'
     archiveVersion = ''
     manifest {
-        attributes 'Main-Class': 'com.propertee.teebox.TeeBoxMain'
+        attributes 'Main-Class': 'com.flatide.teebox.TeeBoxMain'
     }
     from sourceSets.main.output
     from {
