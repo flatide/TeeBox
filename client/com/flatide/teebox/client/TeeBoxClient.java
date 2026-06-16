@@ -18,7 +18,10 @@ import java.util.Map;
  *
  * <p>Single self-contained source file: copy it into any project (the {@code com/flatide/teebox/client/}
  * package path) and call it. Requires only the JDK ({@link HttpURLConnection} + a tiny built-in JSON
- * parser/writer) and compiles on <b>Java 7+</b>. No Gson/Jackson, no TeeBox server classes.
+ * parser/writer) and is held to <b>Java 7 source level</b> (no lambdas/streams/{@code java.time}) so it
+ * embeds into legacy hosts. No Gson/Jackson, no TeeBox server classes. Modern JDKs can no longer emit
+ * bytecode 7 ({@code javac --release 7} was dropped in JDK 20), so the build verifies it at the
+ * {@code --release 8} floor (Gradle task {@code compileStandaloneClient}); keep it Java-7-clean by hand.
  *
  * <p>Scope: register/update scripts, run them, and track runs. Designed for trusted internal networks,
  * so there is no auth by default. If tokens are configured, set a shared one via
@@ -50,7 +53,10 @@ import java.util.Map;
  * Waiting here is client-side polling, so a timeout/dropped connection never aborts the run — re-poll
  * the same {@code runId} to resume tracking.
  *
- * <p>This class is thread-safe: it holds no per-request state (each call opens its own connection).
+ * <p>Configuration (timeouts, tokens) is plain mutable state: set it once at construction time before
+ * sharing the instance. Once configured, concurrent requests are safe — each call opens its own
+ * connection and keeps no per-request state — but invoking a setter concurrently with an in-flight
+ * request is not synchronized.
  */
 public class TeeBoxClient {
 

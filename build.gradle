@@ -7,7 +7,7 @@ import java.util.zip.GZIPInputStream
 import java.security.MessageDigest
 
 group = 'com.flatide'
-version = '0.6.0'
+version = '0.7.0'
 
 ext {
     defaultRuntimeLinuxX64Url = 'https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz'
@@ -30,6 +30,31 @@ dependencies {
     implementation 'org.apache.logging.log4j:log4j-core:2.24.3'
     testImplementation 'junit:junit:4.13.2'
 }
+
+// The embeddable, zero-dependency client lives outside src/ (it is copied verbatim into host
+// projects). Pull it into the test source set so integration tests exercise the real deployable
+// client, not just the in-module one.
+sourceSets {
+    test {
+        java {
+            srcDir 'client'
+        }
+    }
+}
+
+// Guard the standalone client's self-contained contract: compile it with an EMPTY classpath
+// (proves zero external dependencies) targeting the --release 8 floor (JDK 17+ cannot emit
+// bytecode 7). Runs as part of `check` / `build`.
+task compileStandaloneClient(type: JavaCompile) {
+    description = 'Compile the embeddable zero-dependency client in isolation (no classpath, --release 8).'
+    group = 'verification'
+    source = fileTree('client') { include '**/*.java' }
+    classpath = files()
+    destinationDirectory = layout.buildDirectory.dir('classes/standalone-client')
+    options.release = 8
+    options.encoding = 'UTF-8'  // non-ASCII in source/comments must not depend on platform default
+}
+tasks.named('check') { dependsOn 'compileStandaloneClient' }
 
 application {
     mainClass = 'com.flatide.teebox.TeeBoxMain'
