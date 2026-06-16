@@ -16,9 +16,51 @@
 
 ## 2. 도입 방법
 
+두 가지 중 편한 방식을 고르세요.
+
+### 방법 A — 소스 임베드
+
 1. `client/com/flatide/teebox/client/TeeBoxClient.java` 를 호스트 프로젝트로 복사합니다. **패키지 경로(`com/flatide/teebox/client/`)를 유지**하세요.
 2. 별도 빌드 설정·의존성 추가가 필요 없습니다. 그대로 컴파일됩니다.
 3. import 후 사용:
+
+```java
+import com.flatide.teebox.client.TeeBoxClient;
+```
+
+> **Java 7 호스트는 이 방식만 가능합니다** — 호스트의 Java 7 컴파일러로 소스를 함께 컴파일하면 됩니다.
+
+### 방법 B — 미리 빌드된 jar 사용 (소스 임베드가 부담스러울 때)
+
+TeeBox 저장소에서 jar 를 빌드합니다.
+
+```bash
+./gradlew clientJar          # → build/libs/teebox-client-<버전>.jar  (예: teebox-client-0.7.0.jar)
+./gradlew clientSourcesJar   # (선택) IDE 소스 첨부용 sources jar
+```
+
+- 생성된 jar 는 **무의존성**(JDK만 사용)이라 호스트의 JSON 라이브러리와 충돌하지 않습니다.
+- 바이트코드는 `--release 8`(Java 8, major 52) 기준입니다 → **Java 8 이상 호스트**에서 사용하세요. (최신 JDK는 bytecode 7 을 생성할 수 없어 jar 의 하한은 Java 8 입니다. 진짜 Java 7 JVM 호스트는 위 **방법 A**(소스 임베드)를 쓰세요.)
+
+호스트 빌드에 jar 를 추가하는 예:
+
+```groovy
+// Gradle
+dependencies {
+    implementation files('libs/teebox-client-0.7.0.jar')
+}
+```
+
+```xml
+<!-- Maven (로컬 설치 후) -->
+<dependency>
+  <groupId>com.flatide</groupId>
+  <artifactId>teebox-client</artifactId>
+  <version>0.7.0</version>
+</dependency>
+```
+
+어느 방식이든 사용 코드는 동일합니다:
 
 ```java
 import com.flatide.teebox.client.TeeBoxClient;

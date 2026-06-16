@@ -56,6 +56,37 @@ task compileStandaloneClient(type: JavaCompile) {
 }
 tasks.named('check') { dependsOn 'compileStandaloneClient' }
 
+// Distributable jar of the embeddable client, for hosts that prefer a dependency over copying the
+// source file. Zero external dependencies; bytecode targets the --release 8 floor (JDK 17+ cannot emit
+// bytecode 7), so it runs on Java 8+. Genuine Java 7 hosts must still embed the source and compile it
+// with their own Java 7 toolchain.
+task clientJar(type: Jar) {
+    dependsOn compileStandaloneClient
+    archiveBaseName = 'teebox-client'
+    archiveVersion = project.version
+    destinationDirectory = layout.buildDirectory.dir('libs')
+    from compileStandaloneClient.destinationDirectory
+    manifest {
+        attributes(
+            'Implementation-Title': 'TeeBox embeddable client',
+            'Implementation-Version': project.version,
+            'Automatic-Module-Name': 'com.flatide.teebox.client'
+        )
+    }
+    description = 'Build the embeddable zero-dependency TeeBox client jar (Java 8 bytecode floor).'
+    group = 'distribution'
+}
+
+task clientSourcesJar(type: Jar) {
+    archiveBaseName = 'teebox-client'
+    archiveVersion = project.version
+    archiveClassifier = 'sources'
+    destinationDirectory = layout.buildDirectory.dir('libs')
+    from(fileTree('client') { include '**/*.java' })
+    description = 'Sources jar for the embeddable TeeBox client (IDE source attachment).'
+    group = 'distribution'
+}
+
 application {
     mainClass = 'com.flatide.teebox.TeeBoxMain'
 }
