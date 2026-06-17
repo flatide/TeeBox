@@ -318,7 +318,40 @@ List<Object> runs = teebox.listScriptRuns("calc_sum");           // 스크립트
 
 > `getRun` 의 `resultSummary` 는 **요약 문자열**입니다. 구조화된 결과(`resultData`)는 `getRunResult(runId)` 로 받으세요(아래). `outputRules` 로 게시된 값이 있으면 `published` 맵 필드가 추가됩니다.
 
-#### `getRunResult(runId)` 응답 예시 (참고)
+#### `getRunStatus(runId)` 응답 예시
+
+`getRun` 과 거의 같지만 **`resultSummary` 가 없습니다**(상태/타임스탬프 위주, 폴링에 가벼움). 아직 시작/종료 전이면 `startedAt`/`endedAt` 가 빠집니다.
+
+```jsonc
+// 실행 중(RUNNING) — endedAt 없음
+{
+  "runId": "run-20260617-220708-141-f339",
+  "scriptId": "slow",
+  "version": "1",
+  "status": "RUNNING",
+  "createdAt": 1781701628141,
+  "startedAt": 1781701628142,
+  "hasExplicitReturn": false
+}
+
+// 종료 후(COMPLETED)
+{
+  "runId": "run-20260617-134906-277-7149",
+  "scriptId": "calc_sum",
+  "version": "1",
+  "status": "COMPLETED",
+  "createdAt": 1781671746278,
+  "startedAt": 1781671746282,
+  "endedAt": 1781671746293,
+  "hasExplicitReturn": true
+}
+```
+
+```java
+String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING" / "COMPLETED" ...
+```
+
+#### `getRunResult(runId)` 응답 예시
 
 ```jsonc
 {
