@@ -9,7 +9,7 @@
 ## 1. 특징
 
 - **단일 파일 · 무의존성(zero-dependency)**: `TeeBoxClient.java` 하나만 복사하면 됩니다. JDK 외 라이브러리(Gson/Jackson 등) 불필요 — `HttpURLConnection` + 내장 미니 JSON 코덱만 사용합니다. 호스트 프로젝트의 JSON 라이브러리와 충돌하지 않습니다.
-- **Java 7 소스 호환**: 람다/스트림/`java.time` 미사용. 레거시 서버에 임베드 가능합니다. (최신 JDK는 bytecode 7을 못 만들어 빌드는 `--release 8` 로 검증합니다.)
+- **Java 7 호환**: 람다/스트림/`java.time` 미사용. 레거시 서버에 임베드 가능합니다. 소스는 `--release 8` 게이트로 검증하고, 배포 jar 는 JDK 8 toolchain 으로 **Java 7 bytecode(major 51)** 컴파일됩니다 → Java 7 JVM 에서 로드 가능.
 - **범위**: 스크립트 등록/수정, 실행, 추적. 폐쇄망(trusted internal network) 전제라 **기본 인증 없음**.
 
 ---
@@ -28,7 +28,7 @@
 import com.flatide.teebox.client.TeeBoxClient;
 ```
 
-> **Java 7 호스트는 이 방식만 가능합니다** — 호스트의 Java 7 컴파일러로 소스를 함께 컴파일하면 됩니다.
+> Java 7 호스트도 **방법 B(jar)** 를 그대로 쓸 수 있습니다(jar 가 bytecode 51). 방법 A 는 빌드 환경에 JDK 8 을 두기 어렵거나, 호스트의 컴파일러로 직접 통제하고 싶을 때 선택하면 됩니다.
 
 ### 방법 B — 미리 빌드된 jar 사용 (소스 임베드가 부담스러울 때)
 
@@ -40,7 +40,9 @@ TeeBox 저장소에서 jar 를 빌드합니다.
 ```
 
 - 생성된 jar 는 **무의존성**(JDK만 사용)이라 호스트의 JSON 라이브러리와 충돌하지 않습니다.
-- 바이트코드는 `--release 8`(Java 8, major 52) 기준입니다 → **Java 8 이상 호스트**에서 사용하세요. (최신 JDK는 bytecode 7 을 생성할 수 없어 jar 의 하한은 Java 8 입니다. 진짜 Java 7 JVM 호스트는 위 **방법 A**(소스 임베드)를 쓰세요.)
+- 바이트코드는 **Java 7(major 51)** 이라 **Java 7 이상 호스트**에서 그대로 로드됩니다.
+
+> **빌드 환경 참고**: 최신 JDK(17+)는 bytecode 7 을 생성할 수 없으므로, `clientJar` 는 **JDK 8 toolchain** 으로 `-source/-target 7` 컴파일합니다. 빌드 머신에 JDK 8 이 detect 되어야 합니다 — Gradle 이 설치된 JDK 8 을 자동 인식하며, 인식이 안 되면 `org.gradle.java.installations.paths` 로 경로를 지정하면 됩니다(예: `~/.gradle/gradle.properties`). JDK 8 이 없는 일반 빌드(`./gradlew build`)는 영향받지 않습니다.
 
 호스트 빌드에 jar 를 추가하는 예:
 

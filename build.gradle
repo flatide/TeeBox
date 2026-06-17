@@ -56,16 +56,32 @@ task compileStandaloneClient(type: JavaCompile) {
 }
 tasks.named('check') { dependsOn 'compileStandaloneClient' }
 
+// Compile the client to genuine Java 7 bytecode (major 51) so the distributable jar loads on Java 7
+// hosts. JDK 17+ can no longer emit bytecode 7, so this uses a JDK 8 toolchain (whose javac still
+// targets -source/-target 7). Gradle auto-provisions JDK 8 via the foojay resolver if it is not
+// already installed — no manual/sudo system install needed. Zero external dependencies (empty classpath).
+task compileClientJava7(type: JavaCompile) {
+    description = 'Compile the embeddable client to Java 7 bytecode using a JDK 8 toolchain.'
+    group = 'verification'
+    source = fileTree('client') { include '**/*.java' }
+    classpath = files()
+    destinationDirectory = layout.buildDirectory.dir('classes/standalone-client-java7')
+    sourceCompatibility = '7'
+    targetCompatibility = '7'
+    options.encoding = 'UTF-8'
+    javaCompiler = javaToolchains.compilerFor {
+        languageVersion = JavaLanguageVersion.of(8)
+    }
+}
+
 // Distributable jar of the embeddable client, for hosts that prefer a dependency over copying the
-// source file. Zero external dependencies; bytecode targets the --release 8 floor (JDK 17+ cannot emit
-// bytecode 7), so it runs on Java 8+. Genuine Java 7 hosts must still embed the source and compile it
-// with their own Java 7 toolchain.
+// source file. Zero external dependencies; bytecode is Java 7 (major 51), so it loads on Java 7+.
 task clientJar(type: Jar) {
-    dependsOn compileStandaloneClient
+    dependsOn compileClientJava7
     archiveBaseName = 'teebox-client'
     archiveVersion = project.version
     destinationDirectory = layout.buildDirectory.dir('libs')
-    from compileStandaloneClient.destinationDirectory
+    from compileClientJava7.destinationDirectory
     manifest {
         attributes(
             'Implementation-Title': 'TeeBox embeddable client',
@@ -73,7 +89,7 @@ task clientJar(type: Jar) {
             'Automatic-Module-Name': 'com.flatide.teebox.client'
         )
     }
-    description = 'Build the embeddable zero-dependency TeeBox client jar (Java 8 bytecode floor).'
+    description = 'Build the embeddable zero-dependency TeeBox client jar (Java 7 bytecode, loads on Java 7+).'
     group = 'distribution'
 }
 
