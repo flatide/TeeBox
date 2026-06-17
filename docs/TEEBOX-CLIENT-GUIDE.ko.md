@@ -197,6 +197,61 @@ String src = teebox.getScriptContent("calc_sum");        // 활성 버전 소스
 String srcV1 = teebox.getScriptContent("calc_sum", "1"); // 특정 버전 소스
 ```
 
+#### `getScript(scriptId)` 응답 예시
+
+```jsonc
+{
+  "scriptId": "calc_sum",
+  "activeVersion": "1",         // 실행 시 버전 생략하면 이 버전이 돌아감
+  "createdAt": 1781670773694,   // epoch ms (Java 에선 Double)
+  "updatedAt": 1781670773741,
+  "maxConcurrentRuns": 4,       // 0 = 무제한(기본)
+  "immediate": false,           // true = 글로벌 큐 우회 즉시 실행
+  "deletedAt": 0,               // 0 = 미삭제, >0 = soft-delete 시각
+  "versions": [                 // 최신 버전이 앞쪽
+    {
+      "version": "2",
+      "description": "",
+      "labels": [],
+      "sha256": "3dd7c382...",  // 버전 콘텐츠 해시
+      "createdAt": 1781670773729,
+      "active": false
+    },
+    {
+      "version": "1",
+      "description": "두 수의 합",
+      "labels": [],
+      "sha256": "8def0777...",
+      "createdAt": 1781670773694,
+      "active": true            // = activeVersion
+    }
+  ]
+}
+```
+
+```java
+String active = (String) one.get("activeVersion");
+List<?> versions = (List<?>) one.get("versions");
+```
+
+#### `listScripts()` 응답 예시
+
+`getScript` 와 동일한 객체의 **배열**입니다.
+
+```jsonc
+[
+  { "scriptId": "calc_sum", "activeVersion": "1", "maxConcurrentRuns": 4, "versions": [ /* ... */ ], "...": "..." },
+  { "scriptId": "greeter",  "activeVersion": "1", "maxConcurrentRuns": 0, "versions": [ /* ... */ ], "...": "..." }
+]
+```
+
+```java
+for (Object item : teebox.listScripts()) {
+    Map<?, ?> s = (Map<?, ?>) item;
+    System.out.println(s.get("scriptId") + " @ " + s.get("activeVersion"));
+}
+```
+
 ---
 
 ## 7. 실행 & 추적
@@ -220,6 +275,21 @@ String runId = (String) submitted.get("runId");
 teebox.submitRun("calc_sum", "1", props);
 ```
 
+#### `submitRun(...)` 응답 예시 (HTTP 202, 제출 직후)
+
+```jsonc
+{
+  "runId": "run-20260617-133304-465-cf31",  // 이후 추적에 쓰는 키
+  "scriptId": "calc_sum",
+  "version": "1",                // 실제로 선택된 버전(활성 버전)
+  "status": "QUEUED",            // 또는 동시 실행 제한 시 PENDING — 아직 실행 전
+  "createdAt": 1781670784465,
+  "hasExplicitReturn": false
+}
+```
+
+> 제출 시점에는 `startedAt`/`endedAt`/`resultSummary` 가 아직 없습니다(실행 전).
+
 ### 7.3 상태/결과 조회
 
 ```java
@@ -228,6 +298,37 @@ Map<String, Object> status  = teebox.getRunStatus(runId);        // 상태만
 Map<String, Object> result  = teebox.getRunResult(runId);        // 결과(종료 후)
 Map<String, Object> tasks   = teebox.getRunTasksSummary(runId);  // 태스크 상태별 개수
 List<Object> runs = teebox.listScriptRuns("calc_sum");           // 스크립트의 실행 목록
+```
+
+#### `getRun(runId)` 응답 예시 (종료 후)
+
+```jsonc
+{
+  "runId": "run-20260617-133304-465-cf31",
+  "scriptId": "calc_sum",
+  "version": "1",
+  "status": "COMPLETED",            // QUEUED/PENDING/RUNNING/COMPLETED/FAILED/SERVER_RESTARTED
+  "createdAt": 1781670784465,       // 제출 시각
+  "startedAt": 1781670784470,       // 실행 시작(시작 전이면 없음)
+  "endedAt": 1781670784481,         // 종료(종료 전이면 없음)
+  "hasExplicitReturn": true,        // 스크립트가 return 으로 값을 냈는지
+  "resultSummary": "{ \"ok\": true, \"sum\": 42 }"  // 결과 요약 문자열(최대 300자)
+}
+```
+
+> `getRun` 의 `resultSummary` 는 **요약 문자열**입니다. 구조화된 결과(`resultData`)는 `getRunResult(runId)` 로 받으세요(아래). `outputRules` 로 게시된 값이 있으면 `published` 맵 필드가 추가됩니다.
+
+#### `getRunResult(runId)` 응답 예시 (참고)
+
+```jsonc
+{
+  "runId": "run-20260617-133304-465-cf31",
+  "scriptId": "calc_sum",
+  "version": "1",
+  "status": "COMPLETED",
+  "hasExplicitReturn": true,
+  "resultData": { "ok": true, "sum": 42 }   // 실제 구조화 결과 (sum 은 Double 42.0)
+}
 ```
 
 ### 7.4 종료까지 대기
