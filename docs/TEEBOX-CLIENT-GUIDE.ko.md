@@ -188,6 +188,13 @@ teebox.addScriptVersion("calc_sum", "v2", newSource, true);
 teebox.activateScriptVersion("calc_sum", "1");
 ```
 
+> **`registerScript` / `addScriptVersion` / `activateScriptVersion` 의 응답**은 모두 **`getScript` 와 동일한 전체 script detail** 객체입니다(아래 §6.5 예시 참고). 자동 부여된 버전과 현재 활성 버전은 응답의 `activeVersion` 과 `versions[]` 에서 바로 확인할 수 있습니다.
+>
+> ```java
+> Map<String, Object> detail = teebox.addScriptVersion("calc_sum", newSource, true);
+> String assigned = (String) detail.get("activeVersion");   // 예: "2" (자동 증가)
+> ```
+
 ### 6.5 조회
 
 ```java
@@ -196,6 +203,8 @@ Map<String, Object> one = teebox.getScript("calc_sum"); // 상세(versions/activ
 String src = teebox.getScriptContent("calc_sum");        // 활성 버전 소스
 String srcV1 = teebox.getScriptContent("calc_sum", "1"); // 특정 버전 소스
 ```
+
+> `getScriptContent(...)` 는 **소스 문자열만** 돌려줍니다(서버는 `{scriptId, version, content}` 를 보내지만 클라이언트가 `content` 만 추출). 예: `"return {\"ok\": true, \"sum\": a + b}\n"`.
 
 #### `getScript(scriptId)` 응답 예시
 
@@ -364,6 +373,42 @@ String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING
 }
 ```
 
+#### `getRunTasksSummary(runId)` 응답 예시
+
+해당 run 의 태스크를 상태별로 집계합니다.
+
+```jsonc
+{
+  "runId": "run-20260617-222351-196-9c86",
+  "total": 1,
+  "running": 0,
+  "completed": 1,
+  "failed": 0,
+  "killed": 0,
+  "other": 0     // 위 분류에 안 드는 상태(QUEUED 등)
+}
+```
+
+#### `listScriptRuns(scriptId)` 응답 예시
+
+해당 스크립트의 실행들을 **배열**로 돌려줍니다(각 항목은 `getRun` 요약과 동일한 형태).
+
+```jsonc
+[
+  {
+    "runId": "run-20260617-222351-196-9c86",
+    "scriptId": "task_job",
+    "version": "1",
+    "status": "COMPLETED",
+    "createdAt": 1781702631196,
+    "startedAt": 1781702631201,
+    "endedAt": 1781702631241,
+    "hasExplicitReturn": true,
+    "resultSummary": "{ \"ok\": true }"
+  }
+]
+```
+
 ### 7.4 종료까지 대기
 
 ```java
@@ -375,8 +420,8 @@ Map<String, Object> result = teebox.runAndWait("calc_sum", null, props, 30000L);
 Map<?, ?> data = (Map<?, ?>) result.get("resultData");
 ```
 
-- `waitForRunTerminal` 은 50ms→1s 백오프로 폴링하며, 종료 상태가 되면 **상태 payload** 를 반환합니다. `timeoutMs` 초과 시 `IOException`(메시지에 `runId` 포함 → 재폴링 가능).
-- `runAndWait` 는 제출→대기→결과 조회까지 수행하고 **결과 payload**(`getRunResult`)를 반환합니다. 실행이 `COMPLETED` 가 아니면 `IOException`(서버 `errorMessage` 포함)을 던집니다.
+- `waitForRunTerminal` 은 50ms→1s 백오프로 폴링하며, 종료 상태가 되면 **상태 payload**(`getRunStatus` 와 동일한 형태)를 반환합니다. `timeoutMs` 초과 시 `IOException`(메시지에 `runId` 포함 → 재폴링 가능).
+- `runAndWait` 는 제출→대기→결과 조회까지 수행하고 **결과 payload**(`getRunResult` 와 동일한 형태, `resultData` 포함)를 반환합니다. 실행이 `COMPLETED` 가 아니면 `IOException`(서버 `errorMessage` 포함)을 던집니다.
 
 ---
 
@@ -420,10 +465,18 @@ teebox.registerScript("long_job", source, true, rules);
 String runId = (String) teebox.submitRun("long_job", props).get("runId");
 
 // 스크립트가 실행 도중 jobId 를 출력하면 그 값을 받아옴 (실행은 계속됨)
-Object jobId = teebox.waitForPublished(runId, "jobId", 60000L);
+Object jobId = teebox.waitForPublished(runId, "jobId", 60000L);  // 예: "abc123" (캡처된 문자열)
 ```
 
-- `waitForPublished` 는 `getRun` 의 `published` 맵을 폴링합니다. 키가 게시되면 그 값을 반환합니다(반환해도 실행은 멈추지 않음). 실행이 키를 게시하지 못한 채 종료되거나 `timeoutMs` 초과 시 `IOException`.
+- `waitForPublished` 는 `getRun` 의 `published` 맵을 폴링해, 키가 게시되면 **그 값(보통 캡처된 문자열)** 을 반환합니다(반환해도 실행은 멈추지 않음). 실행이 키를 게시하지 못한 채 종료되거나 `timeoutMs` 초과 시 `IOException`.
+- 참고로 `getRun` 응답의 `published` 맵은 이런 형태입니다(게시 시각 동반 키 `<key>.detectedAt` 포함):
+
+```jsonc
+"published": {
+  "jobId": "abc123",
+  "jobId.detectedAt": 1781702632309
+}
+```
 
 ---
 
