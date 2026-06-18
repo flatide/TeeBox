@@ -43,6 +43,9 @@ The only entry point / `mainClass` is **`com.flatide.teebox.TeeBoxMain`**. NOTE:
 | `teeBoxDistWithRuntime` / `teeBoxZipWithRuntime` | dist bundle including the Linux Java 21 runtime under `runtime/` |
 | `clientJar` | `build/libs/teebox-client-<version>.jar` — the embeddable zero-dependency client packaged as a jar. **Java 7 bytecode (major 51), loads on Java 7+.** Compiled by `compileClientJava7` via a **JDK 8 toolchain** (JDK 17+ alone cannot emit bytecode 7); Gradle auto-detects an installed JDK 8 (point it at one with `org.gradle.java.installations.paths` if needed). The general `build`/`check` does **not** need JDK 8 — that path uses `compileStandaloneClient` (`--release 8` on the JDK 21 build). |
 | `clientSourcesJar` | `build/libs/teebox-client-<version>-sources.jar` (IDE source attachment) |
+| `distJars` | copies the two standalone jars into `./dist`: `teebox-client-<version>.jar` (client) and `propertee-teebox-<version>.jar` (runnable server fat jar). Sub-tasks `clientJarToDist` / `teeBoxJarToDist`. Needs the JDK 8 toolchain (for `clientJar`). |
+
+**`./dist` holds the committed release artifacts:** `propertee-teebox-<version>-dist.zip` (full bundle, from `teeBoxZip`), `propertee-teebox-<version>.jar` (server fat jar), and `teebox-client-<version>.jar` (embeddable client). The jars are produced/refreshed by `distJars`.
 
 **Java targets:** code compiles to Java **17** (`source/targetCompatibility = 17`), but the bundled/recommended deploy runtime is **JDK 21** (fetched by `fetchRuntimeLinuxX64`). The Java 7 bytecode constraint applies only to the *core* repo (`../propertee-java/propertee-core`), not this module.
 

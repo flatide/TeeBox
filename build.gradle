@@ -287,3 +287,29 @@ task teeBoxZipWithRuntime(type: Zip) {
     description = 'Build a deployable ProperTee TeeBox zip archive including a Linux x86_64 runtime'
     group = 'distribution'
 }
+
+// Publish the standalone jars into ./dist (alongside the dist zip) so each can be downloaded on its
+// own: the embeddable client jar (Java 7 bytecode) and the runnable TeeBox server fat jar (versioned).
+// Declared after teeBoxJar/clientJar so both tasks already exist when referenced.
+task clientJarToDist(type: Copy) {
+    dependsOn clientJar
+    from clientJar.archiveFile
+    into "${rootDir}/dist"
+    description = 'Copy the embeddable client jar to ./dist'
+    group = 'distribution'
+}
+
+task teeBoxJarToDist(type: Copy) {
+    dependsOn teeBoxJar
+    from teeBoxJar.archiveFile
+    into "${rootDir}/dist"
+    rename { "propertee-teebox-${project.version}.jar" }
+    description = 'Copy the runnable TeeBox server fat jar to ./dist (versioned)'
+    group = 'distribution'
+}
+
+task distJars {
+    dependsOn clientJarToDist, teeBoxJarToDist
+    description = 'Build and copy the standalone client + TeeBox server jars into ./dist'
+    group = 'distribution'
+}
