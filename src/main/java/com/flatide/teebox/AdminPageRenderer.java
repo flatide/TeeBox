@@ -861,6 +861,40 @@ public class AdminPageRenderer {
         }
         sb.append("</div>");
 
+        // Add New Version (admin only). Reuses the /admin/scripts/register handler, which adds a
+        // version to an existing script (blank version => next auto-increment integer).
+        if (!isReadOnly()) {
+            sb.append("<div class='card'>");
+            sb.append("<div class='card-header'><h2>Add New Version</h2></div>");
+            sb.append("<form method='post' action='/admin/scripts/register' class='form-grid'>");
+            sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
+            sb.append("<div class='form-row'><label>Version <span class='dim'>(blank = auto, next #)</span></label><input type='text' name='version' placeholder='auto (next #)'/></div>");
+            sb.append("<div class='form-row'><label>Description</label><input type='text' name='description' placeholder=''/></div>");
+            sb.append("<div class='form-row'><label>Script File</label><input type='file' id='addver-file' accept='.tee,.txt' style='font-size:13px;'/></div>");
+            sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='addver-content' rows='10' style='font-family:\"SF Mono\",SFMono-Regular,Consolas,\"Liberation Mono\",Menlo,monospace;font-size:12px;padding:12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;line-height:1.6;background:#1e293b;color:#e2e8f0;' placeholder='return {\"ok\": true}'></textarea></div>");
+            sb.append("<details style='margin-top:4px;'><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule (optional)</summary>");
+            sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
+            sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
+            sb.append("<div class='form-row'><label>Publish Key</label><input type='text' name='publishKey' placeholder='jobId'/></div>");
+            sb.append("<div style='display:flex;gap:12px;'>");
+            sb.append("<div class='form-row' style='flex:1'><label>Capture Group</label><input type='number' name='captureGroup' value='1' min='0' style='width:60px;'/></div>");
+            sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'><option value='stdout'>stdout</option><option value='stderr'>stderr</option></select></div>");
+            sb.append("</div></div></details>");
+            sb.append("<div class='form-row-inline'>");
+            sb.append("<label class='checkbox-label'><input type='checkbox' name='activate'/> Set active immediately</label>");
+            sb.append("<button type='submit'>Add Version</button>");
+            sb.append("</div></form>");
+            sb.append("<script>");
+            sb.append("document.getElementById('addver-file').addEventListener('change',function(e){");
+            sb.append("var file=e.target.files[0];if(!file)return;");
+            sb.append("var reader=new FileReader();");
+            sb.append("reader.onload=function(ev){document.getElementById('addver-content').value=ev.target.result;};");
+            sb.append("reader.readAsText(file);");
+            sb.append("});");
+            sb.append("</script>");
+            sb.append("</div>");
+        }
+
         if (script.activeVersion != null && script.activeVersion.length() > 0) {
             String content = runManager.getScriptVersionContent(scriptId, script.activeVersion);
             if (content != null) {
