@@ -305,6 +305,17 @@ do_something_else
 wait $WORKER_PID
 ```
 
+### `SLEEP()` Nesting Caveat (current runtime behavior)
+
+`SLEEP(ms)` is cooperative (non-blocking) only at a statement's top level, or when spawned directly as a worker (`thread a: SLEEP(500)`). When `SLEEP` runs **inside a `loop`, function, `if`, or `monitor` body**, the current ProperTee Java runtime honors it with a **blocking** `Thread.sleep` fallback:
+
+- The sleep duration is correct (it no longer silently returns instantly).
+- But it **blocks that run's scheduler thread**, so the run's other `multi` workers and `monitor` ticks do **not** advance during the sleep.
+- Other runs are **not** affected — each run executes on its own pool thread.
+- Single-threaded scripts are unaffected.
+
+Practical guidance: for periodic work, prefer a short script invoked by an external scheduler/cron over a long `loop … do SLEEP(...) end` inside one run; and avoid `SLEEP` inside a `multi`/`monitor` body if you rely on concurrent worker/monitor progress. (A future runtime release makes nested `SLEEP` fully cooperative.)
+
 ---
 
 ## 6. Data Management

@@ -298,6 +298,17 @@ do_something_else
 wait $WORKER_PID
 ```
 
+### `SLEEP()` 중첩 주의 (현재 런타임 동작)
+
+`SLEEP(ms)`의 협력적(비차단) 동작은 **최상위 문장** 또는 **worker로 직접 spawn**한 경우(`thread a: SLEEP(500)`)에만 적용됩니다. `SLEEP`이 **`loop`/함수/`if`/`monitor` 본문 안**에서 실행되면, 현재 ProperTee Java 런타임은 이를 **blocking** `Thread.sleep` fallback으로 처리합니다:
+
+- sleep 시간은 정확합니다(더 이상 즉시 리턴하지 않음).
+- 다만 **해당 run의 scheduler 스레드를 차단**하므로, 그 run의 다른 `multi` worker와 `monitor` tick이 sleep 동안 진행되지 않습니다.
+- **다른 run에는 영향 없습니다** — 각 run은 자체 pool 스레드에서 실행됩니다.
+- 단일 스레드 스크립트는 영향받지 않습니다.
+
+권장: 주기 작업은 하나의 run 안에서 `loop … do SLEEP(...) end`로 오래 도는 대신, **짧은 스크립트를 외부 스케줄러/cron으로 주기 호출**하세요. 동시 worker/monitor 진행에 의존한다면 `multi`/`monitor` 본문 내 `SLEEP`은 피하세요. (향후 런타임 릴리스에서 중첩 `SLEEP`이 완전 협력적으로 개선됩니다.)
+
 ---
 
 ## 6. 데이터 관리
