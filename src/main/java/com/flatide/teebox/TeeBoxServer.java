@@ -470,6 +470,26 @@ public class TeeBoxServer {
                 writeJson(exchange, HttpURLConnection.HTTP_OK, summary);
                 return;
             }
+            if (suffix.endsWith("/stdout")) {
+                String runId = suffix.substring(0, suffix.length() - "/stdout".length());
+                Map<String, Object> out = buildClientRunOutputMap(runId, true);
+                if (out == null) {
+                    writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
+                    return;
+                }
+                writeJson(exchange, HttpURLConnection.HTTP_OK, out);
+                return;
+            }
+            if (suffix.endsWith("/stderr")) {
+                String runId = suffix.substring(0, suffix.length() - "/stderr".length());
+                Map<String, Object> out = buildClientRunOutputMap(runId, false);
+                if (out == null) {
+                    writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
+                    return;
+                }
+                writeJson(exchange, HttpURLConnection.HTTP_OK, out);
+                return;
+            }
             Map<String, Object> detail = buildClientRunDetailMap(suffix);
             if (detail == null) {
                 writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
@@ -1031,6 +1051,29 @@ public class TeeBoxServer {
         result.put("resultData", run.resultData);
         result.put("errorMessage", run.errorMessage);
         return result;
+    }
+
+    /**
+     * Run stdout (or stderr) for client polling. {@code lines} is the captured script output
+     * (the most recent {@code RunRegistry.MAX_LOG_LINES} lines — a ring buffer, so older lines may
+     * have been dropped). Works while the run is RUNNING and after it is terminal.
+     */
+    private Map<String, Object> buildClientRunOutputMap(String runId, boolean stdout) {
+        RunInfo run = runManager.getRun(runId);
+        if (run == null) {
+            return null;
+        }
+        List<String> source = stdout ? run.stdoutLines : run.stderrLines;
+        List<String> lines = source != null ? new ArrayList<String>(source) : new ArrayList<String>();
+        Map<String, Object> out = new LinkedHashMap<String, Object>();
+        out.put("runId", run.runId);
+        out.put("scriptId", run.scriptId);
+        out.put("version", run.version);
+        out.put("status", run.status != null ? run.status.name() : null);
+        out.put("stream", stdout ? "stdout" : "stderr");
+        out.put("lines", lines);
+        out.put("lineCount", Integer.valueOf(lines.size()));
+        return out;
     }
 
     private Map<String, Object> buildClientTaskSummaryMap(String runId) {

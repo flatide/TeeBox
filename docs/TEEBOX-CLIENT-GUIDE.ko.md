@@ -309,7 +309,21 @@ Map<String, Object> status  = teebox.getRunStatus(runId);        // 상태만
 Map<String, Object> result  = teebox.getRunResult(runId);        // 결과(종료 후)
 Map<String, Object> tasks   = teebox.getRunTasksSummary(runId);  // 태스크 상태별 개수
 List<Object> runs = teebox.listScriptRuns("calc_sum");           // 스크립트의 실행 목록
+List<String> out  = teebox.getRunStdoutLines(runId);             // 스크립트 PRINT 출력(줄 목록)
+List<String> err  = teebox.getRunStderrLines(runId);             // 스크립트 stderr(줄 목록)
 ```
+
+> **stdout/stderr 조회**: 스크립트의 `PRINT(...)` 출력은 `getRunStdout(runId)`(전체 맵) 또는 `getRunStdoutLines(runId)`(줄 목록만)로 받습니다. **실행 중(RUNNING)에도 조회 가능**하고 종료 후에도 남아 있습니다. 단, 서버가 **최근 `MAX_LOG_LINES`(기본 200줄)만 보관하는 ring buffer**라 아주 긴 출력은 끝부분만 남습니다. `getRunStdout` 응답 형태:
+>
+> ```jsonc
+> {
+>   "runId": "run-...", "scriptId": "printer", "version": "1",
+>   "status": "RUNNING",        // 또는 COMPLETED 등
+>   "stream": "stdout",
+>   "lines": ["line one", "line two 42", "done"],
+>   "lineCount": 3
+> }
+> ```
 
 #### `getRun(runId)` 응답 예시 (종료 후)
 
@@ -542,6 +556,7 @@ try {
 ### 실행/추적
 - `submitRun(scriptId, props)` / `submitRun(scriptId, version, props)` → `Map`(`runId`)
 - `getRun(runId)` / `getRunStatus(runId)` / `getRunResult(runId)` / `getRunTasksSummary(runId)` → `Map`
+- `getRunStdout(runId)` / `getRunStderr(runId)` → `Map`(`lines`/`lineCount` 포함), `getRunStdoutLines(runId)` / `getRunStderrLines(runId)` → `List<String>`
 - `listScriptRuns(scriptId)` → `List<Object>`
 - `waitForRunTerminal(runId, timeoutMs)` → 상태 `Map`
 - `runAndWait(scriptId, version, props, timeoutMs)` → 결과 `Map`

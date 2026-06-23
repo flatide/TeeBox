@@ -353,6 +353,45 @@ public class TeeBoxClient {
     }
 
     /**
+     * Captured stdout of a run (the script's {@code PRINT(...)} output), as a {@code {runId, scriptId,
+     * version, status, stream, lines, lineCount}} map. {@code lines} is the most recent
+     * {@code RunRegistry.MAX_LOG_LINES} lines (a server-side ring buffer, so very long output is
+     * truncated to the tail). Available while the run is RUNNING and after it ends. Use
+     * {@link #getRunStdoutLines} for just the lines. (GET /api/client/runs/{runId}/stdout)
+     */
+    public Map<String, Object> getRunStdout(String runId) throws IOException {
+        requireText("runId", runId);
+        return asMap(request("GET", "/api/client/runs/" + enc(runId) + "/stdout", null, 200));
+    }
+
+    /** Captured stderr of a run, same shape as {@link #getRunStdout}. (GET /api/client/runs/{runId}/stderr) */
+    public Map<String, Object> getRunStderr(String runId) throws IOException {
+        requireText("runId", runId);
+        return asMap(request("GET", "/api/client/runs/" + enc(runId) + "/stderr", null, 200));
+    }
+
+    /** Convenience: just the captured stdout lines of a run (see {@link #getRunStdout}). */
+    public List<String> getRunStdoutLines(String runId) throws IOException {
+        return extractLines(getRunStdout(runId));
+    }
+
+    /** Convenience: just the captured stderr lines of a run (see {@link #getRunStderr}). */
+    public List<String> getRunStderrLines(String runId) throws IOException {
+        return extractLines(getRunStderr(runId));
+    }
+
+    private static List<String> extractLines(Map<String, Object> output) {
+        List<String> result = new ArrayList<String>();
+        Object lines = output != null ? output.get("lines") : null;
+        if (lines instanceof List) {
+            for (Object line : (List<?>) lines) {
+                result.add(line != null ? String.valueOf(line) : "");
+            }
+        }
+        return result;
+    }
+
+    /**
      * Block (client-side polling, 50ms&rarr;1s backoff) until the run reaches a terminal state
      * ({@code COMPLETED} / {@code FAILED} / {@code SERVER_RESTARTED}) and return its status payload,
      * or throw {@link IOException} if {@code timeoutMs} elapses first. The run keeps executing

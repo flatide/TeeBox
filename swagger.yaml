@@ -206,6 +206,48 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/client/runs/{runId}/stdout:
+    get:
+      tags: [Client]
+      summary: Get captured run stdout (script PRINT output)
+      description: >
+        Returns the run's captured stdout lines (the most recent MAX_LOG_LINES,
+        default 200 — a server-side ring buffer). Readable while the run is
+        RUNNING and after it ends.
+      operationId: clientGetRunStdout
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Captured stdout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRunOutput'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/client/runs/{runId}/stderr:
+    get:
+      tags: [Client]
+      summary: Get captured run stderr
+      operationId: clientGetRunStderr
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Captured stderr
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRunOutput'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   # ── Admin API ───────────────────────────────────────────────
 
   /api/admin/system:
@@ -987,6 +1029,30 @@ components:
           type: object
           description: Captured output values from task stdout/stderr
           additionalProperties: true
+
+    ClientRunOutput:
+      type: object
+      properties:
+        runId:
+          type: string
+        scriptId:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        status:
+          type: string
+        stream:
+          type: string
+          enum: [stdout, stderr]
+        lines:
+          type: array
+          description: Captured output lines (most recent MAX_LOG_LINES, default 200)
+          items:
+            type: string
+        lineCount:
+          type: integer
 
     ClientTaskSummary:
       type: object
