@@ -280,6 +280,61 @@ public class TeeBoxClient {
         return asMap(request("GET", "/api/publisher/scripts/" + enc(scriptId), null, 200));
     }
 
+    /**
+     * Like {@link #getScript} but with the {@code versions} list reduced to only the active version
+     * (the entry whose {@code active} is true, i.e. matching {@code activeVersion}). All other fields
+     * (scriptId, activeVersion, settings, ...) are unchanged. If no version is active, {@code versions}
+     * becomes empty. Client-side convenience over the same endpoint.
+     */
+    public Map<String, Object> getActiveScript(String scriptId) throws IOException {
+        return keepActiveVersionOnly(getScript(scriptId));
+    }
+
+    /** Like {@link #listScripts} but each script keeps only its active version (see {@link #getActiveScript}). */
+    public List<Object> listActiveScripts() throws IOException {
+        List<Object> scripts = listScripts();
+        for (int i = 0; i < scripts.size(); i++) {
+            Object item = scripts.get(i);
+            if (item instanceof Map) {
+                keepActiveVersionOnly(asMapUnchecked(item));
+            }
+        }
+        return scripts;
+    }
+
+    /** Reduce a script-detail map's {@code versions} list to only the active version (mutates in place). */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> keepActiveVersionOnly(Map<String, Object> script) {
+        if (script == null) {
+            return null;
+        }
+        Object versions = script.get("versions");
+        if (versions instanceof List) {
+            Object activeVersion = script.get("activeVersion");
+            List<Object> active = new ArrayList<Object>();
+            for (Object v : (List<Object>) versions) {
+                if (v instanceof Map) {
+                    Map<String, Object> ver = (Map<String, Object>) v;
+                    Object isActive = ver.get("active");
+                    boolean match = Boolean.TRUE.equals(isActive);
+                    if (!match && activeVersion != null) {
+                        match = String.valueOf(activeVersion).equals(String.valueOf(ver.get("version")));
+                    }
+                    if (match) {
+                        active.add(v);
+                    }
+                }
+            }
+            script.put("versions", active);
+        }
+        return script;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMapUnchecked(Object value) {
+        return (Map<String, Object>) value;
+    }
+
     /** Fetch the active version's source content. (GET /api/publisher/scripts/{id}/content) */
     public String getScriptContent(String scriptId) throws IOException {
         return getScriptContent(scriptId, null);

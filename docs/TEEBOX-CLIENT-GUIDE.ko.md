@@ -202,9 +202,15 @@ List<Object> scripts = teebox.listScripts();          // 전체 스크립트 목
 Map<String, Object> one = teebox.getScript("calc_sum"); // 상세(versions/active/settings)
 String src = teebox.getScriptContent("calc_sum");        // 활성 버전 소스
 String srcV1 = teebox.getScriptContent("calc_sum", "1"); // 특정 버전 소스
+
+// 활성 버전만: versions[] 가 활성 버전 1개로 축소됨 (그 외 필드는 동일)
+List<Object> activeScripts = teebox.listActiveScripts();
+Map<String, Object> oneActive = teebox.getActiveScript("calc_sum");
 ```
 
 > `getScriptContent(...)` 는 **소스 문자열만** 돌려줍니다(서버는 `{scriptId, version, content}` 를 보내지만 클라이언트가 `content` 만 추출). 예: `"return {\"ok\": true, \"sum\": a + b}\n"`.
+>
+> **`getActiveScript` / `listActiveScripts`** 는 `getScript` / `listScripts` 와 같지만, 각 스크립트의 `versions[]` 를 **활성 버전 1개로 축소**해서 돌려줍니다(클라이언트 측 필터링, `activeVersion`·설정 등 나머지 필드는 그대로). 활성 버전이 없으면 `versions` 는 빈 배열.
 
 #### `getScript(scriptId)` 응답 예시
 
@@ -548,8 +554,8 @@ try {
 - `addScriptVersion(scriptId, content, activate, outputRules)`
 - `addScriptVersion(scriptId, version, content, activate)` — 버전 명시
 - `activateScriptVersion(scriptId, version)`
-- `listScripts()` → `List<Object>`
-- `getScript(scriptId)` → `Map`
+- `listScripts()` → `List<Object>` / `listActiveScripts()` → `List<Object>` (활성 버전만)
+- `getScript(scriptId)` → `Map` / `getActiveScript(scriptId)` → `Map` (활성 버전만)
 - `getScriptContent(scriptId)` / `getScriptContent(scriptId, version)` → `String`
 - `static outputRule(publishKey, pattern)` / `static outputRule(publishKey, pattern, stream, captureGroup, firstOnly)` → `Map`
 
