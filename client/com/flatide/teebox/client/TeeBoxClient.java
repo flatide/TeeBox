@@ -395,6 +395,53 @@ public class TeeBoxClient {
         return asMap(request("GET", "/api/client/runs/" + enc(runId) + "/result", null, 200));
     }
 
+    /**
+     * Stream a run's result body to {@code out} when the script returned a stream descriptor
+     * (e.g. {@code return STREAM_FILE(path)}). The server streams the referenced file directly — the
+     * large payload is never materialized in the script engine, the JSON response, or here. Use this
+     * for large results (e.g. a multi-MB JSON file); {@link #getRunResult} buffers and parses instead.
+     * The caller owns {@code out} (this does not close it). Returns the number of bytes written.
+     * (GET /api/client/runs/{runId}/result-stream)
+     */
+    public long streamRunResult(String runId, OutputStream out) throws IOException {
+        requireText("runId", runId);
+        if (out == null) {
+            throw new IllegalArgumentException("out is required");
+        }
+        HttpURLConnection conn = (HttpURLConnection) new URL(
+            baseUrl + "/api/client/runs/" + enc(runId) + "/result-stream").openConnection();
+        try {
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(connectTimeoutMs);
+            conn.setReadTimeout(readTimeoutMs);
+            String token = tokenForPath("/api/client/runs");
+            if (token != null && token.length() > 0) {
+                conn.setRequestProperty("Authorization", "Bearer " + token);
+            }
+            int code = conn.getResponseCode();
+            if (code != 200) {
+                String body = readBody(conn, code);
+                throw new IOException("TeeBox GET result-stream " + runId + " -> HTTP " + code
+                    + (body.length() > 0 ? ": " + body : ""));
+            }
+            InputStream in = conn.getInputStream();
+            long total = 0;
+            try {
+                byte[] buffer = new byte[65536];
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, read);
+                    total += read;
+                }
+            } finally {
+                in.close();
+            }
+            return total;
+        } finally {
+            conn.disconnect();
+        }
+    }
+
     /** Per-status task counts for a run. (GET /api/client/runs/{runId}/tasks-summary) */
     public Map<String, Object> getRunTasksSummary(String runId) throws IOException {
         requireText("runId", runId);

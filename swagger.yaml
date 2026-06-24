@@ -187,6 +187,38 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/client/runs/{runId}/result-stream:
+    get:
+      tags: [Client]
+      summary: Stream a large run result (STREAM_FILE)
+      description: >
+        When the script returned a stream descriptor (e.g. `return STREAM_FILE(path)`), this streams
+        the referenced file's raw bytes directly to the response (no buffering / no JSON envelope),
+        with Content-Type from the descriptor and Content-Length = file size. The path is confined to
+        the configured allowed roots. Returns 409 if the run's result is not a stream (or the file is
+        gone).
+      operationId: clientStreamRunResult
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: The result file bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '409':
+          description: Run result is not a stream, or the file is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/client/runs/{runId}/tasks-summary:
     get:
       tags: [Client]

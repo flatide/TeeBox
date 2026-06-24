@@ -22,9 +22,15 @@ import java.util.Map;
 
 public class ScriptExecutor {
     private final PlatformProvider platformProvider;
+    private final StreamResultSupport streamSupport;
 
     public ScriptExecutor(PlatformProvider platformProvider) {
+        this(platformProvider, null);
+    }
+
+    public ScriptExecutor(PlatformProvider platformProvider, StreamResultSupport streamSupport) {
         this.platformProvider = platformProvider;
+        this.streamSupport = streamSupport;
     }
 
     public ExecutionResult execute(File scriptFile,
@@ -61,6 +67,24 @@ public class ScriptExecutor {
             };
 
             BuiltinFunctions builtins = new BuiltinFunctions(stdout, stderr, runId, taskRunner, platformProvider);
+            if (streamSupport != null) {
+                // Host builtin: STREAM_FILE(path, [contentType]) returns a small stream descriptor
+                // (raw object, no Result wrapper) that TeeBox streams directly. Lets a script return a
+                // large file without reading/parsing it into the engine heap. Throws on a path outside
+                // the allowed stream roots or a missing file.
+                final StreamResultSupport support = streamSupport;
+                builtins.register("STREAM_FILE", new BuiltinFunctions.BuiltinFunction() {
+                    @Override
+                    public Object call(List<Object> args) {
+                        if (args.isEmpty() || !(args.get(0) instanceof String)) {
+                            throw new RuntimeException("STREAM_FILE() requires (path, [contentType])");
+                        }
+                        String contentType = (args.size() > 1 && args.get(1) instanceof String)
+                            ? (String) args.get(1) : null;
+                        return support.describe((String) args.get(0), contentType);
+                    }
+                });
+            }
             visitor = new ProperTeeInterpreter(properties, stdout, stderr, maxIterations, iterationLimitBehavior, builtins);
             Scheduler scheduler = new Scheduler(visitor, callbacks != null ? new CallbackSchedulerListener(callbacks) : null);
             ProperTeeInterpreter.RootStepper mainStepper = visitor.createRootStepper(tree);

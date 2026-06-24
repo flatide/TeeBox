@@ -319,6 +319,18 @@ List<String> out  = teebox.getRunStdoutLines(runId);             // 스크립트
 List<String> err  = teebox.getRunStderrLines(runId);             // 스크립트 stderr(줄 목록)
 ```
 
+> **대용량 결과 스트리밍 (`STREAM_FILE`)**: 6MB JSON 같은 큰 파일을 `READ_LINES`+`JOIN`+`JSON_PARSE` 후 리턴하면 스크립트 엔진 힙에 전체가 여러 번 복제되어 메모리·속도 문제가 생깁니다. 대신 스크립트에서 **`return STREAM_FILE("/path/to/big.json", "application/json")`** 로 디스크립터만 리턴하면, TeeBox가 그 파일을 **응답으로 직접 스트리밍**(파싱·전체버퍼 없음)합니다. 클라이언트는 `streamRunResult` 로 받습니다:
+>
+> ```java
+> // 결과를 파일/스트림으로 받기 (엔진·클라이언트 모두 전체를 메모리에 올리지 않음)
+> java.io.OutputStream sink = new java.io.FileOutputStream("result.json");
+> try { teebox.streamRunResult(runId, sink); } finally { sink.close(); }
+> ```
+>
+> - `getRunResult(runId)` 는 스트림 결과의 경우 `resultData = {stream:true, contentType, size}` (서버 경로는 숨김)를 돌려주므로 스트림 대상임을 알 수 있습니다. 실제 바이트는 `streamRunResult` 로 받으세요.
+> - `STREAM_FILE` 경로는 **허용 루트 내**(`propertee.teebox.streamRoots`, 기본 `dataDir`)여야 합니다. 밖이면 스크립트가 실패합니다.
+> - 참조 방식이라 **파일은 결과 조회 전까지 존재**해야 합니다(TeeBox가 복사·소유하지 않음).
+
 > **stdout/stderr 조회**: 스크립트의 `PRINT(...)` 출력은 `getRunStdout(runId)`(전체 맵) 또는 `getRunStdoutLines(runId)`(줄 목록만)로 받습니다. **실행 중(RUNNING)에도 조회 가능**하고 종료 후에도 남아 있습니다. 단, 서버가 **최근 `MAX_LOG_LINES`(기본 200줄)만 보관하는 ring buffer**라 아주 긴 출력은 끝부분만 남습니다. `getRunStdout` 응답 형태:
 >
 > ```jsonc
@@ -563,6 +575,7 @@ try {
 - `submitRun(scriptId, props)` / `submitRun(scriptId, version, props)` → `Map`(`runId`)
 - `getRun(runId)` / `getRunStatus(runId)` / `getRunResult(runId)` / `getRunTasksSummary(runId)` → `Map`
 - `getRunStdout(runId)` / `getRunStderr(runId)` → `Map`(`lines`/`lineCount` 포함), `getRunStdoutLines(runId)` / `getRunStderrLines(runId)` → `List<String>`
+- `streamRunResult(runId, OutputStream)` → `long`(기록 바이트). `STREAM_FILE` 스트림 결과를 받을 때 사용(대용량용; `getRunResult`는 버퍼·파싱)
 - `listScriptRuns(scriptId)` → `List<Object>`
 - `waitForRunTerminal(runId, timeoutMs)` → 상태 `Map`
 - `runAndWait(scriptId, version, props, timeoutMs)` → 결과 `Map`

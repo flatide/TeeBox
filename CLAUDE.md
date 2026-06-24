@@ -104,7 +104,8 @@ TeeBox has **two unrelated auth mechanisms**:
 | GET | `/api/client/runs` | List runs (status/offset/limit) |
 | GET | `/api/client/runs/{runId}` | Run summary |
 | GET | `/api/client/runs/{runId}/status` | Run status only |
-| GET | `/api/client/runs/{runId}/result` | Run result data |
+| GET | `/api/client/runs/{runId}/result` | Run result data (stream descriptors redacted to `{stream,contentType,size}`) |
+| GET | `/api/client/runs/{runId}/result-stream` | Stream a `STREAM_FILE` result's bytes (raw file, no buffering; 409 if not a stream result) |
 | GET | `/api/client/runs/{runId}/stdout` | Captured run stdout (script `PRINT` output) |
 | GET | `/api/client/runs/{runId}/stderr` | Captured run stderr |
 | GET | `/api/client/runs/{runId}/tasks-summary` | Task status counts |
@@ -221,6 +222,7 @@ When a script defines `outputRules`, `OutputWatchingTaskRunner` registers a `Tas
 - **`CommandGuard`** — validates every task command in `ManagedTaskEngine.execute()` before launch. Blocks privilege-escalation/destructive commands (`sudo`, `su`, `shutdown`, `reboot`, `poweroff`, `halt`, `init`, `mkfs.*`), `rm -rf` of system roots / `~` / `$HOME`, `dd of=/dev/*`, and control-char/newline injection; recurses into `sh/bash -c` payloads. Violations throw `CommandGuardException` (logged as `AUDIT BLOCKED`; allowed commands logged `AUDIT ALLOWED`).
 - **Denied env vars** — task env containing `LD_PRELOAD`, `LD_LIBRARY_PATH`, or any `DYLD_*` is rejected (`validateEnv`).
 - **Outbound HTTP** — the core `HTTP_GET`/`HTTP_POST`/`HTTP` builtins are **available and unrestricted** in TeeBox: `TeeBoxPlatformProvider` extends `DefaultPlatformProvider`, whose `httpRequest` (HttpURLConnection) is inherited as-is. This is a deliberate closed-network default-allow — scripts can reach any URL the host can (an SSRF surface in untrusted-script scenarios). To restrict it, override `httpRequest` in `TeeBoxPlatformProvider` (e.g. host allowlist) — there is currently no allowlist/flag.
+- **`STREAM_FILE(path, [contentType])` (host builtin, stream result)** — TeeBox-only builtin registered in `ScriptExecutor` (via `builtins.register`, returns a **raw descriptor object**, not a `Result`). A script returns `STREAM_FILE(path)` instead of reading+`JOIN`+`JSON_PARSE`+returning a large file — the payload never enters the engine heap, the deep-copies, or the buffered JSON response. The descriptor `{"__teebox_stream__":true,"path","contentType","size"}` rides as `resultData` (tiny); `GET .../result-stream` re-validates and streams the file straight to the socket in 64KB chunks (O(1) heap, `Content-Length`=file size). `GET .../result` returns a **redacted** descriptor (no server path). **Path is confined** to allowed roots (`StreamResultSupport`): `propertee.teebox.streamRoots` (a `File.pathSeparator` list), default `[dataDir]` — a path outside fails the script with a clear error (validated at `STREAM_FILE` time and again before streaming, TOCTOU-safe). Lifecycle is **reference-only**: the file must outlive the result fetch (TeeBox does not copy/own it); a stream result is available during the active window (archive nulls `resultData` after 24h). Client helper: `TeeBoxClient.streamRunResult(runId, OutputStream)`.
 
 ## Logging
 

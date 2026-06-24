@@ -11,6 +11,8 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -448,6 +450,24 @@ public class TeeBoxServer {
                     return;
                 }
                 writeJson(exchange, HttpURLConnection.HTTP_OK, status);
+                return;
+            }
+            if (suffix.endsWith("/result-stream")) {
+                String runId = suffix.substring(0, suffix.length() - "/result-stream".length());
+                RunInfo run = runManager.getRun(runId);
+                if (run == null) {
+                    writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
+                    return;
+                }
+                File file = runManager.resolveStreamFile(runId);
+                if (file == null) {
+                    writeJson(exchange, HttpURLConnection.HTTP_CONFLICT,
+                        errorMap("Run result is not a stream, or the file is no longer available"));
+                    return;
+                }
+                String contentType = (run.resultData instanceof Map)
+                    ? String.valueOf(((Map<?, ?>) run.resultData).get("contentType")) : "application/octet-stream";
+                streamFile(exchange, file, contentType);
                 return;
             }
             if (suffix.endsWith("/result")) {
@@ -1048,7 +1068,14 @@ public class TeeBoxServer {
         result.put("version", run.version);
         result.put("status", run.status != null ? run.status.name() : null);
         result.put("hasExplicitReturn", Boolean.valueOf(run.hasExplicitReturn));
-        result.put("resultData", run.resultData);
+        // A stream-result descriptor carries an internal server path; expose only a redacted hint
+        // ({stream, contentType, size}). Clients fetch the bytes via GET .../result-stream.
+        if (StreamResultSupport.isStreamDescriptor(run.resultData)) {
+            result.put("resultData", StreamResultSupport.redactForClient(run.resultData));
+            result.put("stream", Boolean.TRUE);
+        } else {
+            result.put("resultData", run.resultData);
+        }
         result.put("errorMessage", run.errorMessage);
         return result;
     }
@@ -1137,6 +1164,26 @@ public class TeeBoxServer {
         try {
             out.write(bytes);
         } finally {
+            out.close();
+        }
+    }
+
+    /** Stream a file straight to the response body in fixed-size chunks (O(1) heap, no buffering). */
+    private void streamFile(HttpExchange exchange, File file, String contentType) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type",
+            (contentType != null && contentType.length() > 0 && !"null".equals(contentType))
+                ? contentType : "application/octet-stream");
+        exchange.sendResponseHeaders(HttpURLConnection.HTTP_OK, file.length());
+        InputStream in = new FileInputStream(file);
+        OutputStream out = exchange.getResponseBody();
+        try {
+            byte[] buffer = new byte[65536];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
+        } finally {
+            try { in.close(); } catch (IOException ignore) { }
             out.close();
         }
     }

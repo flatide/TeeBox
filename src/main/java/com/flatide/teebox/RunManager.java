@@ -38,6 +38,7 @@ public class RunManager {
     private final ManagedTaskEngine managedTaskEngine;
     private final ThreadPoolExecutor runExecutor;
     private final ScriptExecutor scriptExecutor;
+    private final StreamResultSupport streamSupport;
     private final SystemInfoCollector systemInfoCollector;
     private final ScheduledExecutorService maintenanceScheduler;
     private final long maintenanceIntervalMs;
@@ -82,7 +83,8 @@ public class RunManager {
         this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId());
         this.managedTaskEngine.init();
         this.managedTaskEngine.archiveExpiredTasks();
-        this.scriptExecutor = new ScriptExecutor(new TeeBoxPlatformProvider(this.dataDir));
+        this.streamSupport = new StreamResultSupport(resolveStreamRoots(this.dataDir));
+        this.scriptExecutor = new ScriptExecutor(new TeeBoxPlatformProvider(this.dataDir), this.streamSupport);
         this.systemInfoCollector = teeBoxConfig != null ? new SystemInfoCollector(teeBoxConfig) : null;
         this.maintenanceIntervalMs = parseDurationProperty("maintenanceIntervalMs", DEFAULT_MAINTENANCE_INTERVAL_MS);
         this.runExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(Math.max(1, maxConcurrentRuns));
@@ -636,6 +638,44 @@ public class RunManager {
         } catch (RuntimeException e) {
             return defaultValue;
         }
+    }
+
+    /**
+     * Allowed roots for STREAM_FILE / stream-result responses: the system property
+     * {@code propertee.teebox.streamRoots} (a {@code File.pathSeparator}-separated list), defaulting
+     * to the data directory when unset. A streamable file must canonicalize within one of these.
+     */
+    private static List<File> resolveStreamRoots(File dataDir) {
+        List<File> roots = new ArrayList<File>();
+        String raw = System.getProperty("propertee.teebox.streamRoots");
+        if (raw != null && raw.trim().length() > 0) {
+            for (String part : raw.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+                String p = part.trim();
+                if (p.length() > 0) roots.add(new File(p));
+            }
+        }
+        if (roots.isEmpty()) {
+            roots.add(dataDir);
+        }
+        return roots;
+    }
+
+    /**
+     * If the run's result is a stream descriptor, re-validate it against the allowed roots and
+     * return the file to stream; otherwise null. Used by the {@code /result-stream} endpoint.
+     */
+    public File resolveStreamFile(String runId) {
+        RunInfo run = getRun(runId);
+        if (run == null || !StreamResultSupport.isStreamDescriptor(run.resultData)) {
+            return null;
+        }
+        return streamSupport.resolveForStreaming(run.resultData);
+    }
+
+    /** True if the run's result is a stream descriptor (vs an inline value). */
+    public boolean isStreamResult(String runId) {
+        RunInfo run = getRun(runId);
+        return run != null && StreamResultSupport.isStreamDescriptor(run.resultData);
     }
 
     private List<TaskInfo> toInfoList(List<Task> tasks) {
