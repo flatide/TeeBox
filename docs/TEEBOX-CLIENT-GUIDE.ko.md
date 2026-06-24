@@ -291,6 +291,8 @@ teebox.submitRun("calc_sum", "1", props);
 ```
 
 > **스크립트 안에서 props 접근**: 제출한 `props` 의 각 키는 스크립트에서 **개별 변수**로 바로 읽힙니다(예: `props={"a":40,"b":2}` → `a`, `b`). 추가로 입력 전체는 예약 객체 **`_PROPS`** 로 한 번에 접근할 수 있습니다 — `PRINT(_PROPS)`, `JSON_FORMAT(_PROPS)`(전체 덤프/디버깅), `KEYS(_PROPS)`(순회), `_PROPS.a`(개별), `return {"echo": _PROPS}`(그대로 전달). 함수/`multi` 내부에서는 `::_PROPS` 를 쓰세요.
+>
+> **시스템 변수 `_SYS`**: TeeBox 는 각 run 마다 예약 객체 **`_SYS = {runId, scriptId, version}`** 을 주입합니다. 스크립트에서 자신의 run id 등을 알 수 있습니다 — `_SYS.runId`, `_SYS.scriptId`, `_SYS.version`(함수 내부에서는 `::_SYS.runId`). `_SYS` 는 전역 변수로 주입되며 **`_PROPS` 에는 포함되지 않습니다**(사용자 입력만). 예: `PRINT("내 runId:", _SYS.runId)`.
 
 #### `submitRun(...)` 응답 예시 (HTTP 202, 제출 직후)
 

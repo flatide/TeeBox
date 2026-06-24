@@ -477,6 +477,8 @@ public class RunManager {
                 run.maxIterations,
                 run.iterationLimitBehavior,
                 run.runId,
+                run.scriptId,
+                run.version,
                 taskRunner,
                 new ScriptExecutor.Callbacks() {
                     @Override

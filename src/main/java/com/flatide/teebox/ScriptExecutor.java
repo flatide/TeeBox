@@ -38,6 +38,8 @@ public class ScriptExecutor {
                                    int maxIterations,
                                    String iterationLimitBehavior,
                                    String runId,
+                                   String scriptId,
+                                   String version,
                                    TaskRunner taskRunner,
                                    final Callbacks callbacks) {
         ProperTeeInterpreter visitor = null;
@@ -86,6 +88,14 @@ public class ScriptExecutor {
                 });
             }
             visitor = new ProperTeeInterpreter(properties, stdout, stderr, maxIterations, iterationLimitBehavior, builtins);
+            // Reserved `_SYS`: TeeBox system variables for the run, exposed as a global object so a
+            // script can read its own run id (e.g. _SYS.runId, or ::_SYS.runId inside a function).
+            // Injected as a global variable — NOT into properties — so `_PROPS` stays user-input only.
+            Map<String, Object> sys = new java.util.LinkedHashMap<String, Object>();
+            sys.put("runId", runId != null ? runId : "");
+            sys.put("scriptId", scriptId != null ? scriptId : "");
+            sys.put("version", version != null ? version : "");
+            visitor.variables.put("_SYS", sys);
             Scheduler scheduler = new Scheduler(visitor, callbacks != null ? new CallbackSchedulerListener(callbacks) : null);
             ProperTeeInterpreter.RootStepper mainStepper = visitor.createRootStepper(tree);
             Object result = scheduler.run(mainStepper);

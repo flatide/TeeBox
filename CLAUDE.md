@@ -283,6 +283,8 @@ Tests live in `src/test/java/com/flatide/tests/`. Integration tests (`TeeBoxServ
 
 Runs are submitted exclusively via the script registry: `POST /api/client/scripts/{scriptId}/runs`. The legacy `POST /api/client/runs` (scriptPath-based) endpoint has been removed. All scripts must be registered via the Publisher API first.
 
+**`_SYS` system variables** — for each run, `ScriptExecutor` injects a reserved global object `_SYS = {runId, scriptId, version}` so a script can read its own TeeBox run id (e.g. `_SYS.runId`, or `::_SYS.runId` inside a function). It is injected as a **global variable** (`visitor.variables`), **not** into `properties` — so the core's `_PROPS` object stays user-input only (`HAS_KEY(_PROPS, "_SYS")` is false). A user script may shadow `_SYS` by assigning it (it is a global, not a keyword). TeeBox-only (host injection; not a core/language feature).
+
 ## Execution Model (async submit, blocking run, blocking SHELL)
 
 Three distinct layers, often confused:
