@@ -38,10 +38,38 @@ public final class StreamResultSupport {
         Map<String, Object> descriptor = new LinkedHashMap<String, Object>();
         descriptor.put(MARKER, Boolean.TRUE);
         descriptor.put("path", file.getAbsolutePath());
-        descriptor.put("contentType", (contentType != null && contentType.trim().length() > 0)
-            ? contentType.trim() : guessContentType(file.getName()));
+        descriptor.put("contentType", sanitizeContentType(contentType, file.getName()));
         descriptor.put("size", Long.valueOf(file.length()));
         return descriptor;
+    }
+
+    /**
+     * Validate a caller-supplied content type before it becomes an HTTP header value. Rejects empty,
+     * CR/LF/control-char (header injection), and non-MIME strings — falling back to the extension
+     * guess (and ultimately {@code application/octet-stream}).
+     */
+    public static String sanitizeContentType(String contentType, String fileName) {
+        if (contentType == null) {
+            return guessContentType(fileName);
+        }
+        String ct = contentType.trim();
+        if (ct.length() == 0 || ct.length() > 200) {
+            return guessContentType(fileName);
+        }
+        // type/subtype with optional ;params, token chars only — no CR/LF/controls/whitespace tricks.
+        if (!ct.matches("[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*(\\s*;\\s*[^\\x00-\\x1F]+)?")) {
+            return guessContentType(fileName);
+        }
+        return ct;
+    }
+
+    /** Redacted one-line summary for a stream descriptor (no server path), e.g. for resultSummary. */
+    public static String summaryFor(Object descriptor) {
+        if (!isStreamDescriptor(descriptor)) {
+            return null;
+        }
+        Map<?, ?> d = (Map<?, ?>) descriptor;
+        return "STREAM_FILE(" + d.get("contentType") + ", " + d.get("size") + " bytes)";
     }
 
     /** True if {@code value} is a stream descriptor produced by {@link #describe}. */

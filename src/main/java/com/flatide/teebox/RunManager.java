@@ -83,7 +83,8 @@ public class RunManager {
         this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId());
         this.managedTaskEngine.init();
         this.managedTaskEngine.archiveExpiredTasks();
-        this.streamSupport = new StreamResultSupport(resolveStreamRoots(this.dataDir));
+        String streamRootsSetting = teeBoxConfig != null ? teeBoxConfig.streamRoots : null;
+        this.streamSupport = new StreamResultSupport(resolveStreamRoots(this.dataDir, streamRootsSetting));
         this.scriptExecutor = new ScriptExecutor(new TeeBoxPlatformProvider(this.dataDir), this.streamSupport);
         this.systemInfoCollector = teeBoxConfig != null ? new SystemInfoCollector(teeBoxConfig) : null;
         this.maintenanceIntervalMs = parseDurationProperty("maintenanceIntervalMs", DEFAULT_MAINTENANCE_INTERVAL_MS);
@@ -645,9 +646,12 @@ public class RunManager {
      * {@code propertee.teebox.streamRoots} (a {@code File.pathSeparator}-separated list), defaulting
      * to the data directory when unset. A streamable file must canonicalize within one of these.
      */
-    private static List<File> resolveStreamRoots(File dataDir) {
+    private static List<File> resolveStreamRoots(File dataDir, String configValue) {
+        // Prefer the TeeBoxConfig setting (system property -> teebox.properties), then fall back to a
+        // bare system property (for hosts that build RunManager without a TeeBoxConfig), else dataDir.
+        String raw = (configValue != null && configValue.trim().length() > 0)
+            ? configValue : System.getProperty("propertee.teebox.streamRoots");
         List<File> roots = new ArrayList<File>();
-        String raw = System.getProperty("propertee.teebox.streamRoots");
         if (raw != null && raw.trim().length() > 0) {
             for (String part : raw.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
                 String p = part.trim();

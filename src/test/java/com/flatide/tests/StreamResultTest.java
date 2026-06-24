@@ -46,6 +46,35 @@ public class StreamResultTest {
     }
 
     @Test
+    public void contentTypeIsSanitizedAgainstHeaderInjection() {
+        // CRLF injection / empty / non-MIME -> fall back to the extension guess.
+        Assert.assertEquals("application/json",
+            StreamResultSupport.sanitizeContentType("evil\r\nX-Injected: 1", "f.json"));
+        Assert.assertEquals("text/csv", StreamResultSupport.sanitizeContentType("", "f.csv"));
+        Assert.assertEquals("text/plain", StreamResultSupport.sanitizeContentType("not a mime", "f.txt"));
+        Assert.assertEquals("application/xml", StreamResultSupport.sanitizeContentType(null, "f.xml"));
+        // valid types pass through
+        Assert.assertEquals("application/json",
+            StreamResultSupport.sanitizeContentType("application/json", "f"));
+        Assert.assertEquals("text/csv; charset=utf-8",
+            StreamResultSupport.sanitizeContentType("text/csv; charset=utf-8", "f"));
+    }
+
+    @Test
+    public void summaryRedactsServerPath() throws Exception {
+        File root = Files.createTempDirectory("stream-summary").toFile();
+        File f = new File(root, "data.json");
+        FileOutputStream fos = new FileOutputStream(f);
+        fos.write("{}".getBytes("UTF-8"));
+        fos.close();
+        StreamResultSupport support = new StreamResultSupport(Arrays.asList(root));
+        Map<String, Object> desc = support.describe(f.getAbsolutePath(), null);
+        String summary = StreamResultSupport.summaryFor(desc);
+        Assert.assertEquals("STREAM_FILE(application/json, 2 bytes)", summary);
+        Assert.assertFalse("summary must not contain the server path", summary.contains(f.getAbsolutePath()));
+    }
+
+    @Test
     public void scriptStreamFileIsServedAsRawBytes() throws Exception {
         File dataDir = Files.createTempDirectory("teebox-stream-it").toFile();
         // a payload large enough to matter, written under dataDir (the default allowed root)

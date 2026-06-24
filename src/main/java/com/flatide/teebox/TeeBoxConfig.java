@@ -17,6 +17,8 @@ public class TeeBoxConfig {
     public String adminApiToken;
     public String adminUser;
     public String adminPassword;
+    /** Allowed roots for STREAM_FILE results (File.pathSeparator list). Empty ⇒ default to [dataDir]. */
+    public String streamRoots;
     public static TeeBoxConfig fromArgs(String[] args) {
         File configFile = resolveConfigFile(args);
         Properties fileProps = loadProperties(configFile);
@@ -69,6 +71,10 @@ public class TeeBoxConfig {
         String adminPassword = getSetting("adminPassword", fileProps);
         if (adminPassword != null && adminPassword.trim().length() > 0) {
             config.adminPassword = adminPassword.trim();
+        }
+        String streamRoots = getSetting("streamRoots", fileProps);
+        if (streamRoots != null && streamRoots.trim().length() > 0) {
+            config.streamRoots = streamRoots.trim();
         }
         return config;
     }

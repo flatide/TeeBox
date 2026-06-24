@@ -467,7 +467,10 @@ public class TeeBoxServer {
                 }
                 String contentType = (run.resultData instanceof Map)
                     ? String.valueOf(((Map<?, ?>) run.resultData).get("contentType")) : "application/octet-stream";
-                streamFile(exchange, file, contentType);
+                if (!streamFile(exchange, file, contentType)) {
+                    writeJson(exchange, HttpURLConnection.HTTP_CONFLICT,
+                        errorMap("Run result file is no longer available"));
+                }
                 return;
             }
             if (suffix.endsWith("/result")) {
@@ -1168,24 +1171,38 @@ public class TeeBoxServer {
         }
     }
 
-    /** Stream a file straight to the response body in fixed-size chunks (O(1) heap, no buffering). */
-    private void streamFile(HttpExchange exchange, File file, String contentType) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type",
-            (contentType != null && contentType.length() > 0 && !"null".equals(contentType))
-                ? contentType : "application/octet-stream");
-        exchange.sendResponseHeaders(HttpURLConnection.HTTP_OK, file.length());
-        InputStream in = new FileInputStream(file);
-        OutputStream out = exchange.getResponseBody();
+    /**
+     * Stream a file straight to the response body in fixed-size chunks (O(1) heap, no buffering).
+     * Opens the file BEFORE sending the 200 header so a failed open (file vanished/permission) can be
+     * reported as a JSON error rather than corrupting an already-started 200 response. Returns false
+     * (no bytes sent, no headers committed) if the file could not be opened.
+     */
+    private boolean streamFile(HttpExchange exchange, File file, String contentType) throws IOException {
+        InputStream in;
+        long length = file.length();
         try {
-            byte[] buffer = new byte[65536];
-            int read;
-            while ((read = in.read(buffer)) != -1) {
-                out.write(buffer, 0, read);
+            in = new FileInputStream(file);
+        } catch (IOException openFailed) {
+            return false;
+        }
+        try {
+            exchange.getResponseHeaders().set("Content-Type",
+                StreamResultSupport.sanitizeContentType(contentType, file.getName()));
+            exchange.sendResponseHeaders(HttpURLConnection.HTTP_OK, length);
+            OutputStream out = exchange.getResponseBody();
+            try {
+                byte[] buffer = new byte[65536];
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, read);
+                }
+            } finally {
+                out.close();
             }
         } finally {
             try { in.close(); } catch (IOException ignore) { }
-            out.close();
         }
+        return true;
     }
 
     private void writeHtml(HttpExchange exchange, int status, String html) throws IOException {

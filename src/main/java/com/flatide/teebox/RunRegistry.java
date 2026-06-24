@@ -124,7 +124,11 @@ public class RunRegistry {
             run.endedAt = Long.valueOf(System.currentTimeMillis());
             run.hasExplicitReturn = hasExplicitReturn;
             run.resultData = TypeChecker.deepCopy(resultData);
-            run.resultSummary = safeSummary(resultData);
+            // A stream descriptor carries an absolute server path; never let it reach resultSummary
+            // (exposed by the run summary endpoints). Use a redacted form instead.
+            run.resultSummary = StreamResultSupport.isStreamDescriptor(resultData)
+                ? StreamResultSupport.summaryFor(resultData)
+                : safeSummary(resultData);
             saveRunWithIndex(run);
         }
     }
