@@ -119,6 +119,23 @@ public class StreamResultTest {
             long n = client.streamRunResult(runId, out);
             Assert.assertEquals(payload.getBytes("UTF-8").length, n);
             Assert.assertArrayEquals(payload.getBytes("UTF-8"), out.toByteArray());
+
+            // runAndStream: submit + wait + stream in one call
+            ByteArrayOutputStream out2 = new ByteArrayOutputStream();
+            long n2 = client.runAndStream("streamer", null, new LinkedHashMap<String, Object>(), out2, 30000L);
+            Assert.assertEquals(payload.getBytes("UTF-8").length, n2);
+            Assert.assertArrayEquals(payload.getBytes("UTF-8"), out2.toByteArray());
+
+            // runAndStream on a NON-stream result -> RunStreamException carrying the runId (HTTP 409)
+            client.registerScript("plain", "return {\"ok\": true}\n", true);
+            try {
+                client.runAndStream("plain", null, new LinkedHashMap<String, Object>(),
+                    new ByteArrayOutputStream(), 30000L);
+                Assert.fail("expected RunStreamException for a non-stream result");
+            } catch (TeeBoxClient.RunStreamException e) {
+                Assert.assertNotNull("runId must be exposed on the exception", e.getRunId());
+                Assert.assertTrue(e.getRunId().length() > 0);
+            }
         } finally {
             server.stop();
         }

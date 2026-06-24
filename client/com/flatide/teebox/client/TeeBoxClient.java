@@ -540,13 +540,35 @@ public class TeeBoxClient {
     }
 
     /**
+     * Thrown by {@link #runAndStream} for any failure <b>after</b> the run was submitted (timeout,
+     * non-{@code COMPLETED} terminal, or a non-stream / unavailable result). Carries the {@code runId}
+     * so the caller can re-fetch via {@link #streamRunResult} (the run keeps executing server-side)
+     * without parsing the message. {@link #getRunId()} may be null only if the submit itself failed.
+     */
+    public static class RunStreamException extends IOException {
+        private final String runId;
+        public RunStreamException(String runId, String message) {
+            super(message);
+            this.runId = runId;
+        }
+        public RunStreamException(String runId, String message, Throwable cause) {
+            super(message);
+            if (cause != null) initCause(cause);
+            this.runId = runId;
+        }
+        public String getRunId() {
+            return runId;
+        }
+    }
+
+    /**
      * Convenience for file-streaming scripts (those returning {@code STREAM_FILE(path)}): submit, block
      * until terminal (client-side polling), then stream the result body to {@code out} via
      * {@link #streamRunResult}. The large payload is never materialized in the engine, the JSON
-     * response, or here. Returns the number of bytes streamed. Throws {@link IOException} if the run
-     * ends non-{@code COMPLETED}, the wait times out, or the result is not a stream (HTTP 409). The
-     * caller owns {@code out} (this does not close it). The run keeps executing server-side regardless
-     * of a client timeout — re-fetch via {@link #streamRunResult} with the same {@code runId}.
+     * response, or here. Returns the number of bytes streamed. Throws {@link RunStreamException} if the
+     * run ends non-{@code COMPLETED}, the wait times out, or the result is not a stream (HTTP 409) —
+     * call {@link RunStreamException#getRunId()} to re-fetch via {@link #streamRunResult} later (the
+     * run continues server-side). The caller owns {@code out} (this does not close it).
      */
     public long runAndStream(String scriptId, String version, Map<String, Object> props,
                              OutputStream out, long timeoutMs) throws IOException, InterruptedException {
@@ -559,13 +581,21 @@ public class TeeBoxClient {
             throw new IOException("Submit response did not include a runId");
         }
         String runId = String.valueOf(runIdValue);
-        Map<String, Object> status = waitForRunTerminal(runId, timeoutMs);
-        String terminal = status.get("status") != null ? String.valueOf(status.get("status")) : null;
-        if (!"COMPLETED".equals(terminal)) {
-            Object error = status.get("errorMessage");
-            throw new IOException("Run " + runId + " ended " + terminal + (error != null ? ": " + error : ""));
+        try {
+            Map<String, Object> status = waitForRunTerminal(runId, timeoutMs);
+            String terminal = status.get("status") != null ? String.valueOf(status.get("status")) : null;
+            if (!"COMPLETED".equals(terminal)) {
+                Object error = status.get("errorMessage");
+                throw new RunStreamException(runId,
+                    "Run " + runId + " ended " + terminal + (error != null ? ": " + error : ""));
+            }
+            return streamRunResult(runId, out);
+        } catch (RunStreamException e) {
+            throw e;
+        } catch (IOException e) {
+            // wait timeout or stream failure (e.g. 409 not-a-stream) — attach the runId
+            throw new RunStreamException(runId, e.getMessage(), e);
         }
-        return streamRunResult(runId, out);
     }
 
     /**

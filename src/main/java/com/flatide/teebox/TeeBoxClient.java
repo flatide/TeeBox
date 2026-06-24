@@ -14,6 +14,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * In-module test/helper client (Gson-based, Java 17). Used only by the TeeBox test suite — NOT the
+ * shipped client. The deployable, zero-dependency client that hosts embed lives at
+ * {@code client/com/flatide/teebox/client/TeeBoxClient.java} and is the one with the full API
+ * (stream results, getActiveScript, stdout, etc.); this class intentionally covers only what the
+ * tests need, so feature parity is not maintained here.
+ */
 public class TeeBoxClient {
     private final String baseUrl;
     private final String clientApiToken;
