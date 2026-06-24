@@ -452,10 +452,15 @@ Map<String, Object> terminalStatus = teebox.waitForRunTerminal(runId, 30000L);
 // (B) "제출 + 대기 + 결과 반환" 한 번에 (짧은/immediate 스크립트에 적합)
 Map<String, Object> result = teebox.runAndWait("calc_sum", null, props, 30000L);
 Map<?, ?> data = (Map<?, ?>) result.get("resultData");
+
+// (C) 파일 스트리밍 스크립트(STREAM_FILE 리턴)용: "제출 + 대기 + 스트림" 한 번에
+java.io.OutputStream sink = new java.io.FileOutputStream("result.json");
+try { teebox.runAndStream("streamer", null, props, sink, 60000L); } finally { sink.close(); }
 ```
 
 - `waitForRunTerminal` 은 50ms→1s 백오프로 폴링하며, 종료 상태가 되면 **상태 payload**(`getRunStatus` 와 동일한 형태)를 반환합니다. `timeoutMs` 초과 시 `IOException`(메시지에 `runId` 포함 → 재폴링 가능).
 - `runAndWait` 는 제출→대기→결과 조회까지 수행하고 **결과 payload**(`getRunResult` 와 동일한 형태, `resultData` 포함)를 반환합니다. 실행이 `COMPLETED` 가 아니면 `IOException`(서버 `errorMessage` 포함)을 던집니다.
+- **`runAndStream`** 은 `STREAM_FILE` 을 리턴하는 **파일 스트리밍 스크립트 전용** — 제출→대기→`streamRunResult`(스트리밍)까지 한 번에 수행하고 기록 바이트 수를 반환합니다(엔진·응답·클라이언트 어디서도 전체를 메모리에 안 올림). 비-`COMPLETED`·타임아웃·비스트림 결과(409) 시 `IOException`. 클라이언트 타임아웃이 나도 run 은 서버에서 계속되므로 같은 `runId` 로 `streamRunResult` 재조회 가능. `runAndWait` 의 스트리밍 버전.
 
 ---
 
@@ -579,6 +584,7 @@ try {
 - `listScriptRuns(scriptId)` → `List<Object>`
 - `waitForRunTerminal(runId, timeoutMs)` → 상태 `Map`
 - `runAndWait(scriptId, version, props, timeoutMs)` → 결과 `Map`
+- `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` → `long`(기록 바이트). 파일 스트리밍 스크립트(`STREAM_FILE`) 전용: 제출+대기+스트림 한 번에
 - `waitForPublished(runId, key, timeoutMs)` → 게시된 값 `Object`
 
 ### JSON 유틸 (선택)

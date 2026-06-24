@@ -540,6 +540,35 @@ public class TeeBoxClient {
     }
 
     /**
+     * Convenience for file-streaming scripts (those returning {@code STREAM_FILE(path)}): submit, block
+     * until terminal (client-side polling), then stream the result body to {@code out} via
+     * {@link #streamRunResult}. The large payload is never materialized in the engine, the JSON
+     * response, or here. Returns the number of bytes streamed. Throws {@link IOException} if the run
+     * ends non-{@code COMPLETED}, the wait times out, or the result is not a stream (HTTP 409). The
+     * caller owns {@code out} (this does not close it). The run keeps executing server-side regardless
+     * of a client timeout — re-fetch via {@link #streamRunResult} with the same {@code runId}.
+     */
+    public long runAndStream(String scriptId, String version, Map<String, Object> props,
+                             OutputStream out, long timeoutMs) throws IOException, InterruptedException {
+        if (out == null) {
+            throw new IllegalArgumentException("out is required");
+        }
+        Map<String, Object> submitted = submitRun(scriptId, version, props);
+        Object runIdValue = submitted.get("runId");
+        if (runIdValue == null) {
+            throw new IOException("Submit response did not include a runId");
+        }
+        String runId = String.valueOf(runIdValue);
+        Map<String, Object> status = waitForRunTerminal(runId, timeoutMs);
+        String terminal = status.get("status") != null ? String.valueOf(status.get("status")) : null;
+        if (!"COMPLETED".equals(terminal)) {
+            Object error = status.get("errorMessage");
+            throw new IOException("Run " + runId + " ended " + terminal + (error != null ? ": " + error : ""));
+        }
+        return streamRunResult(runId, out);
+    }
+
+    /**
      * Block until the run publishes a value under {@code key} (via an {@code outputRules} capture) and
      * return it, polling {@link #getRun} (whose summary carries the {@code published} map). Useful for
      * surfacing a long job's id mid-run. Throws {@link IOException} if the run terminates without ever
