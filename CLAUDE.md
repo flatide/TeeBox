@@ -8,7 +8,7 @@ ProperTee TeeBox is an HTTP API and admin UI service for remote ProperTee script
 
 ## Build & Run Commands
 
-Requires the **sibling repo `../propertee-java`** to be checked out: `propertee-core` is resolved through a Gradle **composite build**, not from a Maven repo (`settings.gradle` declares `includeBuild('../propertee-java')` with a `dependencySubstitution` mapping `com.flatide:propertee-core` → `project(':propertee-core')`). The `0.8.0` Maven coordinate in `build.gradle` is only a substitution key; the code is built from `../propertee-java/propertee-core`.
+Requires the **sibling repo `../propertee-java`** to be checked out: `propertee-core` is resolved through a Gradle **composite build**, not from a Maven repo (`settings.gradle` declares `includeBuild('../propertee-java')` with a `dependencySubstitution` mapping `com.flatide:propertee-core` → `project(':propertee-core')`). The `0.9.0` Maven coordinate in `build.gradle` is only a substitution key; the code is built from `../propertee-java/propertee-core`.
 
 ```bash
 # Build (compile + test). Gradle 9.3.1 wrapper.
@@ -259,7 +259,7 @@ There is **no `scriptsRoot`** setting — `TeeBoxConfig` has no such field and n
 
 ## Dependencies
 
-- `com.flatide:propertee-core` (version 0.8.0) — supplied via **composite build** from `../propertee-java` (dependency substitution; not fetched from Maven). Provides `ScriptParser`, builtins, `Scheduler`, `TaskRunner`.
+- `com.flatide:propertee-core` (version 0.9.0) — supplied via **composite build** from `../propertee-java` (dependency substitution; not fetched from Maven). Provides `ScriptParser`, builtins, `Scheduler`, `TaskRunner`.
 - `com.google.code.gson:gson:2.11.0` — JSON serialization
 - `org.apache.logging.log4j:log4j-api` / `log4j-core` 2.24.3 — logging
 - `junit:junit:4.13.2` — tests
