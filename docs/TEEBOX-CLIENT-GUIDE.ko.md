@@ -550,7 +550,8 @@ Object jobId = teebox.waitForPublished(runId, "jobId", 60000L);  // 예: "abc123
 |------|-----------|
 | `IllegalArgumentException` | 필수 인자 누락(`scriptId`/`content`/`runId` 등), 잘못된 `baseUrl` |
 | `IOException` | HTTP 상태 불일치(메시지에 `메서드 경로 -> HTTP 코드: 본문`), 네트워크 오류, 대기 타임아웃, 비-`COMPLETED` 종료(`runAndWait`) |
-| `InterruptedException` | 대기 헬퍼(`runAndWait`/`waitForRunTerminal`/`waitForPublished`)가 `Thread.sleep` 중 인터럽트됨 |
+| `InterruptedException` | 대기 헬퍼(`runAndWait`/`waitForRunTerminal`/`waitForPublished`)가 `Thread.sleep` 중 인터럽트됨. **단 `runAndStream` 은 예외** — 인터럽트도 `RunStreamException` 으로 감싸(인터럽트 플래그 복원, cause 는 `InterruptedException`) `InterruptedException` 을 직접 던지지 않음 |
+| `RunStreamException` (extends `IOException`) | `runAndStream` 이 **submit 이후** 모든 실패(타임아웃·비-`COMPLETED`·비스트림 409·인터럽트)에 던짐. `getRunId()` 로 runId 회수 가능 |
 
 ```java
 try {
