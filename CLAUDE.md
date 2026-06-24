@@ -220,6 +220,7 @@ When a script defines `outputRules`, `OutputWatchingTaskRunner` registers a `Tas
 - **`RuntimePolicy.requireNonRoot()`** — `TeeBoxMain` refuses to start as root (uid 0) on non-Windows hosts (shells out to `id -u`). A hard startup precondition.
 - **`CommandGuard`** — validates every task command in `ManagedTaskEngine.execute()` before launch. Blocks privilege-escalation/destructive commands (`sudo`, `su`, `shutdown`, `reboot`, `poweroff`, `halt`, `init`, `mkfs.*`), `rm -rf` of system roots / `~` / `$HOME`, `dd of=/dev/*`, and control-char/newline injection; recurses into `sh/bash -c` payloads. Violations throw `CommandGuardException` (logged as `AUDIT BLOCKED`; allowed commands logged `AUDIT ALLOWED`).
 - **Denied env vars** — task env containing `LD_PRELOAD`, `LD_LIBRARY_PATH`, or any `DYLD_*` is rejected (`validateEnv`).
+- **Outbound HTTP** — the core `HTTP_GET`/`HTTP_POST`/`HTTP` builtins are **available and unrestricted** in TeeBox: `TeeBoxPlatformProvider` extends `DefaultPlatformProvider`, whose `httpRequest` (HttpURLConnection) is inherited as-is. This is a deliberate closed-network default-allow — scripts can reach any URL the host can (an SSRF surface in untrusted-script scenarios). To restrict it, override `httpRequest` in `TeeBoxPlatformProvider` (e.g. host allowlist) — there is currently no allowlist/flag.
 
 ## Logging
 
