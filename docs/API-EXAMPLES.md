@@ -187,13 +187,53 @@ curl $HOST/api/client/runs/run-20260508-103022-abc/status
 curl $HOST/api/client/runs/run-20260508-103022-abc/result
 ```
 
-### 2.7 Task 요약
+### 2.7 대용량 결과 스트리밍 (STREAM_FILE)
+
+6MB JSON 같은 큰 파일을 `READ_LINES`+`JOIN`+`JSON_PARSE` 후 리턴하면 스크립트 엔진 힙에 전체가 여러 번 복제되어 메모리·속도 문제가 생깁니다. 스크립트에서 **`return STREAM_FILE("/path/to/big.json", "application/json")`** 로 디스크립터만 리턴하면, TeeBox 가 그 파일을 **응답으로 직접 스트리밍**(파싱·전체 버퍼 없음)합니다.
+
+> 파일 경로는 **허용 루트 내**여야 합니다 — `propertee.teebox.streamRoots`(`File.pathSeparator` 로 구분된 목록, 기본 `dataDir`). 밖이면 스크립트가 실패합니다.
+
+```bash
+# 1) STREAM_FILE 을 리턴하는 스크립트 등록 (경로는 streamRoots 하위여야 함)
+curl -s -X POST $HOST/api/publisher/scripts $AUTH \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "scriptId": "export_report",
+    "content": "return STREAM_FILE(\"/data/exports/report.json\", \"application/json\")\n",
+    "activate": true
+  }'
+
+# 2) Run 제출 → 완료까지 폴링 (아래 2.10 패턴)
+RUN_ID=$(curl -s -X POST $HOST/api/client/scripts/export_report/runs $AUTH \
+  -H 'Content-Type: application/json' -d '{"props":{}}' \
+  | grep -o '"runId":"[^"]*"' | cut -d'"' -f4)
+
+# 3) 일반 /result 는 경로가 가려진 디스크립터를 돌려줌(서버 경로 비노출)
+curl $HOST/api/client/runs/$RUN_ID/result
+# → { ..., "stream": true, "resultData": {"stream": true, "contentType": "application/json", "size": 7568901} }
+
+# 4) /result-stream 으로 원본 바이트를 그대로 다운로드 (파싱·버퍼링 없음)
+curl -s -o report.json $HOST/api/client/runs/$RUN_ID/result-stream
+#   - Content-Type: 디스크립터의 contentType, Content-Length: 파일 크기
+#   - 스트림 결과가 아니거나 파일이 없으면 HTTP 409
+```
+
+### 2.8 Run stdout / stderr (스크립트 PRINT 출력)
+
+```bash
+# 캡처된 stdout (최근 MAX_LOG_LINES 줄, 기본 200줄 — ring buffer). RUNNING 중에도 조회 가능
+curl $HOST/api/client/runs/run-20260508-103022-abc/stdout
+# → { ..., "stream": "stdout", "lines": ["line one", "line two 42"], "lineCount": 2 }
+curl $HOST/api/client/runs/run-20260508-103022-abc/stderr
+```
+
+### 2.9 Task 요약
 
 ```bash
 curl $HOST/api/client/runs/run-20260508-103022-abc/tasks-summary
 ```
 
-### 2.8 Run 완료까지 폴링
+### 2.10 Run 완료까지 폴링
 
 ```bash
 RUN_ID=run-20260508-103022-abc
