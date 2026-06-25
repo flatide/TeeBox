@@ -317,5 +317,5 @@ Three distinct layers, often confused:
 ## Docs & Demo
 
 - `docs/OPERATIONS-GUIDE.md`, `docs/OPERATIONS-GUIDE.ko.md` (Korean), `docs/API-EXAMPLES.md`. (An untracked Korean "NFC 리더기" note in `docs/` is unrelated to TeeBox.)
-- `docs/TEEBOX-CLIENT-GUIDE.ko.md` (Korean) — user manual for the embeddable `client/.../TeeBoxClient.java` (setup, scripts, runs, output capture, full method reference).
+- `docs/TEEBOX-CLIENT-GUIDE.md` (English) / `docs/TEEBOX-CLIENT-GUIDE.ko.md` (Korean) — user manual for the embeddable `client/.../TeeBoxClient.java` (setup, scripts, runs, output capture, full method reference). Keep the two in sync.
 - `demo/teebox/` — five `.tee` scripts (`01_basic_run.tee` … `05_registered_sum.tee`) plus README/PLAN. (README.md's reference to a `.pt` file is a README bug; only `.tee` exists.)
