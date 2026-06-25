@@ -569,38 +569,82 @@ try {
 
 ## 10. 전체 메서드 레퍼런스
 
-### 설정 (체이닝 가능, `TeeBoxClient` 반환)
-- `setConnectTimeoutMs(int)` / `setReadTimeoutMs(int)`
-- `setBearerToken(String)` / `setClientApiToken(String)` / `setPublisherApiToken(String)` / `setAdminApiToken(String)`
+전체 public 메서드 목록입니다. 자세한 응답 형태·예시는 본문 §4~§9 참고.
 
-### 스크립트
-- `registerScript(scriptId, content, activate)` — 버전 자동 증가
-- `registerScript(scriptId, content, activate, outputRules)` — 자동 증가 + 출력 규칙
-- `registerScript(scriptId, version, content, activate)` — 버전 명시
-- `registerScript(scriptId, version, content, description, labels, activate)`
-- `addScriptVersion(scriptId, content, activate)` — 자동 증가
-- `addScriptVersion(scriptId, content, activate, outputRules)`
-- `addScriptVersion(scriptId, version, content, activate)` — 버전 명시
-- `activateScriptVersion(scriptId, version)`
-- `listScripts()` → `List<Object>` / `listActiveScripts()` → `List<Object>` (활성 버전만)
-- `getScript(scriptId)` → `Map` / `getActiveScript(scriptId)` → `Map` (활성 버전만)
-- `getScriptContent(scriptId)` / `getScriptContent(scriptId, version)` → `String`
-- `static outputRule(publishKey, pattern)` / `static outputRule(publishKey, pattern, stream, captureGroup, firstOnly)` → `Map`
+### 생성자
+| 메서드 | 설명 |
+|--------|------|
+| `new TeeBoxClient(String baseUrl)` | 클라이언트 생성. `baseUrl` 필수(빈 값이면 `IllegalArgumentException`), 끝의 `/` 자동 제거 |
 
-### 실행/추적
-- `submitRun(scriptId, props)` / `submitRun(scriptId, version, props)` → `Map`(`runId`)
-- `getRun(runId)` / `getRunStatus(runId)` / `getRunResult(runId)` / `getRunTasksSummary(runId)` → `Map`
-- `getRunStdout(runId)` / `getRunStderr(runId)` → `Map`(`lines`/`lineCount` 포함), `getRunStdoutLines(runId)` / `getRunStderrLines(runId)` → `List<String>`
-- `streamRunResult(runId, OutputStream)` → `long`(기록 바이트). `STREAM_FILE` 스트림 결과를 받을 때 사용(대용량용; `getRunResult`는 버퍼·파싱)
-- `listScriptRuns(scriptId)` → `List<Object>`
-- `waitForRunTerminal(runId, timeoutMs)` → 상태 `Map`
-- `runAndWait(scriptId, version, props, timeoutMs)` → 결과 `Map`
-- `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` → `long`(기록 바이트). 파일 스트리밍 스크립트(`STREAM_FILE`) 전용: 제출+대기+스트림 한 번에
-- `waitForPublished(runId, key, timeoutMs)` → 게시된 값 `Object`
+### 설정 (체이닝 가능, `TeeBoxClient` 반환) — §4·§5
+| 메서드 | 설명 |
+|--------|------|
+| `setConnectTimeoutMs(int)` | TCP 연결 타임아웃(ms, 기본 5000) |
+| `setReadTimeoutMs(int)` | 응답 읽기 타임아웃(ms, 기본 15000) |
+| `setBearerToken(String)` | 모든 네임스페이스 공용 토큰(폴백) |
+| `setClientApiToken(String)` | `/api/client` 전용 토큰 |
+| `setPublisherApiToken(String)` | `/api/publisher` 전용 토큰 |
+| `setAdminApiToken(String)` | `/api/admin` 전용 토큰 |
+
+### 스크립트 — §6
+| 메서드 | 반환 | 설명 |
+|--------|------|------|
+| `registerScript(scriptId, content, activate)` | `Map` | 등록 + 버전 자동 증가 |
+| `registerScript(scriptId, content, activate, outputRules)` | `Map` | 자동 증가 + 출력 캡처 규칙 |
+| `registerScript(scriptId, version, content, activate)` | `Map` | 버전 명시 등록 |
+| `registerScript(scriptId, version, content, description, labels, activate)` | `Map` | 버전 + description/labels 지정 |
+| `addScriptVersion(scriptId, content, activate)` | `Map` | 버전 추가(자동 증가) |
+| `addScriptVersion(scriptId, content, activate, outputRules)` | `Map` | 자동 증가 + 출력 규칙 |
+| `addScriptVersion(scriptId, version, content, activate)` | `Map` | 버전 명시 추가 |
+| `activateScriptVersion(scriptId, version)` | `Map` | 활성 버전 변경 |
+| `listScripts()` | `List<Object>` | 전체 스크립트 목록 |
+| `listActiveScripts()` | `List<Object>` | 목록(각 스크립트 `versions[]`를 활성 버전만으로 축소) |
+| `getScript(scriptId)` | `Map` | 스크립트 상세(versions/active/settings) |
+| `getActiveScript(scriptId)` | `Map` | 상세(`versions[]`를 활성 버전만으로 축소) |
+| `getScriptContent(scriptId)` | `String` | 활성 버전 소스 |
+| `getScriptContent(scriptId, version)` | `String` | 특정 버전 소스 |
+| `static outputRule(publishKey, pattern)` | `Map` | 출력 캡처 규칙 빌더(stdout 첫 매치, 그룹 1) |
+| `static outputRule(publishKey, pattern, stream, captureGroup, firstOnly)` | `Map` | 출력 캡처 규칙 빌더(전체 지정) |
+
+### 실행 / 추적 — §7·§8
+| 메서드 | 반환 | 설명 |
+|--------|------|------|
+| `submitRun(scriptId, props)` | `Map`(`runId`) | 활성 버전 실행 제출(비동기, 202) |
+| `submitRun(scriptId, version, props)` | `Map`(`runId`) | 버전 지정 제출 |
+| `getRun(runId)` | `Map` | 전체 요약(`published`·`resultSummary` 포함) |
+| `getRunStatus(runId)` | `Map` | 상태/타임스탬프만(가벼운 폴링용) |
+| `getRunResult(runId)` | `Map` | 결과(`resultData`). 스트림 결과면 redact된 디스크립터 |
+| `getRunTasksSummary(runId)` | `Map` | 태스크 상태별 개수 |
+| `listScriptRuns(scriptId)` | `List<Object>` | 해당 스크립트의 실행 목록 |
+| `getRunStdout(runId)` | `Map` | 캡처된 stdout(`lines`/`lineCount`). RUNNING 중에도 조회 |
+| `getRunStderr(runId)` | `Map` | 캡처된 stderr(동일 형태) |
+| `getRunStdoutLines(runId)` | `List<String>` | stdout 줄 목록만 |
+| `getRunStderrLines(runId)` | `List<String>` | stderr 줄 목록만 |
+| `streamRunResult(runId, OutputStream)` | `long`(바이트) | `STREAM_FILE` 결과를 OutputStream으로 스트리밍(대용량용; 호출자가 stream을 닫음). 스트림 결과 아니면 `IOException`(409) |
+| `waitForRunTerminal(runId, timeoutMs)` | `Map`(상태) | 종료까지 클라이언트 측 폴링(50ms→1s 백오프). 초과 시 `IOException` |
+| `runAndWait(scriptId, version, props, timeoutMs)` | `Map`(결과) | 제출→대기→결과. 비-`COMPLETED`/타임아웃 시 `IOException` |
+| `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` | `long`(바이트) | `STREAM_FILE` 스크립트 전용: 제출→대기→스트림 한 번에. submit 이후 실패는 `RunStreamException`(`getRunId()`로 runId 회수) |
+| `waitForPublished(runId, key, timeoutMs)` | `Object` | `published[key]` 가 나타날 때까지 폴링해 그 값 반환(§8) |
 
 ### JSON 유틸 (선택)
-- `TeeBoxClient.Json.parse(String)` → `Object`
-- `TeeBoxClient.Json.write(Object)` → `String`
+| 메서드 | 반환 | 설명 |
+|--------|------|------|
+| `static TeeBoxClient.Json.parse(String)` | `Object` | JSON 문자열 → `Map`/`List`/`String`/`Double`/`Boolean`/`null` |
+| `static TeeBoxClient.Json.write(Object)` | `String` | 값 → JSON 문자열(`Map`/`List`/`Number`/`Boolean` 등) |
+
+```java
+// JSON 유틸 사용 예 (내장 코덱이라 별도 라이브러리 불필요)
+Object parsed = TeeBoxClient.Json.parse("{\"a\":1,\"b\":[2,3]}");
+String json   = TeeBoxClient.Json.write(parsed);   // {"a":1,"b":[2,3]}
+```
+
+### 예외
+| 예외 | 발생 |
+|------|------|
+| `IllegalArgumentException` | 필수 인자 누락 / 잘못된 `baseUrl` |
+| `IOException` | HTTP 상태 불일치(메시지에 `메서드 경로 -> HTTP 코드: 본문`), 네트워크 오류, 대기 타임아웃, 비-`COMPLETED` 종료 |
+| `RunStreamException`(extends `IOException`) | `runAndStream` 의 submit 이후 실패. `getRunId()` 제공 |
+| `InterruptedException` | `runAndWait`/`waitForRunTerminal`/`waitForPublished` 가 `Thread.sleep` 중 인터럽트(단 `runAndStream` 은 `RunStreamException` 으로 감쌈) |
 
 ---
 
