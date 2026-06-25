@@ -49,6 +49,7 @@ propertee.teebox.maxRuns=64
 | `runRetentionMs` | `24h` | Run retention before transitioning to archived |
 | `runArchiveRetentionMs` | `7d` | Archived run retention before deletion |
 | `maintenanceIntervalMs` | `1m` | Background maintenance interval |
+| `streamRoots` | `dataDir` | Allowed roots for `STREAM_FILE` results (a `File.pathSeparator`-separated list of directories; `:` on Linux/macOS, `;` on Windows). A streamable file path must canonicalize within one of these. See §3. |
 
 Environment variables:
 - `PROPERTEE_TEEBOX_CONFIG` — Path to the configuration file (default: `conf/teebox.properties`)
@@ -179,6 +180,43 @@ Rules can also be configured via the Admin UI on the script detail page.
 - Matching happens per-line with configurable capture group
 - `firstOnly: true` means only the first match is published (recommended)
 - Captured values are persisted immediately and visible in both API and Admin UI
+
+### Large Result Streaming (STREAM_FILE)
+
+Returning a large file (e.g. a 6 MB JSON) by reading it into the engine — `READ_LINES` + `JOIN` + `JSON_PARSE` + `return` — copies the whole payload into the script-engine heap several times (and again into the buffered JSON response), causing memory pressure and slowness. Instead, a script can return a small **stream descriptor** that references a file, and TeeBox streams that file directly to the response (no parsing, no full-payload buffering, O(1) heap).
+
+**In the script** — return `STREAM_FILE(path[, contentType])` instead of materializing the file:
+
+```
+return STREAM_FILE("/var/lib/teebox/exports/report.json", "application/json")
+```
+
+**Fetching the result:**
+
+```bash
+RUN_ID=...   # from submit + poll to terminal
+
+# The normal /result returns a REDACTED descriptor (no server path)
+curl http://host:18080/api/client/runs/$RUN_ID/result
+# → { ..., "stream": true, "resultData": {"stream": true, "contentType": "application/json", "size": 7568901} }
+
+# /result-stream streams the raw file bytes (Content-Type from the descriptor, Content-Length = size)
+curl -s -o report.json http://host:18080/api/client/runs/$RUN_ID/result-stream
+#   - returns HTTP 409 if the run's result is not a stream, or the file is gone
+```
+
+The embeddable client offers `streamRunResult(runId, OutputStream)` and the one-call `runAndStream(...)` convenience.
+
+**Security — allowed roots (required to understand):**
+- A streamable path must canonicalize within one of the configured `propertee.teebox.streamRoots` (default: `dataDir`). A path outside fails the script with a clear error. This is validated at `STREAM_FILE` time and again before streaming (TOCTOU-safe).
+- `STREAM_FILE` exposes a file's bytes to API clients, so set `streamRoots` to the **minimum** directories needed — it is the only boundary preventing arbitrary file disclosure.
+
+```properties
+# allow streaming only from an exports directory (plus a shared mount)
+propertee.teebox.streamRoots=/var/lib/teebox/exports:/mnt/shared
+```
+
+**Lifecycle (reference-only):** the descriptor only references the path — TeeBox does not copy or own the file. The file must outlive the result fetch, and the stream result is available during the active window (resultData is nulled when the run is archived after 24h).
 
 ### Script Deletion
 

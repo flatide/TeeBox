@@ -49,6 +49,7 @@ propertee.teebox.maxRuns=64
 | `runRetentionMs` | `24h` | run 보관 -> archived 전환 |
 | `runArchiveRetentionMs` | `7d` | archived -> 삭제 |
 | `maintenanceIntervalMs` | `1m` | 백그라운드 유지보수 주기 |
+| `streamRoots` | `dataDir` | `STREAM_FILE` 결과의 허용 루트 (`File.pathSeparator` 로 구분된 디렉토리 목록; Linux/macOS `:`, Windows `;`). 스트리밍 파일 경로는 이 중 하나의 하위로 canonicalize 되어야 함. §3 참고. |
 
 환경 변수:
 - `PROPERTEE_TEEBOX_CONFIG` - 설정 파일 경로 (기본: `conf/teebox.properties`)
@@ -199,6 +200,43 @@ Admin UI의 스크립트 상세 페이지에서도 규칙을 설정할 수 있�
 - 설정 가능한 캡처 그룹으로 라인별 매칭
 - `firstOnly: true`는 첫 매치만 publish (권장)
 - 캡처된 값은 즉시 저장되며 API와 Admin UI에서 확인 가능
+
+### 대용량 결과 스트리밍 (STREAM_FILE)
+
+6MB JSON 같은 큰 파일을 `READ_LINES` + `JOIN` + `JSON_PARSE` + `return` 으로 엔진에 읽어 리턴하면 전체 페이로드가 스크립트 엔진 힙에 여러 번 복제되고(이후 버퍼링된 JSON 응답에도 다시) 메모리·속도 문제가 생깁니다. 대신 스크립트가 파일을 참조하는 작은 **스트림 디스크립터**만 리턴하면, TeeBox 가 그 파일을 **응답으로 직접 스트리밍**(파싱·전체 버퍼링 없음, O(1) 힙)합니다.
+
+**스크립트에서** — 파일을 머터리얼라이즈하지 말고 `STREAM_FILE(path[, contentType])` 리턴:
+
+```
+return STREAM_FILE("/var/lib/teebox/exports/report.json", "application/json")
+```
+
+**결과 받기:**
+
+```bash
+RUN_ID=...   # 제출 + 종료까지 폴링 후
+
+# 일반 /result 는 경로가 가려진(redact) 디스크립터를 돌려줌(서버 경로 비노출)
+curl http://host:18080/api/client/runs/$RUN_ID/result
+# → { ..., "stream": true, "resultData": {"stream": true, "contentType": "application/json", "size": 7568901} }
+
+# /result-stream 은 원본 바이트를 그대로 스트리밍 (Content-Type=디스크립터, Content-Length=size)
+curl -s -o report.json http://host:18080/api/client/runs/$RUN_ID/result-stream
+#   - 스트림 결과가 아니거나 파일이 없으면 HTTP 409
+```
+
+임베더블 클라이언트는 `streamRunResult(runId, OutputStream)` 와 한 번에 처리하는 `runAndStream(...)` 을 제공합니다.
+
+**보안 — 허용 루트(반드시 이해):**
+- 스트리밍 경로는 설정된 `propertee.teebox.streamRoots`(기본 `dataDir`) 중 하나의 하위로 canonicalize 되어야 합니다. 밖이면 스크립트가 명확한 에러로 실패합니다. `STREAM_FILE` 호출 시점과 스트리밍 직전 두 번 검증(TOCTOU 방지).
+- `STREAM_FILE` 은 파일 바이트를 API 클라이언트에 노출하므로, `streamRoots` 는 **필요한 최소 디렉토리만** 지정하세요 — 임의 파일 유출을 막는 유일한 경계입니다.
+
+```properties
+# exports 디렉토리(+ 공유 마운트)에서만 스트리밍 허용
+propertee.teebox.streamRoots=/var/lib/teebox/exports:/mnt/shared
+```
+
+**라이프사이클(참조만):** 디스크립터는 경로만 참조하며 TeeBox 가 파일을 복사·소유하지 않습니다. 파일은 결과 조회 전까지 존재해야 하고, 스트림 결과는 active 윈도우 동안 가용합니다(24h 후 아카이브 시 resultData 가 null 화).
 
 ### 스크립트 삭제
 
