@@ -248,6 +248,28 @@ done
 curl $HOST/api/client/runs/$RUN_ID/result
 ```
 
+### 2.11 Webhook 콜백으로 제출 (폴링 대신)
+
+서버에 webhook 이 켜져 있으면(`webhookEnabled=true` + `webhookUrlAllowlist`) 제출 시 `callback` 을 실어 run 종료 통지를 받을 수 있습니다. TeeBox 가 2xx 받을 때까지 내구적으로 재시도합니다.
+
+```bash
+# 콜백과 함께 제출 (webhook 꺼짐 또는 host 미허용 시 400)
+curl -X POST $HOST/api/client/scripts/nightly_export/runs \
+  -H 'Content-Type: application/json' \
+  -d '{ "props": {}, "callback": { "url": "https://app.internal/teebox/callback" } }'
+# → 202 Accepted
+
+# run 종료 시 TeeBox 가 콜백 URL 로 POST (헤더: X-TeeBox-Event, X-TeeBox-Delivery: <runId>)
+# 본문(SUMMARY):
+# { "event":"run.terminal", "runId":"...", "scriptId":"nightly_export", "version":"3",
+#   "status":"COMPLETED", "endedAt":1750900000000,
+#   "errorMessage":null, "resultSummary":"...", "published":{} }
+```
+
+- 전달은 **at-least-once** — 수신자를 `X-TeeBox-Delivery`(runId) 기준 **멱등**하게.
+- 비-2xx/실패는 backoff 재시도(최대 12회) 후 **DEAD**. 재시작에도 outbox(`dataDir/webhooks/`)에서 재개.
+- 자세한 서버 설정은 운영 가이드 "Run 종료 Webhook (callback)" 참고.
+
 ---
 
 ## 3. Admin API — 시스템 관리

@@ -83,6 +83,42 @@ public class RunRegistry {
         return copy;
     }
 
+    /**
+     * Copies of terminal runs (from the in-memory cache, no disk reload) that ended at/after
+     * {@code sinceMs}. Used by periodic webhook reconcile to cheaply find recently-terminal runs.
+     */
+    public List<RunInfo> listCachedRunsEndedSince(long sinceMs) {
+        List<RunInfo> out = new ArrayList<RunInfo>();
+        for (RunInfo run : runs.values()) {
+            synchronized (run) {
+                if (!isTerminal(run.status)) {
+                    continue;
+                }
+                long terminalAt = run.endedAt != null ? run.endedAt.longValue() : run.createdAt;
+                if (terminalAt >= sinceMs) {
+                    out.add(copyRun(run));
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Copies of all non-purged terminal runs (from the in-memory cache). Used by the one-time
+     * startup webhook reconcile, which must consider every recoverable run regardless of age.
+     */
+    public List<RunInfo> listCachedTerminalRuns() {
+        List<RunInfo> out = new ArrayList<RunInfo>();
+        for (RunInfo run : runs.values()) {
+            synchronized (run) {
+                if (isTerminal(run.status)) {
+                    out.add(copyRun(run));
+                }
+            }
+        }
+        return out;
+    }
+
     public List<RunThreadInfo> listThreads(String runId) {
         RunInfo run = runs.get(runId);
         if (run == null) {

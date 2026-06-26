@@ -288,7 +288,12 @@ String runId = (String) submitted.get("runId");
 
 // Explicit version
 teebox.submitRun("calc_sum", "1", props);
+
+// With a run-terminal webhook callback (instead of polling)
+teebox.submitRun("nightly_export", null, props, "https://app.internal/teebox/callback");
 ```
+
+> **Webhook callback (optional)**: the 4-arg `submitRun(scriptId, version, props, callbackUrl)` asks TeeBox to **POST a JSON summary to `callbackUrl` when the run finishes**, retrying durably until a 2xx — so you don't have to poll, and a briefly-down receiver still gets it after recovery. The server must have webhooks enabled and the URL host on its allowlist, otherwise this throws (HTTP 400). The POST body is `{event, runId, scriptId, version, status, endedAt, errorMessage, resultSummary, published}` with an `X-TeeBox-Delivery: <runId>` header; **make the receiver idempotent on `runId`** (delivery is at-least-once). See the operations guide "Run-Terminal Webhooks" for server setup.
 
 > **Accessing props inside the script**: each key of the submitted `props` is read directly as an **individual variable** in the script (e.g. `props={"a":40,"b":2}` → `a`, `b`). In addition, the entire input can be accessed at once through the reserved object **`_PROPS`** — `PRINT(_PROPS)`, `JSON_FORMAT(_PROPS)` (full dump/debugging), `KEYS(_PROPS)` (iteration), `_PROPS.a` (individual), `return {"echo": _PROPS}` (pass through as-is). Inside a function/`multi`, use `::_PROPS`.
 >
@@ -611,6 +616,7 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 |--------|------|------|
 | `submitRun(scriptId, props)` | `Map`(`runId`) | Submit active version for execution (async, 202) |
 | `submitRun(scriptId, version, props)` | `Map`(`runId`) | Submit with a specified version |
+| `submitRun(scriptId, version, props, callbackUrl)` | `Map`(`runId`) | Submit and request a run-terminal webhook POST to `callbackUrl` (server must have webhooks enabled + host allowlisted, else HTTP 400). See §7.2 |
 | `getRun(runId)` | `Map` | Full summary (includes `published`·`resultSummary`) |
 | `getRunStatus(runId)` | `Map` | Status/timestamps only (for lightweight polling) |
 | `getRunResult(runId)` | `Map` | Result (`resultData`). A redacted descriptor for a stream result |

@@ -50,6 +50,9 @@ propertee.teebox.maxRuns=64
 | `runArchiveRetentionMs` | `7d` | archived -> 삭제 |
 | `maintenanceIntervalMs` | `1m` | 백그라운드 유지보수 주기 |
 | `streamRoots` | `dataDir` | `STREAM_FILE` 결과의 허용 루트 (`File.pathSeparator` 로 구분된 디렉토리 목록; Linux/macOS `:`, Windows `;`). 스트리밍 파일 경로는 이 중 하나의 하위로 canonicalize 되어야 함. §3 참고. |
+| `webhookEnabled` | `false` | run 종료 webhook 전달 활성화(opt-in). 꺼져 있으면 `callback` 이 실린 submit 은 HTTP 400 으로 거절. §3 참고. |
+| `webhookUrlAllowlist` | 없음 | 콜백 URL 의 **콤마 구분** `host[:port]` allowlist (활성화 시 필수 — 미설정이면 모든 콜백 거절). `host` 항목은 임의 포트 허용, `host:port` 는 정확히 일치. |
+| `webhookTimeoutMs` | `10000` | webhook 전달 per-POST connect/read 타임아웃(ms). |
 
 환경 변수:
 - `PROPERTEE_TEEBOX_CONFIG` - 설정 파일 경로 (기본: `conf/teebox.properties`)
@@ -238,6 +241,44 @@ propertee.teebox.streamRoots=/var/lib/teebox/exports:/mnt/shared
 
 **라이프사이클(참조만):** 디스크립터는 경로만 참조하며 TeeBox 가 파일을 복사·소유하지 않습니다. 파일은 결과 조회 전까지 존재해야 하고, 스트림 결과는 active 윈도우 동안 가용합니다(24h 후 아카이브 시 resultData 가 null 화).
 
+### Run 종료 Webhook (callback)
+
+폴링 대신, 클라이언트가 **run 종료 시 TeeBox 가 통지를 POST** 하도록 요청할 수 있습니다. 재시도는 TeeBox 가 책임집니다: run 은 즉시 종료(슬롯 반납)되고, 전달은 디스크 outbox 에서 성공 또는 포기까지 내구적으로 재시도되므로 — 수신 서버가 잠깐 다운돼도 복구 후 콜백을 받습니다. `webhookEnabled=true` + `webhookUrlAllowlist` 로 opt-in.
+
+`callback` 을 실어 제출(webhook 이 꺼져 있거나 URL host 가 allowlist 에 없으면 HTTP 400 거절):
+
+```bash
+curl -X POST http://host:18080/api/client/scripts/nightly_export/runs \
+  -H 'Content-Type: application/json' \
+  -d '{ "props": {}, "callback": { "url": "https://app.internal/teebox/callback" } }'
+# -> 202 Accepted (run 은 큐잉되고, 종료 시 콜백 발사)
+```
+
+run 이 terminal 에 도달하면 TeeBox 가 해당 URL 로 JSON **SUMMARY** 를 POST:
+
+```json
+{ "event": "run.terminal", "runId": "...", "scriptId": "nightly_export", "version": "3",
+  "status": "COMPLETED", "endedAt": 1750900000000,
+  "errorMessage": null, "resultSummary": "...", "published": { } }
+```
+헤더: `X-TeeBox-Event: run.terminal`, `X-TeeBox-Delivery: <runId>`.
+
+**전달 보증:**
+- **at-least-once** — 수신자는 `X-TeeBox-Delivery`(runId) 키로 **멱등** 처리해야 함. 2xx ack 유실 시 재-POST.
+- **재시도** — 비-2xx/전송 실패는 지수 backoff(base 5s, cap 10m)로 최대 12회 재시도 후 **DEAD**(더 이상 시도 안 함).
+- **재시작 안전** — outbox 는 `${dataDir}/webhooks/` 에 영속. TeeBox 재시작 후 PENDING 전달 재개, reconcile 이 콜백을 못 받은 최근 terminal run(`SERVER_RESTARTED` 포함)을 재enqueue.
+- **`status`** 는 run 의 terminal 상태(`COMPLETED`/`FAILED`/`SERVER_RESTARTED`) — 수신자에서 분기.
+
+**보안(allowlist 가 경계):**
+- TeeBox 가 임의 URL 로 POST 하므로 콜백 host 는 **반드시** `webhookUrlAllowlist`(콤마 구분 `host[:port]`)에 있어야 함. scheme 는 `http`/`https`. host 는 submit 시점 + 매 전달 직전 재검증 — allowlist 가 바뀌면 진행 중이던 비허용 host 전달은 즉시 종료(DEAD).
+
+```properties
+propertee.teebox.webhookEnabled=true
+propertee.teebox.webhookUrlAllowlist=app.internal,app.internal:8443
+```
+
+> MVP 범위: payload 는 SUMMARY 고정. HMAC 서명·사용자 인증 헤더·per-script 기본 콜백은 아직 미구현. 더 엄격히 하려면 수신자가 동작 전 `GET /api/client/runs/{runId}` 로 runId 를 재확인하세요.
+
 ### 스크립트 삭제
 
 스크립트는 soft-delete 방식으로 삭제되며 보존 기간 후 영구 삭제됩니다:
@@ -371,6 +412,7 @@ dataDir/
   runs/            # run 상태 JSON 파일
   tasks/           # task 메타데이터, stdout/stderr 로그
   script-registry/ # 등록된 스크립트 버전
+  webhooks/        # webhook 전달 outbox (webhookEnabled 시에만)
 ```
 
 ---

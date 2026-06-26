@@ -6,6 +6,9 @@ import com.flatide.task.Task;
 import com.flatide.task.TaskInfo;
 import com.flatide.task.TaskObservation;
 import com.flatide.teebox.lifecycle.TaskLifecycle;
+import com.flatide.teebox.webhook.WebhookDispatcher;
+import com.flatide.teebox.webhook.WebhookHttpClient;
+import com.flatide.teebox.webhook.WebhookStore;
 
 import java.io.File;
 import java.io.IOException;
@@ -42,6 +45,7 @@ public class RunManager {
     private final SystemInfoCollector systemInfoCollector;
     private final ScheduledExecutorService maintenanceScheduler;
     private final long maintenanceIntervalMs;
+    private final WebhookDispatcher webhookDispatcher;   // null when webhooks are disabled
     private final java.util.concurrent.ConcurrentHashMap<String, Future<?>> activeRuns = new java.util.concurrent.ConcurrentHashMap<String, Future<?>>();
     private final java.util.List<Runnable> extraMaintenanceTasks = new java.util.concurrent.CopyOnWriteArrayList<Runnable>();
     private final java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher> outputWatchers = new java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher>();
@@ -91,8 +95,47 @@ public class RunManager {
         this.runExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(Math.max(1, maxConcurrentRuns));
         this.immediateExecutor = (ThreadPoolExecutor) Executors.newCachedThreadPool();
         this.maintenanceScheduler = Executors.newSingleThreadScheduledExecutor();
+        if (teeBoxConfig != null && teeBoxConfig.webhookEnabled) {
+            // Keep webhook tombstones longer than the run purge horizon so a delivered record always
+            // outlives its run; reconcile then never re-enqueues an already-delivered run.
+            long tombstoneRetentionMs = runArchiveRetentionMs + DEFAULT_RUN_RETENTION_MS;
+            this.webhookDispatcher = new WebhookDispatcher(
+                new WebhookStore(this.dataDir), new WebhookHttpClient(),
+                teeBoxConfig.webhookUrlAllowlist, teeBoxConfig.webhookTimeoutMs, 4, tombstoneRetentionMs);
+            this.webhookDispatcher.start();
+            // Startup reconcile: consider ALL non-purged terminal runs (incl. SERVER_RESTARTED) so a
+            // crash in the enqueue gap is recovered no matter how long TeeBox was down (within run
+            // retention). Periodic reconcile only needs a recent slice (runtime gaps end "just now").
+            this.webhookDispatcher.reconcile(runRegistry.listCachedTerminalRuns());
+            addMaintenanceTask(new Runnable() {
+                @Override
+                public void run() {
+                    reconcileWebhooksRecent();
+                }
+            });
+            TeeBoxLog.info("RunManager", "Webhook delivery enabled");
+        } else {
+            this.webhookDispatcher = null;
+        }
         startMaintenanceScheduler();
         maintainRuns();
+    }
+
+    /** The webhook dispatcher, or null when webhooks are disabled (used for submit-time validation). */
+    public WebhookDispatcher getWebhookDispatcher() {
+        return webhookDispatcher;
+    }
+
+    // Periodic reconcile only needs to catch runtime enqueue failures, which happen at run
+    // completion — i.e. "just now". A 1h slice is a generous margin over the maintenance interval.
+    private static final long WEBHOOK_RECENT_RECONCILE_MS = 60L * 60L * 1000L;
+
+    private void reconcileWebhooksRecent() {
+        if (webhookDispatcher == null) {
+            return;
+        }
+        long since = System.currentTimeMillis() - WEBHOOK_RECENT_RECONCILE_MS;
+        webhookDispatcher.reconcile(runRegistry.listCachedRunsEndedSince(since));
     }
 
     public RunInfo submit(final RunRequest request) {
@@ -111,6 +154,7 @@ public class RunManager {
         run.maxIterations = request.maxIterations > 0 ? request.maxIterations : 1000;
         run.iterationLimitBehavior = request.warnLoops ? "warn" : "error";
         run.properties = sanitizeProperties(request.props);
+        run.callback = request.callback;
         runRegistry.register(run);
 
         ScriptInfo scriptInfo = scriptRegistry.loadScript(target.scriptId);
@@ -408,6 +452,9 @@ public class RunManager {
     public void shutdown() {
         shutdownRequested = true;
         outputWatchers.clear();
+        if (webhookDispatcher != null) {
+            webhookDispatcher.shutdown();
+        }
         maintenanceScheduler.shutdownNow();
         runRegistry.flushDirty();
         managedTaskEngine.shutdown();
@@ -525,6 +572,9 @@ public class RunManager {
             flushWatchersForRun(run.runId);
             runRegistry.markFailed(run, error != null ? error.getMessage() : "Unknown error");
         } finally {
+            if (webhookDispatcher != null) {
+                webhookDispatcher.onRunTerminal(run);
+            }
             activeRuns.remove(run.runId);
             dequeueNextRun(run.scriptId);
         }

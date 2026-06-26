@@ -364,17 +364,35 @@ public class TeeBoxClient {
      */
     public Map<String, Object> submitRun(String scriptId, String version, Map<String, Object> props)
             throws IOException {
+        return submitRun(scriptId, version, props, null);
+    }
+
+    public Map<String, Object> submitRun(String scriptId, Map<String, Object> props) throws IOException {
+        return submitRun(scriptId, null, props, null);
+    }
+
+    /**
+     * Submit a run, requesting a run-terminal webhook callback to {@code callbackUrl}. When the run
+     * reaches a terminal state the server POSTs a JSON summary ({@code runId, scriptId, version,
+     * status, endedAt, errorMessage, resultSummary, published}) to that URL and retries until a 2xx,
+     * with an {@code X-TeeBox-Delivery: <runId>} header for idempotent receipt. The server must have
+     * webhooks enabled and the URL host on its allowlist, or this returns HTTP 400. {@code callbackUrl}
+     * may be {@code null} for no callback. (POST /api/client/scripts/{id}/runs)
+     */
+    public Map<String, Object> submitRun(String scriptId, String version, Map<String, Object> props,
+                                         String callbackUrl) throws IOException {
         requireText("scriptId", scriptId);
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         if (version != null && version.trim().length() > 0) {
             body.put("version", version);
         }
         body.put("props", props != null ? props : new LinkedHashMap<String, Object>());
+        if (callbackUrl != null && callbackUrl.trim().length() > 0) {
+            Map<String, Object> callback = new LinkedHashMap<String, Object>();
+            callback.put("url", callbackUrl.trim());
+            body.put("callback", callback);
+        }
         return asMap(request("POST", "/api/client/scripts/" + enc(scriptId) + "/runs", body, 202));
-    }
-
-    public Map<String, Object> submitRun(String scriptId, Map<String, Object> props) throws IOException {
-        return submitRun(scriptId, null, props);
     }
 
     /** Full run summary. (GET /api/client/runs/{runId}) */

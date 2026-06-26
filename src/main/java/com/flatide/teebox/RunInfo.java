@@ -1,6 +1,7 @@
 package com.flatide.teebox;
 
 import com.flatide.runtime.TypeChecker;
+import com.flatide.teebox.webhook.WebhookTarget;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -29,6 +30,8 @@ public class RunInfo {
     public List<String> stdoutLines = new ArrayList<String>();
     public List<String> stderrLines = new ArrayList<String>();
     public Map<String, Object> published;
+    /** Run-terminal webhook callback target carried from submit (null = none). Persisted. */
+    public WebhookTarget callback;
 
     public RunInfo copy() {
         RunInfo copy = new RunInfo();
@@ -56,6 +59,7 @@ public class RunInfo {
         copy.stdoutLines = new ArrayList<String>(stdoutLines);
         copy.stderrLines = new ArrayList<String>(stderrLines);
         copy.published = published != null ? copyMap(published) : null;
+        copy.callback = callback != null ? new WebhookTarget(callback.url) : null;
         return copy;
     }
 

@@ -50,6 +50,9 @@ propertee.teebox.maxRuns=64
 | `runArchiveRetentionMs` | `7d` | Archived run retention before deletion |
 | `maintenanceIntervalMs` | `1m` | Background maintenance interval |
 | `streamRoots` | `dataDir` | Allowed roots for `STREAM_FILE` results (a `File.pathSeparator`-separated list of directories; `:` on Linux/macOS, `;` on Windows). A streamable file path must canonicalize within one of these. See §3. |
+| `webhookEnabled` | `false` | Enable run-terminal webhook delivery (opt-in). When off, a run submitted with a `callback` is rejected with HTTP 400. See §3. |
+| `webhookUrlAllowlist` | none | **Comma-separated** `host[:port]` allowlist for callback URLs (required when enabled — an unset allowlist rejects every callback). A `host` entry matches any port; `host:port` must match exactly. |
+| `webhookTimeoutMs` | `10000` | Per-POST connect/read timeout (ms) for webhook delivery. |
 
 Environment variables:
 - `PROPERTEE_TEEBOX_CONFIG` — Path to the configuration file (default: `conf/teebox.properties`)
@@ -218,6 +221,44 @@ propertee.teebox.streamRoots=/var/lib/teebox/exports:/mnt/shared
 
 **Lifecycle (reference-only):** the descriptor only references the path — TeeBox does not copy or own the file. The file must outlive the result fetch, and the stream result is available during the active window (resultData is nulled when the run is archived after 24h).
 
+### Run-Terminal Webhooks (callback)
+
+Instead of polling, a client can ask TeeBox to **POST a notification when the run finishes**. TeeBox owns the retry: the run ends immediately (its slot is freed), and delivery is retried durably from a disk outbox until it succeeds or gives up — so a briefly-down receiver still gets the callback after it recovers. Opt-in via `webhookEnabled=true` + a `webhookUrlAllowlist`.
+
+Submit with a `callback` (rejected with HTTP 400 if webhooks are disabled or the URL host is not on the allowlist):
+
+```bash
+curl -X POST http://host:18080/api/client/scripts/nightly_export/runs \
+  -H 'Content-Type: application/json' \
+  -d '{ "props": {}, "callback": { "url": "https://app.internal/teebox/callback" } }'
+# -> 202 Accepted (the run is queued; the callback fires on terminal)
+```
+
+When the run reaches a terminal state TeeBox POSTs a JSON **SUMMARY** to that URL:
+
+```json
+{ "event": "run.terminal", "runId": "...", "scriptId": "nightly_export", "version": "3",
+  "status": "COMPLETED", "endedAt": 1750900000000,
+  "errorMessage": null, "resultSummary": "...", "published": { } }
+```
+with headers `X-TeeBox-Event: run.terminal` and `X-TeeBox-Delivery: <runId>`.
+
+**Delivery semantics:**
+- **At-least-once** — the receiver must be **idempotent**, keyed on `X-TeeBox-Delivery` (the runId). A lost 2xx ack causes a re-POST.
+- **Retry** — non-2xx / transport failures retry with exponential backoff (base 5s, cap 10m) up to 12 attempts; then the delivery is marked **DEAD** (no more attempts).
+- **Restart-safe** — the outbox lives in `${dataDir}/webhooks/`; pending deliveries resume after a TeeBox restart, and a reconcile re-enqueues any recently-terminal run (incl. `SERVER_RESTARTED`) whose callback was never delivered.
+- **`status`** is the run's terminal state (`COMPLETED` / `FAILED` / `SERVER_RESTARTED`) — branch on it in the receiver.
+
+**Security (allowlist is the boundary):**
+- TeeBox POSTs to arbitrary URLs, so the callback host **must** be on `webhookUrlAllowlist` (comma-separated `host[:port]`). The URL scheme must be `http`/`https`. The host is validated at submit time **and** re-validated before each delivery — if the allowlist changes, an in-flight delivery to a now-disallowed host is killed (DEAD).
+
+```properties
+propertee.teebox.webhookEnabled=true
+propertee.teebox.webhookUrlAllowlist=app.internal,app.internal:8443
+```
+
+> MVP scope: payload is SUMMARY-only; HMAC signing, custom auth headers, and per-script default callbacks are not yet implemented. For a stricter receiver, verify the `runId` against `GET /api/client/runs/{runId}` before acting.
+
 ### Script Deletion
 
 Scripts use soft-delete with a retention period:
@@ -378,6 +419,7 @@ dataDir/
   runs/           # run state JSON files
   tasks/          # task metadata, stdout/stderr logs
   script-registry/ # registered script versions
+  webhooks/       # webhook delivery outbox (only when webhookEnabled)
 ```
 
 ---

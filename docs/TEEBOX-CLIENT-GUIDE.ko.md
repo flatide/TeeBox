@@ -288,7 +288,12 @@ String runId = (String) submitted.get("runId");
 
 // 버전 명시
 teebox.submitRun("calc_sum", "1", props);
+
+// run 종료 webhook 콜백과 함께 제출(폴링 대신)
+teebox.submitRun("nightly_export", null, props, "https://app.internal/teebox/callback");
 ```
+
+> **Webhook 콜백(선택)**: 4-인자 `submitRun(scriptId, version, props, callbackUrl)` 은 **run 종료 시 TeeBox 가 `callbackUrl` 로 JSON 요약을 POST** 하도록 요청합니다 — 2xx 받을 때까지 내구적으로 재시도하므로 폴링이 필요 없고, 수신 서버가 잠깐 다운돼도 복구 후 받습니다. 서버에 webhook 이 활성화되어 있고 URL host 가 allowlist 에 있어야 하며, 아니면 예외(HTTP 400)입니다. POST 본문은 `{event, runId, scriptId, version, status, endedAt, errorMessage, resultSummary, published}` 이고 `X-TeeBox-Delivery: <runId>` 헤더가 붙습니다 — 전달은 at-least-once 이므로 **수신자를 `runId` 기준 멱등**하게 만드세요. 서버 설정은 운영 가이드 "Run 종료 Webhook" 참고.
 
 > **스크립트 안에서 props 접근**: 제출한 `props` 의 각 키는 스크립트에서 **개별 변수**로 바로 읽힙니다(예: `props={"a":40,"b":2}` → `a`, `b`). 추가로 입력 전체는 예약 객체 **`_PROPS`** 로 한 번에 접근할 수 있습니다 — `PRINT(_PROPS)`, `JSON_FORMAT(_PROPS)`(전체 덤프/디버깅), `KEYS(_PROPS)`(순회), `_PROPS.a`(개별), `return {"echo": _PROPS}`(그대로 전달). 함수/`multi` 내부에서는 `::_PROPS` 를 쓰세요.
 >
@@ -611,6 +616,7 @@ try {
 |--------|------|------|
 | `submitRun(scriptId, props)` | `Map`(`runId`) | 활성 버전 실행 제출(비동기, 202) |
 | `submitRun(scriptId, version, props)` | `Map`(`runId`) | 버전 지정 제출 |
+| `submitRun(scriptId, version, props, callbackUrl)` | `Map`(`runId`) | 제출 + run 종료 webhook 을 `callbackUrl` 로 POST 요청(서버에 webhook 활성화 + host allowlist 필요, 아니면 HTTP 400). §7.2 참고 |
 | `getRun(runId)` | `Map` | 전체 요약(`published`·`resultSummary` 포함) |
 | `getRunStatus(runId)` | `Map` | 상태/타임스탬프만(가벼운 폴링용) |
 | `getRunResult(runId)` | `Map` | 결과(`resultData`). 스트림 결과면 redact된 디스크립터 |

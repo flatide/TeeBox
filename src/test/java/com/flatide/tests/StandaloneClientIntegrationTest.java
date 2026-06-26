@@ -4,14 +4,22 @@ import com.flatide.teebox.TeeBoxConfig;
 import com.flatide.teebox.TeeBoxServer;
 import com.flatide.teebox.client.TeeBoxClient;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.InputStream;
+import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Integration coverage for the embeddable, zero-dependency client shipped in
@@ -73,6 +81,53 @@ public class StandaloneClientIntegrationTest {
         }
     }
 
+    @Test
+    public void submitWithCallbackUrlThroughDeployableClient() throws Exception {
+        // Verifies the 4-arg submitRun(..., callbackUrl) overload actually puts the callback in the
+        // request body: a webhook-enabled server delivers to our local receiver only if it parsed it.
+        final BlockingQueue<String> delivered = new LinkedBlockingQueue<String>();
+        HttpServer receiver = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        receiver.createContext("/cb", new HttpHandler() {
+            @Override
+            public void handle(HttpExchange exchange) throws java.io.IOException {
+                drain(exchange.getRequestBody());
+                String runId = exchange.getRequestHeaders().getFirst("X-TeeBox-Delivery");
+                delivered.add(runId != null ? runId : "");
+                exchange.sendResponseHeaders(200, -1);
+                exchange.close();
+            }
+        });
+        receiver.start();
+        int receiverPort = receiver.getAddress().getPort();
+
+        TestServer server = startServer(true, "127.0.0.1");
+        try {
+            TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+            client.registerScript("wh_noop", "return {\"done\": true}\n", true);
+
+            String callbackUrl = "http://127.0.0.1:" + receiverPort + "/cb";
+            Map<String, Object> submitted = client.submitRun(
+                "wh_noop", null, new LinkedHashMap<String, Object>(), callbackUrl);
+            String runId = String.valueOf(submitted.get("runId"));
+            Assert.assertNotNull("runId", submitted.get("runId"));
+
+            String deliveredRunId = delivered.poll(15, TimeUnit.SECONDS);
+            Assert.assertNotNull("receiver never got the webhook (callback body not sent?)", deliveredRunId);
+            Assert.assertEquals(runId, deliveredRunId);
+        } finally {
+            server.close();
+            receiver.stop(0);
+        }
+    }
+
+    private static void drain(InputStream in) throws java.io.IOException {
+        byte[] buf = new byte[2048];
+        while (in.read(buf) != -1) {
+            // discard
+        }
+        in.close();
+    }
+
     private static boolean containsScriptId(List<Object> scripts, String scriptId) {
         for (Object item : scripts) {
             if (item instanceof Map && scriptId.equals(((Map<?, ?>) item).get("scriptId"))) {
@@ -83,12 +138,19 @@ public class StandaloneClientIntegrationTest {
     }
 
     private static TestServer startServer() throws Exception {
+        return startServer(false, null);
+    }
+
+    private static TestServer startServer(boolean webhookEnabled, String allowlist) throws Exception {
         File dataDir = Files.createTempDirectory("teebox-standalone-client-it").toFile();
         TeeBoxConfig config = new TeeBoxConfig();
         config.bindAddress = "127.0.0.1";
         config.port = 0;
         config.dataDir = dataDir;
         config.maxConcurrentRuns = 2;
+        config.webhookEnabled = webhookEnabled;
+        config.webhookUrlAllowlist = allowlist;
+        config.webhookTimeoutMs = 2000;
         TeeBoxServer server = new TeeBoxServer(config);
         server.start();
         return new TestServer(server, "http://127.0.0.1:" + server.getPort());

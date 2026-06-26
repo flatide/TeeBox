@@ -19,6 +19,12 @@ public class TeeBoxConfig {
     public String adminPassword;
     /** Allowed roots for STREAM_FILE results (File.pathSeparator list). Empty ⇒ default to [dataDir]. */
     public String streamRoots;
+    /** Enable the run-terminal webhook delivery subsystem (opt-in). */
+    public boolean webhookEnabled = false;
+    /** Comma-separated host[:port] allowlist for webhook callback URLs (required when enabled). */
+    public String webhookUrlAllowlist;
+    /** Per-POST connect/read timeout (ms) for webhook delivery. */
+    public int webhookTimeoutMs = 10000;
     public static TeeBoxConfig fromArgs(String[] args) {
         File configFile = resolveConfigFile(args);
         Properties fileProps = loadProperties(configFile);
@@ -75,6 +81,18 @@ public class TeeBoxConfig {
         String streamRoots = getSetting("streamRoots", fileProps);
         if (streamRoots != null && streamRoots.trim().length() > 0) {
             config.streamRoots = streamRoots.trim();
+        }
+        String webhookEnabled = getSetting("webhookEnabled", fileProps);
+        if (webhookEnabled != null) {
+            config.webhookEnabled = Boolean.parseBoolean(webhookEnabled.trim());
+        }
+        String webhookUrlAllowlist = getSetting("webhookUrlAllowlist", fileProps);
+        if (webhookUrlAllowlist != null && webhookUrlAllowlist.trim().length() > 0) {
+            config.webhookUrlAllowlist = webhookUrlAllowlist.trim();
+        }
+        String webhookTimeoutMs = getSetting("webhookTimeoutMs", fileProps);
+        if (webhookTimeoutMs != null && webhookTimeoutMs.trim().length() > 0) {
+            config.webhookTimeoutMs = Integer.parseInt(webhookTimeoutMs.trim());
         }
         return config;
     }

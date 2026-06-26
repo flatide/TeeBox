@@ -5,6 +5,8 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.flatide.task.TaskInfo;
 import com.flatide.task.TaskObservation;
+import com.flatide.teebox.webhook.WebhookDispatcher;
+import com.flatide.teebox.webhook.WebhookTarget;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -803,7 +805,37 @@ public class TeeBoxServer {
         Object version = raw.get("version");
         request.version = version instanceof String ? ((String) version).trim() : null;
         parseRunOptions(raw, request);
+        request.callback = parseCallback(raw.get("callback"));
         return request;
+    }
+
+    /**
+     * Parse and validate an optional {@code callback} (string URL or {@code {"url": ...}}).
+     * Rejects (HTTP 400) when webhooks are disabled or the URL fails scheme/allowlist validation.
+     */
+    private WebhookTarget parseCallback(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        String url = null;
+        if (raw instanceof String) {
+            url = ((String) raw).trim();
+        } else if (raw instanceof Map) {
+            Object u = ((Map<?, ?>) raw).get("url");
+            if (u instanceof String) {
+                url = ((String) u).trim();
+            }
+        }
+        if (url == null || url.length() == 0) {
+            throw new IllegalArgumentException("callback.url is required when callback is provided");
+        }
+        WebhookDispatcher dispatcher = runManager.getWebhookDispatcher();
+        if (dispatcher == null) {
+            throw new IllegalArgumentException("webhook callbacks are not enabled on this server");
+        }
+        WebhookTarget target = new WebhookTarget(url);
+        dispatcher.validateTarget(target);
+        return target;
     }
 
     private void parseRunOptions(Map<String, Object> raw, RunRequest request) {
