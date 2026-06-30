@@ -25,6 +25,9 @@ All notable changes to TeeBox are documented here.
   `getRunTaskStderrLines(runId)` convenience accessors, plus `getRunStdout`/`getRunStderr` and the
   task-line accessors gain a `maxTaskLines` overload. `getRunStdoutLines`/`getRunStderrLines` continue
   to return only the script lines. Still Java 7 bytecode (loads on Java 7+).
+- **Test coverage:** end-to-end tests through the deployable client for single-SHELL merge + line cap,
+  multiple sequential SHELL tasks (spawn order + breakdown), and parallel `multi`/`thread` SHELL tasks
+  (set membership, non-flaky).
 
 ## 1.1.2
 
