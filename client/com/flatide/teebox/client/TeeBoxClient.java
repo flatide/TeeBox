@@ -473,36 +473,86 @@ public class TeeBoxClient {
     }
 
     /**
-     * Captured stdout of a run (the script's {@code PRINT(...)} output), as a {@code {runId, scriptId,
-     * version, status, stream, lines, lineCount}} map. {@code lines} is the most recent
-     * {@code RunRegistry.MAX_LOG_LINES} lines (a server-side ring buffer, so very long output is
-     * truncated to the tail). Available while the run is RUNNING and after it ends. Use
-     * {@link #getRunStdoutLines} for just the lines. (GET /api/client/runs/{runId}/stdout)
+     * Captured output of a run. The script's own {@code PRINT(...)} output and the output of any
+     * external {@code SHELL(...)} task it spawned are captured separately, so the response carries
+     * both as a {@code {runId, scriptId, version, status, stream, lines, lineCount, taskLines,
+     * taskLineCount, taskCount, tasks}} map:
+     * <ul>
+     *   <li>{@code lines} / {@code lineCount} &mdash; the <b>script</b> {@code PRINT} output (the most
+     *       recent {@code RunRegistry.MAX_LOG_LINES}; a server-side ring buffer, so very long output is
+     *       truncated to the tail). {@link #getRunStdoutLines} returns just these.</li>
+     *   <li>{@code taskLines} / {@code taskLineCount} &mdash; the merged <b>task</b> ({@code SHELL})
+     *       output of the run, in spawn order. Most scripts run a single {@code SHELL}, so this is
+     *       simply that task's stdout. Each task is tailed to its last 200 lines by default (like the
+     *       script ring buffer); pass {@code maxTaskLines} to change it ({@code <= 0} = no line cap).
+     *       {@code taskLinesTruncated} is {@code true} when the cap dropped earlier lines.
+     *       {@link #getRunTaskStdoutLines} returns just these.</li>
+     *   <li>{@code taskCount} / {@code tasks} &mdash; a per-task breakdown ({@code taskId, command,
+     *       status, exitCode, lineCount}) to attribute lines when more than one task ran.</li>
+     * </ul>
+     * Available while the run is RUNNING and after it ends. (GET /api/client/runs/{runId}/stdout)
      */
     public Map<String, Object> getRunStdout(String runId) throws IOException {
         requireText("runId", runId);
         return asMap(request("GET", "/api/client/runs/" + enc(runId) + "/stdout", null, 200));
     }
 
-    /** Captured stderr of a run, same shape as {@link #getRunStdout}. (GET /api/client/runs/{runId}/stderr) */
+    /** {@link #getRunStdout(String)} but caps each task's output to the last {@code maxTaskLines}
+     *  lines ({@code <= 0} = no line cap, byte-bounded only). (GET /api/client/runs/{runId}/stdout?taskLines=N) */
+    public Map<String, Object> getRunStdout(String runId, int maxTaskLines) throws IOException {
+        requireText("runId", runId);
+        return asMap(request("GET", "/api/client/runs/" + enc(runId) + "/stdout?taskLines=" + maxTaskLines, null, 200));
+    }
+
+    /** Captured stderr of a run (script + task), same shape as {@link #getRunStdout}. (GET /api/client/runs/{runId}/stderr) */
     public Map<String, Object> getRunStderr(String runId) throws IOException {
         requireText("runId", runId);
         return asMap(request("GET", "/api/client/runs/" + enc(runId) + "/stderr", null, 200));
     }
 
-    /** Convenience: just the captured stdout lines of a run (see {@link #getRunStdout}). */
+    /** {@link #getRunStderr(String)} but caps each task's output to the last {@code maxTaskLines} lines. */
+    public Map<String, Object> getRunStderr(String runId, int maxTaskLines) throws IOException {
+        requireText("runId", runId);
+        return asMap(request("GET", "/api/client/runs/" + enc(runId) + "/stderr?taskLines=" + maxTaskLines, null, 200));
+    }
+
+    /** Convenience: just the captured <b>script</b> stdout lines of a run (see {@link #getRunStdout}). */
     public List<String> getRunStdoutLines(String runId) throws IOException {
-        return extractLines(getRunStdout(runId));
+        return extractLines(getRunStdout(runId), "lines");
     }
 
-    /** Convenience: just the captured stderr lines of a run (see {@link #getRunStderr}). */
+    /** Convenience: just the captured <b>script</b> stderr lines of a run (see {@link #getRunStderr}). */
     public List<String> getRunStderrLines(String runId) throws IOException {
-        return extractLines(getRunStderr(runId));
+        return extractLines(getRunStderr(runId), "lines");
     }
 
-    private static List<String> extractLines(Map<String, Object> output) {
+    /**
+     * Convenience: just the merged <b>task</b> ({@code SHELL}) stdout lines of a run (see
+     * {@link #getRunStdout}). For the common one-SHELL-per-script case this is that command's stdout,
+     * fetched by {@code runId} alone (tailed to the server default of 200 lines).
+     */
+    public List<String> getRunTaskStdoutLines(String runId) throws IOException {
+        return extractLines(getRunStdout(runId), "taskLines");
+    }
+
+    /** {@link #getRunTaskStdoutLines(String)} but caps each task's output to the last {@code maxTaskLines} lines. */
+    public List<String> getRunTaskStdoutLines(String runId, int maxTaskLines) throws IOException {
+        return extractLines(getRunStdout(runId, maxTaskLines), "taskLines");
+    }
+
+    /** Convenience: just the merged <b>task</b> ({@code SHELL}) stderr lines of a run (see {@link #getRunStderr}). */
+    public List<String> getRunTaskStderrLines(String runId) throws IOException {
+        return extractLines(getRunStderr(runId), "taskLines");
+    }
+
+    /** {@link #getRunTaskStderrLines(String)} but caps each task's output to the last {@code maxTaskLines} lines. */
+    public List<String> getRunTaskStderrLines(String runId, int maxTaskLines) throws IOException {
+        return extractLines(getRunStderr(runId, maxTaskLines), "taskLines");
+    }
+
+    private static List<String> extractLines(Map<String, Object> output, String key) {
         List<String> result = new ArrayList<String>();
-        Object lines = output != null ? output.get("lines") : null;
+        Object lines = output != null ? output.get(key) : null;
         if (lines instanceof List) {
             for (Object line : (List<?>) lines) {
                 result.add(line != null ? String.valueOf(line) : "");

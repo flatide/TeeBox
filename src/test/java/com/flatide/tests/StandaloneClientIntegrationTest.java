@@ -82,6 +82,93 @@ public class StandaloneClientIntegrationTest {
     }
 
     @Test
+    public void mergesTaskStdoutIntoRunStdoutThroughDeployableClient() throws Exception {
+        TestServer server = startServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+
+            // The script prints to its OWN stdout and also runs a SHELL task that writes to the
+            // TASK stdout — two separately-captured streams the merged endpoint returns together.
+            String source =
+                    "PRINT(\"hello-from-script\")\n" +
+                    "result = SHELL(\"echo hello-from-task\")\n" +
+                    "return {\"ok\": true}\n";
+            client.registerScript("merge_stdout", source, true);
+
+            Map<String, Object> submitted = client.submitRun("merge_stdout", new LinkedHashMap<String, Object>());
+            String runId = String.valueOf(submitted.get("runId"));
+            Map<String, Object> terminal = client.waitForRunTerminal(runId, 30000L);
+            Assert.assertEquals("COMPLETED", String.valueOf(terminal.get("status")));
+
+            // Poll briefly so any task-stdout flush after the run goes terminal is tolerated.
+            Map<String, Object> stdout = null;
+            List<String> scriptLines = null;
+            List<String> taskLines = null;
+            long deadline = System.currentTimeMillis() + 10000L;
+            do {
+                stdout = client.getRunStdout(runId);
+                scriptLines = client.getRunStdoutLines(runId);
+                taskLines = client.getRunTaskStdoutLines(runId);
+                if (containsLine(taskLines, "hello-from-task")) {
+                    break;
+                }
+                Thread.sleep(100);
+            } while (System.currentTimeMillis() < deadline);
+
+            Assert.assertTrue("script PRINT output should be in lines: " + scriptLines,
+                    containsLine(scriptLines, "hello-from-script"));
+            Assert.assertTrue("SHELL task output should be in taskLines: " + taskLines,
+                    containsLine(taskLines, "hello-from-task"));
+            Assert.assertTrue("at least one task should be tracked",
+                    ((Number) stdout.get("taskCount")).intValue() >= 1);
+            // The streams stay distinct: SHELL output must not leak into the script lines.
+            Assert.assertFalse("task output must not appear in script lines: " + scriptLines,
+                    containsLine(scriptLines, "hello-from-task"));
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    public void tailsTaskStdoutToLineCapThroughDeployableClient() throws Exception {
+        TestServer server = startServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+
+            // 500 lines of task output (1..500) to exercise the tail line cap.
+            String source =
+                    "result = SHELL(\"seq 1 500\")\n" +
+                    "return {\"ok\": true}\n";
+            client.registerScript("tail_task", source, true);
+
+            Map<String, Object> submitted = client.submitRun("tail_task", new LinkedHashMap<String, Object>());
+            String runId = String.valueOf(submitted.get("runId"));
+            Assert.assertEquals("COMPLETED",
+                    String.valueOf(client.waitForRunTerminal(runId, 30000L).get("status")));
+
+            // Default cap = 200: the LAST 200 lines (301..500), flagged truncated.
+            List<String> def = awaitTaskStdoutLines(client, runId);
+            Assert.assertEquals(200, def.size());
+            Assert.assertEquals("301", def.get(0));
+            Assert.assertEquals("500", def.get(def.size() - 1));
+            Assert.assertEquals(Boolean.TRUE, client.getRunStdout(runId).get("taskLinesTruncated"));
+
+            // Explicit smaller cap = 50: the last 50 lines (451..500).
+            List<String> fifty = client.getRunTaskStdoutLines(runId, 50);
+            Assert.assertEquals(50, fifty.size());
+            Assert.assertEquals("451", fifty.get(0));
+            Assert.assertEquals("500", fifty.get(fifty.size() - 1));
+
+            // No cap = 0: all 500 lines, not truncated.
+            List<String> all = client.getRunTaskStdoutLines(runId, 0);
+            Assert.assertEquals(500, all.size());
+            Assert.assertEquals(Boolean.FALSE, client.getRunStdout(runId, 0).get("taskLinesTruncated"));
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
     public void submitWithCallbackUrlThroughDeployableClient() throws Exception {
         // Verifies the 4-arg submitRun(..., callbackUrl) overload actually puts the callback in the
         // request body: a webhook-enabled server delivers to our local receiver only if it parsed it.
@@ -126,6 +213,28 @@ public class StandaloneClientIntegrationTest {
             // discard
         }
         in.close();
+    }
+
+    private static List<String> awaitTaskStdoutLines(TeeBoxClient client, String runId) throws Exception {
+        long deadline = System.currentTimeMillis() + 10000L;
+        List<String> lines = client.getRunTaskStdoutLines(runId);
+        while (lines.isEmpty() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(100);
+            lines = client.getRunTaskStdoutLines(runId);
+        }
+        return lines;
+    }
+
+    private static boolean containsLine(List<String> lines, String needle) {
+        if (lines == null) {
+            return false;
+        }
+        for (String line : lines) {
+            if (line != null && line.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean containsScriptId(List<Object> scripts, String scriptId) {

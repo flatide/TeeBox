@@ -2,6 +2,30 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.2.0
+
+- **Run-output endpoints now also return external task (`SHELL`) output, merged into the response.**
+  A run's script `PRINT` output and the stdout/stderr of the `SHELL` tasks it spawns are captured
+  separately (script output in an in-memory ring buffer; task output on disk under the task dir), so
+  the client previously had no client-scoped way to read task output — only the admin task endpoint
+  exposed it, and only as a 4 KB tail. `GET /api/client/runs/{runId}/stdout` (and `/stderr`) now add:
+  - `taskLines` / `taskLineCount` — the merged task output of the run, in spawn order. Most scripts
+    run a single `SHELL`, so this is simply that command's output, fetched by `runId` alone.
+  - `taskCount` and a `tasks` breakdown (`taskId, command, status, exitCode, lineCount`) to attribute
+    lines when more than one task ran.
+  - `taskLinesTruncated` — whether the line cap dropped earlier lines.
+
+  The existing `lines` / `lineCount` (script `PRINT` output) are unchanged, so this is backward
+  compatible.
+- **Task output is tailed to its last 200 lines by default**, mirroring the script-output ring buffer
+  (`RunRegistry.MAX_LOG_LINES`). Override per request with `?taskLines=N` (`<= 0` disables the line
+  cap); a 1 MB per-task byte cap remains underneath as a disk-read guard so even an uncapped request
+  can't load a multi-GB task into one response.
+- **Embeddable client (`TeeBoxClient`):** new `getRunTaskStdoutLines(runId)` /
+  `getRunTaskStderrLines(runId)` convenience accessors, plus `getRunStdout`/`getRunStderr` and the
+  task-line accessors gain a `maxTaskLines` overload. `getRunStdoutLines`/`getRunStderrLines` continue
+  to return only the script lines. Still Java 7 bytecode (loads on Java 7+).
+
 ## 1.1.2
 
 - **Fix `Cannot mark persisted: not terminal` crash during task recovery.** A persisted task

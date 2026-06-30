@@ -497,7 +497,8 @@ public class TeeBoxServer {
             }
             if (suffix.endsWith("/stdout")) {
                 String runId = suffix.substring(0, suffix.length() - "/stdout".length());
-                Map<String, Object> out = buildClientRunOutputMap(runId, true);
+                int maxTaskLines = parseInt(parseQuery(exchange).get("taskLines"), DEFAULT_TASK_TAIL_LINES);
+                Map<String, Object> out = buildClientRunOutputMap(runId, true, maxTaskLines);
                 if (out == null) {
                     writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
                     return;
@@ -507,7 +508,8 @@ public class TeeBoxServer {
             }
             if (suffix.endsWith("/stderr")) {
                 String runId = suffix.substring(0, suffix.length() - "/stderr".length());
-                Map<String, Object> out = buildClientRunOutputMap(runId, false);
+                int maxTaskLines = parseInt(parseQuery(exchange).get("taskLines"), DEFAULT_TASK_TAIL_LINES);
+                Map<String, Object> out = buildClientRunOutputMap(runId, false, maxTaskLines);
                 if (out == null) {
                     writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
                     return;
@@ -1115,12 +1117,35 @@ public class TeeBoxServer {
         return result;
     }
 
+    /** Default per-task line cap for the merged run-output endpoint — mirrors the script-output ring
+     *  buffer ({@code RunRegistry.MAX_LOG_LINES}); override per request with {@code ?taskLines=N}
+     *  ({@code <= 0} disables the line cap, leaving only the byte guard). */
+    private static final int DEFAULT_TASK_TAIL_LINES = 200;
+
+    /** Disk-read guard underneath the line cap: each task's output is read as at most this many tail
+     *  bytes, so a pathological multi-GB task can't be loaded into a single JSON response even when
+     *  the line cap is disabled. */
+    private static final int TASK_OUTPUT_MAX_BYTES = 1024 * 1024;
+
     /**
-     * Run stdout (or stderr) for client polling. {@code lines} is the captured script output
-     * (the most recent {@code RunRegistry.MAX_LOG_LINES} lines — a ring buffer, so older lines may
-     * have been dropped). Works while the run is RUNNING and after it is terminal.
+     * Run stdout (or stderr) for client polling. The script's own output and its external task
+     * (SHELL) output are captured separately, so this returns both in one response:
+     * <ul>
+     *   <li>{@code lines} / {@code lineCount} — the captured <b>script</b> output (the most recent
+     *       {@code RunRegistry.MAX_LOG_LINES} lines; a ring buffer, so older lines may be dropped).</li>
+     *   <li>{@code taskLines} / {@code taskLineCount} — the merged <b>task</b> output of every SHELL
+     *       task spawned by the run, in spawn (chronological) order. Most scripts run a single SHELL,
+     *       so this is simply that task's output. Each task is tailed to the last {@code maxTaskLines}
+     *       lines (default {@code DEFAULT_TASK_TAIL_LINES}, like the script ring buffer; {@code <= 0}
+     *       disables the line cap), read from at most the last {@code TASK_OUTPUT_MAX_BYTES} bytes.</li>
+     *   <li>{@code taskLinesTruncated} — {@code true} if the line cap dropped any earlier task lines.</li>
+     *   <li>{@code taskCount} and a {@code tasks} breakdown ({@code taskId, command, status,
+     *       exitCode, lineCount}) so callers can attribute lines when more than one task ran; each
+     *       {@code lineCount} is that task's contribution to {@code taskLines} (already tailed).</li>
+     * </ul>
+     * Works while the run is RUNNING and after it is terminal.
      */
-    private Map<String, Object> buildClientRunOutputMap(String runId, boolean stdout) {
+    private Map<String, Object> buildClientRunOutputMap(String runId, boolean stdout, int maxTaskLines) {
         RunInfo run = runManager.getRun(runId);
         if (run == null) {
             return null;
@@ -1135,7 +1160,60 @@ public class TeeBoxServer {
         out.put("stream", stdout ? "stdout" : "stderr");
         out.put("lines", lines);
         out.put("lineCount", Integer.valueOf(lines.size()));
+
+        // Merge the run's task (SHELL) output. listTasksForRun is newest-first; reverse to the order
+        // the tasks were spawned so multi-task output reads top-to-bottom chronologically.
+        List<TaskInfo> tasks = runManager.listTasksForRun(runId);
+        List<TaskInfo> ordered = new ArrayList<TaskInfo>(tasks);
+        Collections.reverse(ordered);
+        List<String> taskLines = new ArrayList<String>();
+        List<Map<String, Object>> breakdown = new ArrayList<Map<String, Object>>();
+        boolean truncated = false;
+        for (TaskInfo task : ordered) {
+            String content = stdout
+                    ? runManager.getTaskStdoutTail(task.taskId, TASK_OUTPUT_MAX_BYTES)
+                    : runManager.getTaskStderrTail(task.taskId, TASK_OUTPUT_MAX_BYTES);
+            List<String> perTask = splitLines(content);
+            if (maxTaskLines > 0 && perTask.size() > maxTaskLines) {
+                perTask = new ArrayList<String>(perTask.subList(perTask.size() - maxTaskLines, perTask.size()));
+                truncated = true;
+            }
+            taskLines.addAll(perTask);
+            Map<String, Object> entry = new LinkedHashMap<String, Object>();
+            entry.put("taskId", task.taskId);
+            entry.put("command", task.command);
+            entry.put("status", task.status);
+            entry.put("exitCode", task.exitCode);
+            entry.put("lineCount", Integer.valueOf(perTask.size()));
+            breakdown.add(entry);
+        }
+        out.put("taskLines", taskLines);
+        out.put("taskLineCount", Integer.valueOf(taskLines.size()));
+        out.put("taskLinesTruncated", Boolean.valueOf(truncated));
+        out.put("taskCount", Integer.valueOf(ordered.size()));
+        out.put("tasks", breakdown);
         return out;
+    }
+
+    /** Split raw captured task output into lines (matching the per-line shape of script output):
+     *  tolerant of {@code \r\n}, and a single trailing newline does not yield a final empty line. */
+    private static List<String> splitLines(String content) {
+        List<String> result = new ArrayList<String>();
+        if (content == null || content.isEmpty()) {
+            return result;
+        }
+        String[] parts = content.split("\n", -1);
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i];
+            if (part.endsWith("\r")) {
+                part = part.substring(0, part.length() - 1);
+            }
+            if (i == parts.length - 1 && part.isEmpty()) {
+                continue;  // drop the empty element a trailing '\n' produces
+            }
+            result.add(part);
+        }
+        return result;
     }
 
     private Map<String, Object> buildClientTaskSummaryMap(String runId) {
