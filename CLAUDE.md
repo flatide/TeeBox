@@ -106,8 +106,8 @@ TeeBox has **two unrelated auth mechanisms**:
 | GET | `/api/client/runs/{runId}/status` | Run status only |
 | GET | `/api/client/runs/{runId}/result` | Run result data (stream descriptors redacted to `{stream,contentType,size}`) |
 | GET | `/api/client/runs/{runId}/result-stream` | Stream a `STREAM_FILE` result's bytes (raw file, no buffering; 409 if not a stream result) |
-| GET | `/api/client/runs/{runId}/stdout` | Captured run stdout (script `PRINT` output) |
-| GET | `/api/client/runs/{runId}/stderr` | Captured run stderr |
+| GET | `/api/client/runs/{runId}/stdout` | Captured run stdout: script `PRINT` output (`lines`) **+ merged external `SHELL` task output** (`taskLines`, default last 200 lines, override `?taskLines=N` (`<=0` = no line cap); `taskLineCount`, `taskLinesTruncated`, `taskCount`, per-task `tasks` breakdown). Existing `lines`/`lineCount` unchanged (backward compatible). |
+| GET | `/api/client/runs/{runId}/stderr` | Captured run stderr (same shape: script `lines` + task `taskLines`) |
 | GET | `/api/client/runs/{runId}/tasks-summary` | Task status counts |
 
 The legacy `POST /api/client/runs` (scriptPath-based) endpoint has been removed from the server.
