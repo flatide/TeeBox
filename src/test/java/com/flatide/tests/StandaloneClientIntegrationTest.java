@@ -224,6 +224,63 @@ public class StandaloneClientIntegrationTest {
     }
 
     @Test
+    public void mergesParallelMultiThreadShellTasksThroughDeployableClient() throws Exception {
+        TestServer server = startServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+
+            // Three SHELL tasks run in PARALLEL via multi/thread. Their completion (hence spawn/start)
+            // order races, so assert set membership — every task's output is present in the merged
+            // taskLines — rather than a positional order.
+            String source =
+                    "function worker(name) do\n" +
+                    "    return SHELL(\"echo parallel-\" + name)\n" +
+                    "end\n" +
+                    "multi result do\n" +
+                    "    thread alpha: worker(\"alpha\")\n" +
+                    "    thread beta: worker(\"beta\")\n" +
+                    "    thread gamma: worker(\"gamma\")\n" +
+                    "end\n" +
+                    "return {\"ok\": true}\n";
+            client.registerScript("multi_parallel_shell", source, true);
+
+            Map<String, Object> submitted = client.submitRun("multi_parallel_shell", new LinkedHashMap<String, Object>());
+            String runId = String.valueOf(submitted.get("runId"));
+            Assert.assertEquals("COMPLETED",
+                    String.valueOf(client.waitForRunTerminal(runId, 30000L).get("status")));
+
+            // Poll until all three parallel tasks are tracked.
+            Map<String, Object> stdout = client.getRunStdout(runId);
+            long deadline = System.currentTimeMillis() + 10000L;
+            while (taskCount(stdout) < 3 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100);
+                stdout = client.getRunStdout(runId);
+            }
+            Assert.assertEquals("all three parallel SHELL tasks should be tracked", 3, taskCount(stdout));
+
+            // Merged task output contains every worker's line (order is non-deterministic).
+            List<String> taskLines = client.getRunTaskStdoutLines(runId);
+            Assert.assertEquals("exactly the three task lines", 3, taskLines.size());
+            Assert.assertTrue("alpha output present: " + taskLines, containsLine(taskLines, "parallel-alpha"));
+            Assert.assertTrue("beta output present: " + taskLines, containsLine(taskLines, "parallel-beta"));
+            Assert.assertTrue("gamma output present: " + taskLines, containsLine(taskLines, "parallel-gamma"));
+
+            // Per-task breakdown stays consistent regardless of completion order.
+            List<?> tasks = (List<?>) stdout.get("tasks");
+            Assert.assertEquals(3, tasks.size());
+            int sum = 0;
+            for (Object t : tasks) {
+                sum += ((Number) ((Map<?, ?>) t).get("lineCount")).intValue();
+            }
+            Assert.assertEquals(3, ((Number) stdout.get("taskLineCount")).intValue());
+            Assert.assertEquals("per-task lineCounts must sum to taskLineCount",
+                    ((Number) stdout.get("taskLineCount")).intValue(), sum);
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
     public void submitWithCallbackUrlThroughDeployableClient() throws Exception {
         // Verifies the 4-arg submitRun(..., callbackUrl) overload actually puts the callback in the
         // request body: a webhook-enabled server delivers to our local receiver only if it parsed it.
