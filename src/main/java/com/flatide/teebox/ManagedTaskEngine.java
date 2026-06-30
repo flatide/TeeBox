@@ -66,7 +66,12 @@ public class ManagedTaskEngine implements TaskRunner {
     public File getTaskDir(String taskId) {
         return new File(tasksDir, "task-" + taskId);
     }
-    private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    // TaskStatus adapter restores v1 metadata compat: v2's TaskStatus has no gson @SerializedName, so
+    // without it gson reads legacy lowercase "status":"running" as null (see TaskStatusJsonAdapter).
+    private final Gson gson = new GsonBuilder()
+            .registerTypeAdapter(TaskStatus.class, new TaskStatusJsonAdapter())
+            .setPrettyPrinting()
+            .create();
     private final Object indexLock = new Object();
     private final File indexFile;
     private final File indexTmpFile;
@@ -603,7 +608,7 @@ public class ManagedTaskEngine implements TaskRunner {
                 TaskLifecycle lc = lifecycles.get(task.taskId);
                 if (lc == null) {
                     lc = TaskLifecycle.normalizeFromRunner(task);
-                    lc.markPersisted();
+                    if (lc.isTerminal() && !lc.isPersisted()) lc.markPersisted();   // guard on the invariant, not status
                     lifecycles.put(task.taskId, lc);
                 }
                 continue;
@@ -1055,7 +1060,9 @@ public class ManagedTaskEngine implements TaskRunner {
                         lifecycles.put(task.taskId, lc);
                     } else if (!lifecycles.containsKey(task.taskId)) {
                         lc = TaskLifecycle.normalizeFromRunner(task);
-                        if (!isTransientStatus(task.status)) {
+                        // markPersisted only when the rebuilt lifecycle is actually terminal — never infer
+                        // "terminal" from status alone (an unknown/null status normalizes to ACTIVE).
+                        if (lc.isTerminal() && !lc.isPersisted()) {
                             lc.markPersisted();
                         }
                         lifecycles.put(task.taskId, lc);
@@ -1064,7 +1071,7 @@ public class ManagedTaskEngine implements TaskRunner {
                     TeeBoxLog.warn("TaskEngine", "Failed to parse lifecycle for task " + task.taskId, e);
                     if (!lifecycles.containsKey(task.taskId)) {
                         TaskLifecycle lc = TaskLifecycle.normalizeFromRunner(task);
-                        if (!isTransientStatus(task.status)) {
+                        if (lc.isTerminal() && !lc.isPersisted()) {   // invariant, not status-based
                             lc.markPersisted();
                         }
                         lifecycles.put(task.taskId, lc);
