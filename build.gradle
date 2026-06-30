@@ -7,7 +7,7 @@ import java.util.zip.GZIPInputStream
 import java.security.MessageDigest
 
 group = 'com.flatide'
-version = '0.12.0'
+version = '1.0.0'
 
 ext {
     defaultRuntimeLinuxX64Url = 'https://download.java.net/java/GA/jdk21.0.2/f2283984656d49d69e91c558476027ac/13/GPL/openjdk-21.0.2_linux-x64_bin.tar.gz'
@@ -15,8 +15,11 @@ ext {
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    // propertee2 (ProperTee v2 runtime) requires Java 25 (virtual threads + ScopedValue), so the
+    // host that embeds it must compile and run on 25. (Was VERSION_17 for the v1 runtime.)
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
 }
 
 repositories {

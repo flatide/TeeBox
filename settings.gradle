@@ -1,6 +1,6 @@
 rootProject.name = 'propertee-teebox'
 
-includeBuild('../propertee-java') {
+includeBuild('../propertee2-java') {
     dependencySubstitution {
         substitute module('com.flatide:propertee-core') using project(':propertee-core')
     }
