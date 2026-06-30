@@ -2,6 +2,18 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.1.0
+
+- **New host builtin `THUMBNAIL(srcPath, destPath, maxWidth, [maxHeight])`** for the embedded
+  ProperTee (a TeeBox-only builtin, not part of the ProperTee language). Scales an image —
+  anything `ImageIO` can read (PNG/JPEG/...) — to fit within the given bounds preserving aspect
+  ratio (never upscaling) and writes a PNG, returning `{path, width, height}` on success or a
+  `Result.error` on a missing/unreadable image or bad arguments. It runs **off the cooperative
+  baton** (registered via the propertee2 §3.1 blocking-external contract), so the disk + CPU work
+  never stalls concurrent `multi` workers.
+  - Reads/writes the given filesystem paths directly (like the other file builtins) — restrict
+    paths at the deployment layer when running untrusted scripts.
+
 ## 1.0.0
 
 **TeeBox now runs on the ProperTee v2 runtime (`propertee2`).**
