@@ -2,6 +2,15 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.1.1
+
+- **`THUMBNAIL` now restricts its source and destination paths to the configured allowed roots** —
+  the same boundary `STREAM_FILE` enforces (`propertee.teebox.streamRoots`, default = the run data
+  dir). Each path is canonicalized and must resolve inside a root (the source must also be an
+  existing file); anything outside is rejected with a `Result.error`. `THUMBNAIL` is now registered
+  only when that allowed-roots policy is present (as `STREAM_FILE` already was). Addresses the 1.1.0
+  note about `THUMBNAIL` touching arbitrary filesystem paths.
+
 ## 1.1.0
 
 - **New host builtin `THUMBNAIL(srcPath, destPath, maxWidth, [maxHeight])`** for the embedded

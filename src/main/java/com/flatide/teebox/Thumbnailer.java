@@ -23,7 +23,7 @@ final class Thumbnailer {
 
     private Thumbnailer() {}
 
-    static Map<String, Object> create(List<Object> args) {
+    static Map<String, Object> create(List<Object> args, StreamResultSupport policy) {
         if (args.size() < 3) {
             throw new RuntimeException("THUMBNAIL() requires (srcPath, destPath, maxWidth, [maxHeight])");
         }
@@ -35,9 +35,14 @@ final class Thumbnailer {
         int maxH = args.size() > 3 ? intArg(args.get(3), "maxHeight") : maxW;
         if (maxW < 1 || maxH < 1) throw new RuntimeException("THUMBNAIL() maxWidth/maxHeight must be >= 1");
 
+        // Path policy: src and dest must canonicalize within the configured allowed roots (the same
+        // filesystem boundary STREAM_FILE enforces). src must be an existing file; dest may not exist yet.
+        File srcFile = policy.requireWithinRoots(srcPath, "THUMBNAIL", true);
+        File destFile = policy.requireWithinRoots(destPath, "THUMBNAIL", false);
+
         BufferedImage src;
         try {
-            src = ImageIO.read(new File(srcPath));
+            src = ImageIO.read(srcFile);
         } catch (IOException e) {
             throw new RuntimeException("THUMBNAIL() cannot read " + srcPath + ": " + e.getMessage());
         }
@@ -61,7 +66,6 @@ final class Thumbnailer {
             g.dispose();
         }
 
-        File destFile = new File(destPath);
         File parent = destFile.getParentFile();
         if (parent != null) parent.mkdirs();
         try {

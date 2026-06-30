@@ -86,17 +86,19 @@ public class ScriptExecutor {
                         return support.describe((String) args.get(0), contentType);
                     }
                 });
+
+                // Host builtin: THUMBNAIL(srcPath, destPath, maxWidth, [maxHeight]) — scales an image
+                // (anything ImageIO reads: PNG/JPEG/...) to fit within the bounds preserving aspect ratio,
+                // writes a PNG. Registered as BLOCKING so the read/scale/write runs OFF the cooperative
+                // baton (real disk + CPU work). src + dest are restricted to the same allowed roots as
+                // STREAM_FILE. Returns {path, width, height} (auto-wrapped in a Result) or Result.error.
+                builtins.registerBlocking("THUMBNAIL", new BuiltinFunctions.BuiltinFunction() {
+                    @Override
+                    public Object call(List<Object> args) {
+                        return Thumbnailer.create(args, support);
+                    }
+                });
             }
-            // Host builtin: THUMBNAIL(srcPath, destPath, maxWidth, [maxHeight]) — scales an image (anything
-            // ImageIO reads: PNG/JPEG/...) to fit within the bounds preserving aspect ratio, writes a PNG.
-            // Registered as BLOCKING so the read/scale/write runs OFF the cooperative baton (it does real
-            // disk + CPU work); returns {path, width, height} (auto-wrapped in a Result) or Result.error.
-            builtins.registerBlocking("THUMBNAIL", new BuiltinFunctions.BuiltinFunction() {
-                @Override
-                public Object call(List<Object> args) {
-                    return Thumbnailer.create(args);
-                }
-            });
             visitor = new ProperTeeInterpreter(properties, stdout, stderr, maxIterations, iterationLimitBehavior, builtins);
             // Reserved `_SYS`: TeeBox system variables for the run, exposed as a global object so a
             // script can read its own run id (e.g. _SYS.runId, or ::_SYS.runId inside a function).

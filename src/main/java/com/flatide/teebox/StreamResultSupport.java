@@ -44,6 +44,45 @@ public final class StreamResultSupport {
     }
 
     /**
+     * Validate that {@code path} canonicalizes within one of the allowed roots and return the canonical
+     * {@link File}; {@code builtinName} prefixes error messages. If {@code mustExist}, also require a
+     * readable regular file (use for inputs); pass {@code false} for an output path that may not exist
+     * yet (its canonical location must still be inside a root). Shared by file builtins (e.g. THUMBNAIL)
+     * so they all honor the same filesystem boundary as STREAM_FILE.
+     */
+    public File requireWithinRoots(String path, String builtinName, boolean mustExist) {
+        if (path == null || path.trim().length() == 0) {
+            throw new IllegalArgumentException(builtinName + "(): path is required");
+        }
+        File canon;
+        try {
+            canon = new File(path).getCanonicalFile();
+        } catch (IOException e) {
+            throw new IllegalArgumentException(builtinName + "(): cannot resolve path: " + path);
+        }
+        String canonPath = canon.getPath();
+        boolean within = false;
+        for (File root : allowedRoots) {
+            try {
+                String rootPath = root.getCanonicalFile().getPath();
+                if (canonPath.equals(rootPath) || canonPath.startsWith(rootPath + File.separator)) {
+                    within = true;
+                    break;
+                }
+            } catch (IOException ignore) {
+                // skip an unresolvable root
+            }
+        }
+        if (!within) {
+            throw new IllegalArgumentException(builtinName + "(): path is outside the allowed roots: " + path);
+        }
+        if (mustExist && (!canon.exists() || !canon.isFile())) {
+            throw new IllegalArgumentException(builtinName + "(): not a readable file: " + path);
+        }
+        return canon;
+    }
+
+    /**
      * Validate a caller-supplied content type before it becomes an HTTP header value. Rejects empty,
      * CR/LF/control-char (header injection), and non-MIME strings — falling back to the extension
      * guess (and ultimately {@code application/octet-stream}).
