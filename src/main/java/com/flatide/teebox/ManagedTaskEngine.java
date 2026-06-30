@@ -1376,7 +1376,11 @@ public class ManagedTaskEngine implements TaskRunner {
     // ---- Utility methods ----
 
     private boolean isTransientStatus(TaskStatus status) {
-        return status != null && status.isTransient();
+        // A null/unknown status is not a settled terminal status, so treat it as transient (not-yet-
+        // terminal). Recovery then routes such a task through liveness reconciliation instead of
+        // force-marking it persisted-terminal — which threw "Cannot mark persisted: not terminal",
+        // since normalizeFromRunner maps a null status to ACTIVE, not TERMINAL.
+        return status == null || status.isTransient();
     }
 
     private String deriveLegacyStatusForTask(Task task) {
