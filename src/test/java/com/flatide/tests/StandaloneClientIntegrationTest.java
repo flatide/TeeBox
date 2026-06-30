@@ -169,6 +169,61 @@ public class StandaloneClientIntegrationTest {
     }
 
     @Test
+    public void mergesMultipleSequentialShellTasksInSpawnOrderThroughDeployableClient() throws Exception {
+        TestServer server = startServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+
+            // Two SHELL tasks run sequentially; the merged taskLines must carry BOTH, in spawn order.
+            // The first task sleeps briefly so its start time is unambiguously before the second's
+            // (the merge reverses the newest-first task index, so equal start times could otherwise flip).
+            String source =
+                    "r1 = SHELL(\"sleep 0.2; echo first-task-out\")\n" +
+                    "r2 = SHELL(\"echo second-task-out\")\n" +
+                    "return {\"ok\": true}\n";
+            client.registerScript("multi_shell", source, true);
+
+            Map<String, Object> submitted = client.submitRun("multi_shell", new LinkedHashMap<String, Object>());
+            String runId = String.valueOf(submitted.get("runId"));
+            Assert.assertEquals("COMPLETED",
+                    String.valueOf(client.waitForRunTerminal(runId, 30000L).get("status")));
+
+            // Poll until both tasks are tracked (index/flush after run-terminal is tolerated).
+            Map<String, Object> stdout = client.getRunStdout(runId);
+            long deadline = System.currentTimeMillis() + 10000L;
+            while (taskCount(stdout) < 2 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(100);
+                stdout = client.getRunStdout(runId);
+            }
+            Assert.assertEquals("both SHELL tasks should be tracked", 2, taskCount(stdout));
+
+            // Merged task output carries both lines, in spawn (chronological) order.
+            List<String> taskLines = client.getRunTaskStdoutLines(runId);
+            Assert.assertEquals(2, taskLines.size());
+            Assert.assertEquals("first-task-out", taskLines.get(0));
+            Assert.assertEquals("second-task-out", taskLines.get(1));
+
+            // Per-task breakdown: one entry per task, same spawn order, lineCounts summing to taskLineCount.
+            List<?> tasks = (List<?>) stdout.get("tasks");
+            Assert.assertEquals(2, tasks.size());
+            Assert.assertTrue("first breakdown entry should be the first SHELL",
+                    String.valueOf(((Map<?, ?>) tasks.get(0)).get("command")).contains("first-task-out"));
+            Assert.assertTrue("second breakdown entry should be the second SHELL",
+                    String.valueOf(((Map<?, ?>) tasks.get(1)).get("command")).contains("second-task-out"));
+            int sum = 0;
+            for (Object t : tasks) {
+                sum += ((Number) ((Map<?, ?>) t).get("lineCount")).intValue();
+            }
+            Assert.assertEquals(2, ((Number) stdout.get("taskLineCount")).intValue());
+            Assert.assertEquals("per-task lineCounts must sum to taskLineCount",
+                    ((Number) stdout.get("taskLineCount")).intValue(), sum);
+            Assert.assertEquals(Boolean.FALSE, stdout.get("taskLinesTruncated"));
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
     public void submitWithCallbackUrlThroughDeployableClient() throws Exception {
         // Verifies the 4-arg submitRun(..., callbackUrl) overload actually puts the callback in the
         // request body: a webhook-enabled server delivers to our local receiver only if it parsed it.
@@ -213,6 +268,11 @@ public class StandaloneClientIntegrationTest {
             // discard
         }
         in.close();
+    }
+
+    private static int taskCount(Map<String, Object> stdout) {
+        Object v = stdout != null ? stdout.get("taskCount") : null;
+        return v instanceof Number ? ((Number) v).intValue() : 0;
     }
 
     private static List<String> awaitTaskStdoutLines(TeeBoxClient client, String runId) throws Exception {
