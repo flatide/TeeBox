@@ -2,6 +2,20 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.1.2
+
+- **Fix `Cannot mark persisted: not terminal` crash during task recovery.** A persisted task
+  whose `meta.json` had no status and no lifecycle (older data or an interrupted write) crashed
+  `init()` / disk load: a null status was inferred as terminal-persistable, but its rebuilt
+  lifecycle is ACTIVE. Recovery now treats a null/unknown status as not-yet-terminal, and
+  `markPersisted()` is guarded by the lifecycle invariant (only when actually terminal) at every
+  recovery call site, so the same exception can't recur for a future unknown status.
+- **Restore v1 lowercase task-status metadata compatibility.** v2's `TaskStatus` dropped the gson
+  `@SerializedName` annotations, so legacy `"status":"running"` metadata read as `null` (and was
+  then re-finalized, losing the original status). A `TaskStatus` gson adapter now (de)serializes by
+  the lowercase `value()` form — tolerant of both the lowercase value and the uppercase enum name,
+  writing the lowercase v1 wire form — so v1 task metadata recovers to the correct status.
+
 ## 1.1.1
 
 - **`THUMBNAIL` now restricts its source and destination paths to the configured allowed roots** —
