@@ -11,9 +11,9 @@ All notable changes to TeeBox are documented here.
   runtime). The composite build now includes `../propertee2-java`.
 - **Requires Java 25** at build and runtime — v2 uses virtual threads (Project Loom) and
   `ScopedValue`. Deploy targets that install a runtime separately must use a Java 25
-  build. For the `-with-runtime` bundle, point `propertee.teebox.runtimeLinuxX64Url`
-  (or the `defaultRuntimeLinuxX64Url` in `build.gradle`) at a JDK 25 Linux x86_64 build;
-  the current default is still a JDK 21 URL.
+  build. The `-with-runtime` bundle now defaults to OpenJDK 25.0.2 Linux x86_64
+  (`defaultRuntimeLinuxX64Url`/`Sha256` in `build.gradle`, overridable via
+  `propertee.teebox.runtimeLinuxX64Url`); was JDK 21.0.2.
 - **No TeeBox application code changed.** v2 exposes the same `com.flatide.*` API surface
   TeeBox links against (the `com.flatide.task` engine, the `interpreter`/`scheduler`
   façade, `platform`/`runtime`/`core`/`parser`). The only repo changes are
