@@ -324,6 +324,8 @@ Map<String, Object> tasks   = teebox.getRunTasksSummary(runId);  // 태스크 �
 List<Object> runs = teebox.listScriptRuns("calc_sum");           // 스크립트의 실행 목록
 List<String> out  = teebox.getRunStdoutLines(runId);             // 스크립트 PRINT 출력(줄 목록)
 List<String> err  = teebox.getRunStderrLines(runId);             // 스크립트 stderr(줄 목록)
+List<String> tout = teebox.getRunTaskStdoutLines(runId);         // 외부 SHELL 태스크 stdout(줄 목록)
+List<String> terr = teebox.getRunTaskStderrLines(runId);         // 외부 SHELL 태스크 stderr(줄 목록)
 ```
 
 > **대용량 결과 스트리밍 (`STREAM_FILE`)**: 6MB JSON 같은 큰 파일을 `READ_LINES`+`JOIN`+`JSON_PARSE` 후 리턴하면 스크립트 엔진 힙에 전체가 여러 번 복제되어 메모리·속도 문제가 생깁니다. 대신 스크립트에서 **`return STREAM_FILE("/path/to/big.json", "application/json")`** 로 디스크립터만 리턴하면, TeeBox가 그 파일을 **응답으로 직접 스트리밍**(파싱·전체버퍼 없음)합니다. 클라이언트는 `streamRunResult` 로 받습니다:
@@ -338,15 +340,27 @@ List<String> err  = teebox.getRunStderrLines(runId);             // 스크립트
 > - `STREAM_FILE` 경로는 **허용 루트 내**(`propertee.teebox.streamRoots`, 기본 `dataDir`)여야 합니다. 밖이면 스크립트가 실패합니다.
 > - 참조 방식이라 **파일은 결과 조회 전까지 존재**해야 합니다(TeeBox가 복사·소유하지 않음).
 
-> **stdout/stderr 조회**: 스크립트의 `PRINT(...)` 출력은 `getRunStdout(runId)`(전체 맵) 또는 `getRunStdoutLines(runId)`(줄 목록만)로 받습니다. **실행 중(RUNNING)에도 조회 가능**하고 종료 후에도 남아 있습니다. 단, 서버가 **최근 `MAX_LOG_LINES`(기본 200줄)만 보관하는 ring buffer**라 아주 긴 출력은 끝부분만 남습니다. `getRunStdout` 응답 형태:
+> **stdout/stderr 조회**: 한 실행에는 **따로 캡처되는 두 출력 스트림**이 있고, `getRunStdout(runId)` 한 번 호출로 둘 다 받습니다. **실행 중(RUNNING)에도 조회 가능**하고 종료 후에도 남아 있습니다.
+> - **스크립트 `PRINT(...)` 출력** → `lines` / `lineCount` (또는 `getRunStdoutLines(runId)`). 서버가 **최근 `MAX_LOG_LINES`(기본 200줄)만 보관하는 ring buffer**라 아주 긴 출력은 끝부분만 남습니다.
+> - **외부 `SHELL` 태스크 출력** → `taskLines` / `taskLineCount` (또는 `getRunTaskStdoutLines(runId)`). 실행의 태스크들을 spawn 순서로 병합합니다. 보통 스크립트당 `SHELL` 하나이므로 이는 곧 그 명령의 출력이며 **`runId` 만으로 조회**됩니다. 각 태스크는 기본적으로 마지막 **200줄**로 tail되고, `getRunStdout(runId, maxTaskLines)` / `getRunTaskStdoutLines(runId, maxTaskLines)` 로 조정합니다(`<= 0` = 라인 캡 없음). `taskLinesTruncated` 는 캡으로 잘렸는지, `taskCount` 와 `tasks` breakdown 은 태스크가 둘 이상일 때 줄의 출처를 구분해 줍니다. *(1.2.0 추가; `lines`/`lineCount` 는 그대로라 기존 코드는 계속 동작.)*
+>
+> `getRunStdout` 응답 형태(`getRunStderr` 는 `"stream": "stderr"` 로 동일):
 >
 > ```jsonc
 > {
 >   "runId": "run-...", "scriptId": "printer", "version": "1",
->   "status": "RUNNING",        // 또는 COMPLETED 등
+>   "status": "COMPLETED",      // 또는 RUNNING 등
 >   "stream": "stdout",
->   "lines": ["line one", "line two 42", "done"],
->   "lineCount": 3
+>   "lines": ["line one", "line two 42", "done"],   // 스크립트 PRINT 출력
+>   "lineCount": 3,
+>   "taskLines": ["job 12345 started", "done"],     // 병합된 SHELL 태스크 출력
+>   "taskLineCount": 2,
+>   "taskLinesTruncated": false,                    // 200줄(또는 ?taskLines=N) 캡으로 줄이 잘리면 true
+>   "taskCount": 1,
+>   "tasks": [                                      // 태스크별 breakdown (태스크 다수일 때 줄 출처 구분)
+>     { "taskId": "task-...", "command": "echo job 12345 started; ...",
+>       "status": "completed", "exitCode": 0, "lineCount": 2 }
+>   ]
 > }
 > ```
 
@@ -622,10 +636,12 @@ try {
 | `getRunResult(runId)` | `Map` | 결과(`resultData`). 스트림 결과면 redact된 디스크립터 |
 | `getRunTasksSummary(runId)` | `Map` | 태스크 상태별 개수 |
 | `listScriptRuns(scriptId)` | `List<Object>` | 해당 스크립트의 실행 목록 |
-| `getRunStdout(runId)` | `Map` | 캡처된 stdout(`lines`/`lineCount`). RUNNING 중에도 조회 |
-| `getRunStderr(runId)` | `Map` | 캡처된 stderr(동일 형태) |
-| `getRunStdoutLines(runId)` | `List<String>` | stdout 줄 목록만 |
-| `getRunStderrLines(runId)` | `List<String>` | stderr 줄 목록만 |
+| `getRunStdout(runId)` `[, maxTaskLines]` | `Map` | 캡처된 stdout: 스크립트 `PRINT`(`lines`/`lineCount`) **+ 병합된 `SHELL` 태스크 출력**(`taskLines`/`taskLineCount`, `taskLinesTruncated`, `taskCount`, `tasks`). RUNNING 중에도 조회. 선택 `maxTaskLines` 로 각 태스크 tail 캡(`<= 0` = 캡 없음; 기본 200) |
+| `getRunStderr(runId)` `[, maxTaskLines]` | `Map` | 캡처된 stderr(동일 형태) |
+| `getRunStdoutLines(runId)` | `List<String>` | 스크립트 `PRINT` stdout 줄 목록만 |
+| `getRunStderrLines(runId)` | `List<String>` | 스크립트 `PRINT` stderr 줄 목록만 |
+| `getRunTaskStdoutLines(runId)` `[, maxTaskLines]` | `List<String>` | 병합된 `SHELL` 태스크 stdout 줄 목록(`runId` 만으로) |
+| `getRunTaskStderrLines(runId)` `[, maxTaskLines]` | `List<String>` | 병합된 `SHELL` 태스크 stderr 줄 목록 |
 | `streamRunResult(runId, OutputStream)` | `long`(바이트) | `STREAM_FILE` 결과를 OutputStream으로 스트리밍(대용량용; 호출자가 stream을 닫음). 스트림 결과 아니면 `IOException`(409) |
 | `waitForRunTerminal(runId, timeoutMs)` | `Map`(상태) | 종료까지 클라이언트 측 폴링(50ms→1s 백오프). 초과 시 `IOException` |
 | `runAndWait(scriptId, version, props, timeoutMs)` | `Map`(결과) | 제출→대기→결과. 비-`COMPLETED`/타임아웃 시 `IOException` |

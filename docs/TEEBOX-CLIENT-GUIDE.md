@@ -324,6 +324,8 @@ Map<String, Object> tasks   = teebox.getRunTasksSummary(runId);  // task counts 
 List<Object> runs = teebox.listScriptRuns("calc_sum");           // run list for the script
 List<String> out  = teebox.getRunStdoutLines(runId);             // script PRINT output (list of lines)
 List<String> err  = teebox.getRunStderrLines(runId);             // script stderr (list of lines)
+List<String> tout = teebox.getRunTaskStdoutLines(runId);         // external SHELL task stdout (list of lines)
+List<String> terr = teebox.getRunTaskStderrLines(runId);         // external SHELL task stderr (list of lines)
 ```
 
 > **Streaming large results (`STREAM_FILE`)**: returning a big file like a 6MB JSON after `READ_LINES`+`JOIN`+`JSON_PARSE` copies the whole thing into the script engine heap multiple times, causing memory and speed problems. Instead, if the script returns just a descriptor with **`return STREAM_FILE("/path/to/big.json", "application/json")`**, TeeBox **streams that file directly as the response** (no parsing, no full buffering). The client receives it with `streamRunResult`:
@@ -338,15 +340,27 @@ List<String> err  = teebox.getRunStderrLines(runId);             // script stder
 > - The `STREAM_FILE` path must be **within an allowed root** (`propertee.teebox.streamRoots`, default `dataDir`). If it is outside, the script fails.
 > - Because it is by reference, **the file must exist until the result is retrieved** (TeeBox does not copy or own it).
 
-> **stdout/stderr lookup**: the script's `PRINT(...)` output is received via `getRunStdout(runId)` (full map) or `getRunStdoutLines(runId)` (lines only). **It is queryable even during execution (RUNNING)** and remains after termination. However, since the server keeps **a ring buffer of only the most recent `MAX_LOG_LINES` (default 200 lines)**, very long output keeps only the tail. The `getRunStdout` response shape:
+> **stdout/stderr lookup**: a run has **two separately-captured output streams**, and one `getRunStdout(runId)` call returns both. **Queryable even during execution (RUNNING)** and after termination.
+> - **Script `PRINT(...)` output** → `lines` / `lineCount` (or `getRunStdoutLines(runId)`). The server keeps **a ring buffer of only the most recent `MAX_LOG_LINES` (default 200 lines)**, so very long output keeps only the tail.
+> - **External `SHELL` task output** → `taskLines` / `taskLineCount` (or `getRunTaskStdoutLines(runId)`), merged across the run's tasks in spawn order. Most scripts run a single `SHELL`, so this is simply that command's output, **fetched by `runId` alone**. Each task is tailed to its last **200 lines** by default; override with `getRunStdout(runId, maxTaskLines)` / `getRunTaskStdoutLines(runId, maxTaskLines)` (`<= 0` = no line cap). `taskLinesTruncated` flags whether the cap dropped lines; `taskCount` + the `tasks` breakdown attribute lines when more than one task ran. *(Added in 1.2.0; `lines`/`lineCount` are unchanged, so existing code keeps working.)*
+>
+> `getRunStdout` response shape (`getRunStderr` is identical with `"stream": "stderr"`):
 >
 > ```jsonc
 > {
 >   "runId": "run-...", "scriptId": "printer", "version": "1",
->   "status": "RUNNING",        // or COMPLETED, etc.
+>   "status": "COMPLETED",      // or RUNNING, etc.
 >   "stream": "stdout",
->   "lines": ["line one", "line two 42", "done"],
->   "lineCount": 3
+>   "lines": ["line one", "line two 42", "done"],   // script PRINT output
+>   "lineCount": 3,
+>   "taskLines": ["job 12345 started", "done"],     // merged SHELL task output
+>   "taskLineCount": 2,
+>   "taskLinesTruncated": false,                    // true if the 200-line (or ?taskLines=N) cap dropped lines
+>   "taskCount": 1,
+>   "tasks": [                                      // per-task breakdown (attribute lines across multiple tasks)
+>     { "taskId": "task-...", "command": "echo job 12345 started; ...",
+>       "status": "completed", "exitCode": 0, "lineCount": 2 }
+>   ]
 > }
 > ```
 
@@ -622,10 +636,12 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `getRunResult(runId)` | `Map` | Result (`resultData`). A redacted descriptor for a stream result |
 | `getRunTasksSummary(runId)` | `Map` | Task counts by status |
 | `listScriptRuns(scriptId)` | `List<Object>` | Run list for the script |
-| `getRunStdout(runId)` | `Map` | Captured stdout (`lines`/`lineCount`). Queryable during RUNNING too |
-| `getRunStderr(runId)` | `Map` | Captured stderr (same shape) |
-| `getRunStdoutLines(runId)` | `List<String>` | stdout lines only |
-| `getRunStderrLines(runId)` | `List<String>` | stderr lines only |
+| `getRunStdout(runId)` `[, maxTaskLines]` | `Map` | Captured stdout: script `PRINT` (`lines`/`lineCount`) **+ merged `SHELL` task output** (`taskLines`/`taskLineCount`, `taskLinesTruncated`, `taskCount`, `tasks`). Queryable during RUNNING too. Optional `maxTaskLines` caps each task's tail (`<= 0` = no cap; default 200) |
+| `getRunStderr(runId)` `[, maxTaskLines]` | `Map` | Captured stderr (same shape) |
+| `getRunStdoutLines(runId)` | `List<String>` | script `PRINT` stdout lines only |
+| `getRunStderrLines(runId)` | `List<String>` | script `PRINT` stderr lines only |
+| `getRunTaskStdoutLines(runId)` `[, maxTaskLines]` | `List<String>` | merged `SHELL` task stdout lines (by `runId` alone) |
+| `getRunTaskStderrLines(runId)` `[, maxTaskLines]` | `List<String>` | merged `SHELL` task stderr lines |
 | `streamRunResult(runId, OutputStream)` | `long`(bytes) | Stream a `STREAM_FILE` result to an OutputStream (for large data; the caller closes the stream). `IOException`(409) if not a stream result |
 | `waitForRunTerminal(runId, timeoutMs)` | `Map`(status) | Client-side poll until termination (50ms→1s backoff). `IOException` on exceeding the timeout |
 | `runAndWait(scriptId, version, props, timeoutMs)` | `Map`(result) | Submit→wait→result. `IOException` on non-`COMPLETED`/timeout |
