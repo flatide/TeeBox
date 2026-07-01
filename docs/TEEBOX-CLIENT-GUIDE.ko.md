@@ -719,3 +719,12 @@ try {
 - 대기 헬퍼의 타임아웃은 **클라이언트 측**일 뿐, 서버 실행을 멈추지 않습니다. 같은 `runId` 로 재폴링하세요.
 - 프로세스 중단(kill)은 클라이언트 범위 밖입니다 — TeeBox 관리 UI/`/api/admin/...` 또는 admin API 를 사용하세요.
 - 파일을 직접 수정할 경우 **Java 7 호환**(람다/스트림/`java.time` 금지)을 유지하세요.
+
+---
+
+## 13. 알아두면 좋은 서버 동작 (access 로그 & 버전)
+
+아래는 **서버 측** 동작으로 클라이언트 API는 아니지만, TeeBox 서버를 운영·연동할 때 유용합니다. (전체 운영은 `docs/OPERATIONS-GUIDE.ko.md` 참고.)
+
+- **모든 API 호출이 서버에 access 로그로 남습니다** (1.3.0부터). 서버가 요청당 한 줄을 `access` 로거에 기록합니다 — method·path(+query)·client IP(`X-Forwarded-For` 우선)·응답 status·소요 ms — 예: `GET /api/client/runs/run-x/status from 10.0.0.9 -> 200 (3ms)`. 클라이언트 호출을 서버 로그와 대조할 때 유용합니다. 요청/응답 **본문은 로깅하지 않습니다**(API 토큰·스크립트 소스·대용량 페이로드가 섞일 수 있어서). 운영자는 `log4j2.xml`에서 독립적으로 조정/무음화할 수 있습니다(`<Logger name="access" level="WARN"/>`).
+- **서버가 자신의 버전을 표시합니다** (1.3.0부터): 시작 배너(`TeeBox <version> listening on ...`), admin UI 상단(`TeeBox v<version>`), 그리고 `GET /api/admin/system`의 `teeboxVersion`(admin 토큰). 이는 **서버** 버전으로, 임베드하는 **클라이언트 jar** 버전(`teebox-client-<version>.jar`)과 별개입니다 — 둘은 독립적으로 버전이 매겨지며 일치할 필요가 없습니다.

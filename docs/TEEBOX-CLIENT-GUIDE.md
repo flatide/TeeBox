@@ -719,3 +719,12 @@ try {
 - The wait helpers' timeout is **client-side only** and does not stop server execution. Re-poll with the same `runId`.
 - Process termination (kill) is out of the client's scope — use the TeeBox admin UI/`/api/admin/...` or the admin API.
 - If you modify the file directly, keep it **Java 7 compatible** (no lambdas/streams/`java.time`).
+
+---
+
+## 13. Server behavior worth knowing (access logs & version)
+
+These are **server-side**, not client API — but useful when operating against a TeeBox server. (For full operations, see `docs/OPERATIONS-GUIDE.ko.md`.)
+
+- **Every API call is access-logged server-side** (since 1.3.0). The server writes one line per request to its `access` logger — method, path (+query), client IP (honoring `X-Forwarded-For`), response status, and elapsed ms — e.g. `GET /api/client/runs/run-x/status from 10.0.0.9 -> 200 (3ms)`. Handy for correlating your client calls with server logs. Request/response **bodies are not logged** (they can carry your API token, script source, or large payloads). Operators can silence/retune it independently in `log4j2.xml` (`<Logger name="access" level="WARN"/>`).
+- **The server reports its version** (since 1.3.0): in its startup banner (`TeeBox <version> listening on ...`), the admin UI top-nav (`TeeBox v<version>`), and `GET /api/admin/system` as `teeboxVersion` (admin token). This is the **server** version — distinct from the **client jar** version you embed (`teebox-client-<version>.jar`); the two are versioned independently and need not match.
