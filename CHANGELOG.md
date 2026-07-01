@@ -2,6 +2,22 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.3.0
+
+- **Per-request API access logging.** The `/api` and `/admin` contexts now emit one access-log line
+  per request on a dedicated `access` logger — method, path (+query), client IP (honoring
+  `X-Forwarded-For`), response status, and elapsed ms — e.g.
+  `GET /api/client/runs?limit=10 from 127.0.0.1 -> 200 (4ms)`. Emitted in a `finally`, so it fires on
+  success and error alike (a handler that threw before sending headers logs `-> no-response` at
+  `warn`). Request/response bodies are deliberately **not** logged (they can carry API tokens, script
+  source, or large payloads). `/health` and `/` are left unlogged to avoid load-balancer/static noise.
+  Operators can retune or silence it independently in `log4j2.xml`
+  (`<Logger name="access" level="WARN"/>`).
+- **The TeeBox version is now displayed at runtime.** The build version is baked into a classpath
+  resource and surfaced in the startup banner (log + stdout: `TeeBox <version> listening on ...`), the
+  admin UI top-nav (`TeeBox v<version>`, on every page), and the system API
+  (`SystemInfo.teeboxVersion` via `GET /api/admin/system`).
+
 ## 1.2.0
 
 - **Run-output endpoints now also return external task (`SHELL`) output, merged into the response.**
