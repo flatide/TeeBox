@@ -81,10 +81,11 @@ public class TeeBoxServer {
     }
 
     private void registerContexts() {
-        // Access-log the API and admin-UI contexts (operator/client activity). /health (load-balancer
-        // probes) and "/" (favicon/static) are left unlogged to avoid flooding the log.
+        // Access-log only the /api context — the JSON API called by external/upstream servers
+        // (client + publisher + admin API). The /admin operator HTML UI, /health (load-balancer
+        // probes), and "/" (favicon/static) are left unlogged to avoid flooding the log.
         server.createContext("/api", accessLogged(new ApiHandler()));
-        server.createContext("/admin", accessLogged(new AdminHandler()));
+        server.createContext("/admin", new AdminHandler());
         server.createContext("/health", new HealthHandler());
         server.createContext("/", new RootHandler());
     }

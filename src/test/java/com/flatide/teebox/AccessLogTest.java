@@ -78,6 +78,55 @@ public class AccessLogTest {
         }
     }
 
+    @Test
+    public void adminUiContextIsNotAccessLogged() throws Exception {
+        LoggerContext ctx = (LoggerContext) LogManager.getContext(false);
+        Configuration cfg = ctx.getConfiguration();
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        LoggerConfig root = cfg.getRootLogger();
+        root.addAppender(appender, Level.INFO, null);
+        ctx.updateLoggers();
+
+        File dataDir = Files.createTempDirectory("teebox-accesslog-admin-it").toFile();
+        TeeBoxConfig config = new TeeBoxConfig();
+        config.bindAddress = "127.0.0.1";
+        config.port = 0;
+        config.dataDir = dataDir;
+        config.maxConcurrentRuns = 1;
+        TeeBoxServer server = new TeeBoxServer(config);
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getPort();
+            // Hit the /admin operator UI — its exact response is irrelevant; only that it is NOT logged.
+            try {
+                HttpURLConnection admin = (HttpURLConnection) new URL(base + "/admin").openConnection();
+                admin.setRequestMethod("GET");
+                admin.setInstanceFollowRedirects(false);
+                int code = admin.getResponseCode();
+                drain(code < 400 ? admin.getInputStream() : admin.getErrorStream());
+            } catch (java.io.IOException ignore) {
+                // the admin UI's own behavior is not what this test asserts
+            }
+            // ...and an /api request as a positive control (still access-logged).
+            HttpURLConnection api = (HttpURLConnection) new URL(base + "/api/client/runs").openConnection();
+            api.setRequestMethod("GET");
+            int apiCode = api.getResponseCode();
+            drain(apiCode < 400 ? api.getInputStream() : api.getErrorStream());
+
+            String apiLine = awaitLine(appender, "GET /api/client/runs", "->");
+            Assert.assertNotNull("an /api request should still be access-logged: " + appender.lines(), apiLine);
+            for (String line : appender.lines()) {
+                Assert.assertFalse("the /admin context must not be access-logged: " + line, line.contains(" /admin"));
+            }
+        } finally {
+            server.stop();
+            root.removeAppender("capture-access");
+            ctx.updateLoggers();
+            appender.stop();
+        }
+    }
+
     private static String awaitLine(CapturingAppender appender, String needleA, String needleB) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 3000L;
         while (System.currentTimeMillis() < deadline) {
