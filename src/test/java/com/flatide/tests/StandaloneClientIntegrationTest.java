@@ -12,6 +12,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.util.LinkedHashMap;
@@ -277,6 +278,47 @@ public class StandaloneClientIntegrationTest {
                     ((Number) stdout.get("taskLineCount")).intValue(), sum);
         } finally {
             server.close();
+        }
+    }
+
+    @Test
+    public void runsHttpGetBuiltinThroughTeeBox() throws Exception {
+        // Proves the restored ProperTee v2 HTTP builtins work end-to-end through TeeBox: a submitted
+        // run calls HTTP_GET against a loopback target and returns the response. HTTP runs off the
+        // cooperative baton (Coop.blocking) via TeeBoxPlatformProvider's inherited httpRequest.
+        HttpServer target = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        target.createContext("/hello", new HttpHandler() {
+            @Override
+            public void handle(HttpExchange exchange) throws java.io.IOException {
+                byte[] body = "hello-from-http".getBytes("UTF-8");
+                exchange.sendResponseHeaders(200, body.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(body);
+                }
+            }
+        });
+        target.start();
+        int targetPort = target.getAddress().getPort();
+
+        TestServer server = startServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+            String source =
+                    "r = HTTP_GET(\"http://127.0.0.1:" + targetPort + "/hello\")\n" +
+                    "return {\"httpStatus\": r.value.status, \"body\": r.value.body, \"ok\": r.ok}\n";
+            client.registerScript("http_get", source, true);
+
+            Map<String, Object> result = client.runAndWait(
+                    "http_get", null, new LinkedHashMap<String, Object>(), 30000L);
+
+            Assert.assertEquals("COMPLETED", String.valueOf(result.get("status")));
+            Map<?, ?> data = (Map<?, ?>) result.get("resultData");
+            Assert.assertEquals(200.0, ((Number) data.get("httpStatus")).doubleValue(), 0.0001);
+            Assert.assertEquals("hello-from-http", data.get("body"));
+            Assert.assertEquals(Boolean.TRUE, data.get("ok"));
+        } finally {
+            server.close();
+            target.stop(0);
         }
     }
 
