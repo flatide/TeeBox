@@ -210,7 +210,10 @@ public class TeeBoxServer {
                 AdminSessionManager.Session session = sessionManager.getSession(getSessionToken(exchange));
                 boolean loginRequired = sessionManager.isLoginRequired();
                 boolean loggedIn = !loginRequired || session != null;
-                if ("POST".equals(method) && !loggedIn) {
+                // Gate the whole admin UI behind login when a roster exists — GET as well as POST. The
+                // login page GET and the login/logout POSTs are handled above, so they stay reachable.
+                // (Otherwise unauthenticated clients could read script source and run/task output via GET.)
+                if (!loggedIn) {
                     redirect(exchange, "/admin/login");
                     return;
                 }

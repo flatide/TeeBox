@@ -88,7 +88,49 @@ public class TeeBoxMultiUserUiTest {
         }
     }
 
+    @Test
+    public void unauthenticatedAdminGetIsGatedBehindLogin() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-multiuser-getgate").toFile();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            // alice logs in and registers a script whose source must not leak to anonymous GET.
+            String alice = login(base, "alice", "alice-pw");
+            Assert.assertNotNull(alice);
+            assertRedirect("alice registers", postForm(base, "/admin/scripts/register",
+                    "scriptId=secret_script&content=" + enc(SCRIPT_BODY) + "&activate=on", alice));
+
+            // The login page itself stays reachable without auth.
+            Assert.assertEquals("login page GET open", 200, get(base, "/admin/login", null));
+
+            // Every other /admin GET redirects to login for an unauthenticated client (no content leak).
+            assertRedirect("anon GET dashboard", get(base, "/admin", null));
+            assertRedirect("anon GET scripts list", get(base, "/admin/scripts", null));
+            assertRedirect("anon GET script detail (source)", get(base, "/admin/scripts/secret_script", null));
+            assertRedirect("anon GET runs", get(base, "/admin/runs", null));
+
+            // A logged-in user can still read.
+            Assert.assertEquals("authed GET script detail", 200, get(base, "/admin/scripts/secret_script", alice));
+        } finally {
+            server.stop();
+        }
+    }
+
     // ---- helpers ----
+
+    /** GET with an optional session cookie; no redirect following. Returns the status code. */
+    private int get(String base, String path, String cookie) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + path).openConnection();
+        conn.setInstanceFollowRedirects(false);
+        conn.setRequestMethod("GET");
+        if (cookie != null) {
+            conn.setRequestProperty("Cookie", "teebox-session=" + cookie);
+        }
+        int code = conn.getResponseCode();
+        conn.disconnect();
+        return code;
+    }
 
     private TeeBoxServer startServer(File dataDir) throws Exception {
         TeeBoxConfig config = new TeeBoxConfig();

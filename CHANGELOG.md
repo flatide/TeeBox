@@ -15,8 +15,10 @@ All notable changes to TeeBox are documented here.
   Admins may act on any script; a regular `user` may only **modify / run / kill-tasks on scripts they
   own**, and may register new scripts (becoming owner). Enforcement is server-side in `AdminHandler`
   (403 on violation; `/admin/shutdown` is admin-only), and the UI hides buttons the viewer can't use.
-  The `/api/*` namespaces are **unchanged** — token-gated and unrestricted (no ownership checks);
-  API-registered scripts have no owner (admin-only in the UI).
+  When a roster exists the **entire `/admin` UI requires login — GET reads (script source, run/task
+  output) are gated, not only mutations** (the login page stays open). The `/api/*` namespaces are
+  **unchanged** — token-gated and unrestricted (no ownership checks); API-registered scripts have no
+  owner (admin-only in the UI).
 - **Bootstrap & compatibility.** `adminUser`/`adminPassword` now *seed* the roster: when it's empty and
   `adminUser` is set, `{adminUser, admin}` is created (with `adminPassword` as the initial hashed
   credential if provided). Login is required exactly when a roster exists; with no roster (and no
