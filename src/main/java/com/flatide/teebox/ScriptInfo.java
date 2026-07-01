@@ -11,6 +11,7 @@ public class ScriptInfo {
     public int maxConcurrentRuns;   // 0 = unlimited (use global limit)
     public boolean immediate;       // bypass global queue
     public long deletedAt;          // 0 = active; > 0 = soft-deleted timestamp (ms)
+    public String owner;            // admin-UI username of the first registrant; null = legacy/API (admin-only in UI)
     public List<ScriptVersionInfo> versions = new ArrayList<ScriptVersionInfo>();
 
     public ScriptInfo copy() {
@@ -22,6 +23,7 @@ public class ScriptInfo {
         copy.maxConcurrentRuns = maxConcurrentRuns;
         copy.immediate = immediate;
         copy.deletedAt = deletedAt;
+        copy.owner = owner;
         for (ScriptVersionInfo version : versions) {
             copy.versions.add(version.copy());
         }

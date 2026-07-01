@@ -99,6 +99,23 @@ public class ScriptRegistry {
                                                    List<String> labels,
                                                    boolean activate,
                                                    List<OutputPublishRule> outputRules) {
+        return registerVersion(scriptId, version, content, description, labels, activate, outputRules, null);
+    }
+
+    /**
+     * @param owner admin-UI username recorded as the script owner. Applied only when this call
+     *              <i>creates</i> the script (its first version); adding a version to an existing
+     *              script never changes ownership. null (e.g. API/publisher registration) leaves the
+     *              owner unset — such scripts are admin-only in the UI.
+     */
+    public synchronized ScriptInfo registerVersion(String scriptId,
+                                                   String version,
+                                                   String content,
+                                                   String description,
+                                                   List<String> labels,
+                                                   boolean activate,
+                                                   List<OutputPublishRule> outputRules,
+                                                   String owner) {
         validateName("scriptId", scriptId);
         if (content == null || content.trim().length() == 0) {
             throw new IllegalArgumentException("content is required");
@@ -111,6 +128,7 @@ public class ScriptRegistry {
             info = new ScriptInfo();
             info.scriptId = scriptId;
             info.createdAt = now;
+            info.owner = (owner != null && owner.trim().length() > 0) ? owner.trim() : null;
         }
 
         // Version is optional: blank/null => auto-assign the next sequential integer ("1","2",...).

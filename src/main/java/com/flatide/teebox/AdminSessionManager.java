@@ -6,43 +6,83 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Simple in-memory session manager for admin UI authentication.
- * Sessions expire after a configurable timeout (default 8 hours).
+ * In-memory session manager for the admin UI, backed by a {@link UserStore} (multi-user roster +
+ * password hashes). Sessions carry the authenticated username and role and expire after a
+ * configurable timeout (default 8 hours).
+ *
+ * <p>Login is required only when a roster exists ({@link UserStore#hasRoster()}); with no roster the
+ * UI stays open (the historical open-by-default posture). Passwords are set on <i>first login</i>:
+ * a roster user with no stored credential has the password they type recorded and hashed.
  */
 public class AdminSessionManager {
     private static final long DEFAULT_SESSION_TIMEOUT_MS = 8L * 60L * 60L * 1000L;
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    private final String adminUser;
-    private final String adminPassword;
-    private final long sessionTimeoutMs;
-    private final ConcurrentHashMap<String, Long> sessions = new ConcurrentHashMap<String, Long>();
+    /** An authenticated admin-UI session. */
+    public static class Session {
+        public final String username;
+        public final String role;
+        final long expiry;
 
-    public AdminSessionManager(String adminUser, String adminPassword) {
-        this(adminUser, adminPassword, DEFAULT_SESSION_TIMEOUT_MS);
+        Session(String username, String role, long expiry) {
+            this.username = username;
+            this.role = role;
+            this.expiry = expiry;
+        }
+
+        public boolean isAdmin() {
+            return UserStore.ROLE_ADMIN.equals(role);
+        }
     }
 
-    public AdminSessionManager(String adminUser, String adminPassword, long sessionTimeoutMs) {
-        this.adminUser = adminUser;
-        this.adminPassword = adminPassword;
+    private final UserStore userStore;
+    private final long sessionTimeoutMs;
+    private final ConcurrentHashMap<String, Session> sessions = new ConcurrentHashMap<String, Session>();
+
+    public AdminSessionManager(UserStore userStore) {
+        this(userStore, DEFAULT_SESSION_TIMEOUT_MS);
+    }
+
+    public AdminSessionManager(UserStore userStore, long sessionTimeoutMs) {
+        this.userStore = userStore;
         this.sessionTimeoutMs = sessionTimeoutMs;
     }
 
-    /** Returns true if login is required (adminUser and adminPassword are both configured). */
+    /** Returns true if login is required (a user roster exists). */
     public boolean isLoginRequired() {
-        return adminUser != null && adminUser.length() > 0
-            && adminPassword != null && adminPassword.length() > 0;
+        return userStore.hasRoster();
     }
 
-    /** Authenticate and return session token, or null if invalid. */
+    /**
+     * Authenticate and return a session token, or null if invalid.
+     *
+     * <p>The user must exist in the roster. If they have no stored credential yet, this is their
+     * first login — the supplied password is hashed and stored, and a session is issued. Otherwise
+     * the password is verified against the stored hash.
+     */
     public String login(String user, String password) {
-        if (!isLoginRequired()) return null;
-        if (adminUser.equals(user) && adminPassword.equals(password)) {
-            String token = generateToken();
-            sessions.put(token, System.currentTimeMillis() + sessionTimeoutMs);
-            return token;
+        if (!isLoginRequired()) {
+            return null;
         }
-        return null;
+        if (user == null || password == null || password.length() == 0) {
+            return null;
+        }
+        UserStore.User found = userStore.findUser(user);
+        if (found == null) {
+            return null;
+        }
+        if (userStore.hasPassword(found.username)) {
+            if (!userStore.verifyPassword(found.username, password)) {
+                return null;
+            }
+        } else {
+            // First login: capture and store the password.
+            userStore.setPassword(found.username, password);
+            TeeBoxLog.info("AdminUI", "First login: password set for user '" + found.username + "'");
+        }
+        String token = generateToken();
+        sessions.put(token, new Session(found.username, found.role, System.currentTimeMillis() + sessionTimeoutMs));
+        return token;
     }
 
     /** Invalidate a session. */
@@ -52,24 +92,33 @@ public class AdminSessionManager {
         }
     }
 
+    /** Resolve a session token to its (non-expired) session, or null. */
+    public Session getSession(String token) {
+        if (token == null) {
+            return null;
+        }
+        Session session = sessions.get(token);
+        if (session == null) {
+            return null;
+        }
+        if (System.currentTimeMillis() > session.expiry) {
+            sessions.remove(token);
+            return null;
+        }
+        return session;
+    }
+
     /** Check if a session token is valid. */
     public boolean isValidSession(String token) {
-        if (token == null) return false;
-        Long expiry = sessions.get(token);
-        if (expiry == null) return false;
-        if (System.currentTimeMillis() > expiry) {
-            sessions.remove(token);
-            return false;
-        }
-        return true;
+        return getSession(token) != null;
     }
 
     /** Remove expired sessions (called periodically). */
     public void cleanExpired() {
         long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, Long>> it = sessions.entrySet().iterator();
+        Iterator<Map.Entry<String, Session>> it = sessions.entrySet().iterator();
         while (it.hasNext()) {
-            if (now > it.next().getValue()) {
+            if (now > it.next().getValue().expiry) {
                 it.remove();
             }
         }

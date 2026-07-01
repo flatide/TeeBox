@@ -15,21 +15,83 @@ public class AdminPageRenderer {
     private final Gson gson;
     private boolean loggedIn = true;
     private boolean loginRequired = false;
+    private String currentUser = null;
+    private String currentRole = null;
 
     public AdminPageRenderer(TeeBoxConfig config, RunManager runManager, Gson gson) {
         this.config = config;
         this.runManager = runManager;
         this.gson = gson;
-        this.loginRequired = config.adminUser != null && config.adminUser.length() > 0
-            && config.adminPassword != null && config.adminPassword.length() > 0;
     }
 
-    public void setLoggedIn(boolean loggedIn) {
-        this.loggedIn = loggedIn;
+    /**
+     * Per-request identity, set by the server before each render. Drives read-only mode and per-owner
+     * button visibility. A null session means either open mode (loginRequired false) or not-logged-in.
+     */
+    public void setSession(AdminSessionManager.Session session, boolean loginRequired) {
+        this.loginRequired = loginRequired;
+        this.loggedIn = !loginRequired || session != null;
+        this.currentUser = session != null ? session.username : null;
+        this.currentRole = session != null ? session.role : null;
     }
 
     private boolean isReadOnly() {
         return loginRequired && !loggedIn;
+    }
+
+    /** Open mode or an admin session. */
+    private boolean isAdmin() {
+        return !loginRequired || UserStore.ROLE_ADMIN.equals(currentRole);
+    }
+
+    /** Whether the current viewer may mutate/run this script (open mode, admin, or owner). */
+    private boolean canModify(ScriptInfo script) {
+        if (isReadOnly()) {
+            return false;
+        }
+        if (isAdmin()) {
+            return true;
+        }
+        return script != null && script.owner != null && currentUser != null && script.owner.equals(currentUser);
+    }
+
+    /** Ownership check when only a scriptId is on hand (runs/tasks); loads the script to read its owner. */
+    private boolean canModifyScriptId(String scriptId) {
+        if (isReadOnly()) {
+            return false;
+        }
+        if (isAdmin()) {
+            return true;
+        }
+        if (scriptId == null) {
+            return false;
+        }
+        ScriptInfo info;
+        try {
+            info = runManager.getScript(scriptId);
+        } catch (RuntimeException e) {
+            return false;
+        }
+        return canModify(info);
+    }
+
+    /** Ownership check for a run/task, resolved via the run's script owner. */
+    private boolean canModifyRunId(String runId) {
+        if (isReadOnly()) {
+            return false;
+        }
+        if (isAdmin()) {
+            return true;
+        }
+        RunInfo run = runId != null ? runManager.getRun(runId) : null;
+        if (run == null) {
+            return false;
+        }
+        return canModifyScriptId(run.scriptId);
+    }
+
+    private String ownerLabel(String owner) {
+        return (owner != null && owner.length() > 0) ? escape(owner) : "<span class='dim'>&mdash;</span>";
     }
 
     private String renderTopNav(String activePage) {
@@ -49,6 +111,14 @@ public class AdminPageRenderer {
         sb.append("<label class='auto-toggle'><input type='checkbox' id='auto-refresh-toggle'/> Auto-refresh</label>");
         if (loginRequired) {
             if (loggedIn) {
+                if (currentUser != null) {
+                    sb.append("<span class='dim' style='margin-left:8px;font-size:11px;'>")
+                      .append(escape(currentUser));
+                    if (UserStore.ROLE_ADMIN.equals(currentRole)) {
+                        sb.append(" <span class='tag tag-nav'>admin</span>");
+                    }
+                    sb.append("</span>");
+                }
                 sb.append("<form method='post' action='/admin/logout' style='margin-left:8px;display:inline;'>");
                 sb.append("<button type='submit' class='btn btn-sm' style='font-size:11px;'>Logout</button></form>");
             } else {
@@ -80,8 +150,8 @@ public class AdminPageRenderer {
             sb.append("</div>");
         }
 
-        // Shutdown card
-        if (!isReadOnly()) {
+        // Shutdown card (admin only)
+        if (isAdmin()) {
             sb.append("<div class='card'>");
             sb.append("<div class='card-header'><h2>Server Control</h2></div>");
             if (runManager.isDraining()) {
@@ -413,7 +483,7 @@ public class AdminPageRenderer {
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>").append(escape(runId)).append("</h2>");
-        if (!isReadOnly()) {
+        if (canModifyScriptId(run.scriptId)) {
             sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/kill-tasks'>");
             sb.append("<button type='submit' class='btn-danger btn-sm'>Kill All Tasks</button></form>");
         }
@@ -589,7 +659,7 @@ public class AdminPageRenderer {
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>").append(escape(taskId)).append("</h2>");
-        if (!isReadOnly()) {
+        if (canModifyRunId(info.runId)) {
             sb.append("<form method='post' action='/admin/tasks/").append(urlPath(taskId)).append("/kill'>");
             sb.append("<button type='submit' class='btn-danger btn-sm'>Kill Task</button></form>");
         }
@@ -663,11 +733,12 @@ public class AdminPageRenderer {
             sb.append("<p class='empty'>No scripts registered</p>");
         } else {
             sb.append("<div class='table-wrap'><table><thead><tr>");
-            sb.append("<th>Script ID</th><th>Active Version</th><th>Versions</th><th>Created</th><th>Updated</th><th></th>");
+            sb.append("<th>Script ID</th><th>Owner</th><th>Active Version</th><th>Versions</th><th>Created</th><th>Updated</th><th></th>");
             sb.append("</tr></thead><tbody>");
             for (ScriptInfo script : scripts) {
                 sb.append("<tr>");
                 sb.append("<td><a href='/admin/scripts/").append(urlPath(script.scriptId)).append("' class='mono'>").append(escape(script.scriptId)).append("</a></td>");
+                sb.append("<td class='dim'>").append(ownerLabel(script.owner)).append("</td>");
                 sb.append("<td>");
                 if (script.activeVersion != null && script.activeVersion.length() > 0) {
                     sb.append(statusBadge(script.activeVersion));
@@ -678,11 +749,13 @@ public class AdminPageRenderer {
                 sb.append("<td class='center'>").append(script.versions.size()).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.createdAt))).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.updatedAt))).append("</td>");
-                if (!isReadOnly()) {
+                if (canModify(script)) {
                     sb.append("<td style='white-space:nowrap;'>");
                     sb.append("<form method='post' action='/admin/scripts/delete/").append(urlPath(script.scriptId)).append("' style='display:inline;' onsubmit='return confirm(\"Delete script ").append(escape(script.scriptId).replace("'", "\\'")).append("?\")'>");
                     sb.append("<button type='submit' class='btn-danger btn-sm'>Delete</button></form>");
                     sb.append("</td>");
+                } else {
+                    sb.append("<td></td>");
                 }
                 sb.append("</tr>");
             }
@@ -696,17 +769,20 @@ public class AdminPageRenderer {
             sb.append("<div class='card-header'><h2>Deleted Scripts (").append(deletedScripts.size()).append(")</h2>");
             sb.append("<span class='dim' style='font-size:12px;'>Scheduled for permanent removal</span></div>");
             sb.append("<div class='table-wrap'><table><thead><tr>");
-            sb.append("<th>Script ID</th><th>Deleted At</th><th></th>");
+            sb.append("<th>Script ID</th><th>Owner</th><th>Deleted At</th><th></th>");
             sb.append("</tr></thead><tbody>");
             for (ScriptInfo script : deletedScripts) {
                 sb.append("<tr>");
                 sb.append("<td><span class='mono dim'>").append(escape(script.scriptId)).append("</span></td>");
+                sb.append("<td class='dim'>").append(ownerLabel(script.owner)).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.deletedAt))).append("</td>");
-                if (!isReadOnly()) {
+                if (canModify(script)) {
                     sb.append("<td style='white-space:nowrap;'>");
                     sb.append("<form method='post' action='/admin/scripts/restore/").append(urlPath(script.scriptId)).append("' style='display:inline;'>");
                     sb.append("<button type='submit' class='btn btn-sm'>Restore</button></form>");
                     sb.append("</td>");
+                } else {
+                    sb.append("<td></td>");
                 }
                 sb.append("</tr>");
             }
@@ -784,6 +860,7 @@ public class AdminPageRenderer {
             sb.append("<span class='dim'>&mdash;</span>");
         }
         sb.append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Owner</div><div class='detail-value dim'>").append(ownerLabel(script.owner)).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Created</div><div class='detail-value dim'>").append(escape(formatTime(script.createdAt))).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Updated</div><div class='detail-value dim'>").append(escape(formatTime(script.updatedAt))).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Total Versions</div><div class='detail-value'>").append(script.versions.size()).append("</div></div>");
@@ -791,8 +868,8 @@ public class AdminPageRenderer {
         sb.append("<div class='detail-item'><div class='detail-label'>Immediate</div><div class='detail-value'>").append(script.immediate ? statusBadge("YES") + " <span class='dim'>(bypass global queue)</span>" : "<span class='dim'>no</span>").append("</div></div>");
         sb.append("</div></div>");
 
-        // Execution settings card (admin only)
-        if (!isReadOnly()) {
+        // Execution settings card (owner or admin)
+        if (canModify(script)) {
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Execution Settings</h2></div>");
         sb.append("<form method='post' action='/admin/scripts/settings/").append(urlPath(scriptId)).append("' class='form-grid'>");
@@ -805,7 +882,7 @@ public class AdminPageRenderer {
         sb.append("/> Immediate (bypass global queue, use separate thread pool)</label></div>");
         sb.append("<div class='form-row'><button type='submit' class='btn btn-sm'>Save</button></div>");
         sb.append("</div></form></div>");
-        } // end isReadOnly check for Execution Settings
+        } // end canModify check for Execution Settings
 
         sb.append("<div class='card'>");
         sb.append("<h2>Versions (").append(script.versions.size()).append(")</h2>");
@@ -814,7 +891,7 @@ public class AdminPageRenderer {
         } else {
             sb.append("<div class='table-wrap'><table><thead><tr>");
             sb.append("<th>Version</th><th>Status</th><th>Description</th><th>Labels</th><th>SHA-256</th><th>Created</th>");
-            if (!isReadOnly()) sb.append("<th>Action</th>");
+            if (canModify(script)) sb.append("<th>Action</th>");
             sb.append("</tr></thead><tbody>");
             for (ScriptVersionInfo version : script.versions) {
                 sb.append("<tr>");
@@ -845,7 +922,7 @@ public class AdminPageRenderer {
                 }
                 sb.append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(version.createdAt))).append("</td>");
-                if (!isReadOnly()) {
+                if (canModify(script)) {
                     sb.append("<td>");
                     if (version.active) {
                         sb.append("<span class='dim'>active</span>");
@@ -862,9 +939,9 @@ public class AdminPageRenderer {
         }
         sb.append("</div>");
 
-        // Add New Version (admin only). Reuses the /admin/scripts/register handler, which adds a
+        // Add New Version (owner or admin). Reuses the /admin/scripts/register handler, which adds a
         // version to an existing script (blank version => next auto-increment integer).
-        if (!isReadOnly()) {
+        if (canModify(script)) {
             sb.append("<div class='card'>");
             sb.append("<div class='card-header'><h2>Add New Version</h2></div>");
             sb.append("<form method='post' action='/admin/scripts/register' class='form-grid'>");
@@ -901,7 +978,7 @@ public class AdminPageRenderer {
             if (content != null) {
                 sb.append("<div class='card'>");
                 sb.append("<div class='card-header'><h2>Active Version Source (").append(escape(script.activeVersion)).append(")</h2></div>");
-                if (isReadOnly()) {
+                if (!canModify(script)) {
                     sb.append("<pre>").append(escape(content)).append("</pre>");
                 } else {
                     sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid'>");
@@ -928,7 +1005,7 @@ public class AdminPageRenderer {
             }
         }
 
-        if (!isReadOnly()) {
+        if (canModify(script)) {
         sb.append("<div class='card'>");
         sb.append("<h2>Run Script</h2>");
         sb.append("<form method='post' action='/admin/submit' class='form-grid'>");
@@ -945,7 +1022,7 @@ public class AdminPageRenderer {
         sb.append("<label class='checkbox-label'><input type='checkbox' name='warnLoops'/> Warn Loops</label>");
         sb.append("<button type='submit'>Run</button>");
         sb.append("</div></form></div>");
-        } // end isReadOnly check for Run Script
+        } // end canModify check for Run Script
 
         sb.append(pageEnd());
         return sb.toString();
@@ -964,7 +1041,9 @@ public class AdminPageRenderer {
         sb.append("<div class='form-row'><label>Username</label><input type='text' name='user' required autofocus/></div>");
         sb.append("<div class='form-row'><label>Password</label><input type='password' name='password' required/></div>");
         sb.append("<div class='form-row-inline' style='justify-content:center;'><button type='submit'>Login</button></div>");
-        sb.append("</form></div></div>");
+        sb.append("</form>");
+        sb.append("<p class='dim' style='font-size:12px;text-align:center;margin-top:12px;'>On first login, the password you enter is registered for your account.</p>");
+        sb.append("</div></div>");
         sb.append(pageEnd());
         return sb.toString();
     }
@@ -1154,9 +1233,9 @@ public class AdminPageRenderer {
             sb.append("<td class='mono center'>").append(task.pid).append("</td>");
             sb.append("<td class='center'>").append(task.alive ? statusBadge("RUNNING") : "<span class='dim'>no</span>").append("</td>");
             sb.append("<td class='dim'>").append(formatElapsed(task.elapsedMs)).append("</td>");
-            if (includeKill && !isReadOnly()) {
+            if (includeKill) {
                 sb.append("<td>");
-                if (task.alive) {
+                if (task.alive && canModifyRunId(task.runId)) {
                     sb.append("<form method='post' action='/admin/tasks/").append(urlPath(task.taskId)).append("/kill'><button type='submit' class='btn-danger btn-sm'>Kill</button></form>");
                 }
                 sb.append("</td>");

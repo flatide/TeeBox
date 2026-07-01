@@ -248,6 +248,18 @@ public class RunManager {
         return scriptRegistry.registerVersion(scriptId, version, content, description, labels, activate, outputRules);
     }
 
+    /** Registration variant that records {@code owner} when the call creates the script (see ScriptRegistry). */
+    public ScriptInfo registerScriptVersion(String scriptId,
+                                            String version,
+                                            String content,
+                                            String description,
+                                            List<String> labels,
+                                            boolean activate,
+                                            List<OutputPublishRule> outputRules,
+                                            String owner) {
+        return scriptRegistry.registerVersion(scriptId, version, content, description, labels, activate, outputRules, owner);
+    }
+
     public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content) {
         return scriptRegistry.updateVersionContent(scriptId, version, content, null);
     }

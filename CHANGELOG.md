@@ -2,6 +2,27 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.5.0
+
+- **Multi-user admin UI with per-script ownership.** The `/admin` HTML UI now supports multiple named
+  users with roles (`admin` / `user`) instead of a single config admin. Two files under
+  `dataDir/users/` back it: **`users.json`** (the roster — an array of `{username, role}`,
+  operator-managed and hand-edited, read fresh per login) and **`credentials.json`** (password hashes,
+  TeeBox-managed). A user has no password until **first login**, when the password they type is hashed
+  (**PBKDF2-HMAC-SHA256**, per-user salt, constant-time verify) and stored — plaintext is never kept.
+  Sessions now carry `{username, role}`.
+- **Ownership authorization.** Each script records an `owner` (the UI user that first registered it).
+  Admins may act on any script; a regular `user` may only **modify / run / kill-tasks on scripts they
+  own**, and may register new scripts (becoming owner). Enforcement is server-side in `AdminHandler`
+  (403 on violation; `/admin/shutdown` is admin-only), and the UI hides buttons the viewer can't use.
+  The `/api/*` namespaces are **unchanged** — token-gated and unrestricted (no ownership checks);
+  API-registered scripts have no owner (admin-only in the UI).
+- **Bootstrap & compatibility.** `adminUser`/`adminPassword` now *seed* the roster: when it's empty and
+  `adminUser` is set, `{adminUser, admin}` is created (with `adminPassword` as the initial hashed
+  credential if provided). Login is required exactly when a roster exists; with no roster (and no
+  `adminUser`) the UI stays fully open. Note: a deployment that set only `adminUser` (no password) was
+  previously open and now requires that admin to log in (password set on first login).
+
 ## 1.4.0
 
 - **HTTP builtins (`HTTP_GET`, `HTTP_POST`, `HTTP`) now work in embedded ProperTee scripts.** They were

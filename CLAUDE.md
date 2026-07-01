@@ -58,10 +58,10 @@ The only entry point / `mainClass` is **`com.flatide.teebox.TeeBoxMain`**. NOTE:
 ### Key Classes
 
 - **`TeeBoxServer`** — Routes requests across top-level contexts: `/api` (3 namespaces, each Bearer-token auth), `/admin` (HTML UI with its own session login), `/health` (unauthenticated), and `/` (302 → `/admin`). The embedded `com.sun.net.httpserver` instance runs on a cached thread pool; `stop()` drains it with a 5s await.
-- **`AdminSessionManager`** — Cookie/session login for the `/admin` HTML UI (see Authentication). Entirely separate from the API Bearer tokens.
+- **`AdminSessionManager` / `UserStore`** — Multi-user cookie/session login for the `/admin` HTML UI (see Authentication). `UserStore` owns the roster + PBKDF2 password hashes under `dataDir/users/`; sessions carry `{username, role}`. Entirely separate from the API Bearer tokens.
 - **`RunManager`** — Central coordinator. See Run Management.
 - **`ManagedTaskEngine`** — Implements core `TaskRunner`; control-plane layer over platform process execution. See Task Execution.
-- **`ScriptRegistry`** — Version-controlled script store in `dataDir/script-registry/`. Validates IDs/versions against `[A-Za-z0-9._-]+`, parses syntax via `ScriptParser.parse`, computes SHA-256 per version. **Versions are optional on register/add-version: blank ⇒ the registry auto-assigns the next sequential integer label (`"1"`, `"2"`, … = highest numeric version + 1); an explicit label (incl. legacy `"v1"`) is still honored and coexists.** Version-less *runs* resolve the **active** version (the one promoted via `activate` / the admin UI), **not** the newest — so a freshly added version isn't served until activated (enables staging/rollback). Per-script execution settings (`maxConcurrentRuns`, `immediate`) and per-version `outputRules` for output capture. Soft-delete: DELETE sets `deletedAt`; background maintenance purges after `scriptRetentionMs` (default 7d); `restoreScript` clears `deletedAt`. `updateVersionContent` treats `outputRules` as tri-state (null = keep, empty = clear, non-empty = replace).
+- **`ScriptRegistry`** — Version-controlled script store in `dataDir/script-registry/`. Validates IDs/versions against `[A-Za-z0-9._-]+`, parses syntax via `ScriptParser.parse`, computes SHA-256 per version. **Versions are optional on register/add-version: blank ⇒ the registry auto-assigns the next sequential integer label (`"1"`, `"2"`, … = highest numeric version + 1); an explicit label (incl. legacy `"v1"`) is still honored and coexists.** Version-less *runs* resolve the **active** version (the one promoted via `activate` / the admin UI), **not** the newest — so a freshly added version isn't served until activated (enables staging/rollback). Per-script execution settings (`maxConcurrentRuns`, `immediate`), an `owner` (UI username of the first registrant, set only at creation; drives admin-UI ownership checks — see Authentication), and per-version `outputRules` for output capture. Soft-delete: DELETE sets `deletedAt`; background maintenance purges after `scriptRetentionMs` (default 7d); `restoreScript` clears `deletedAt`. `updateVersionContent` treats `outputRules` as tri-state (null = keep, empty = clear, non-empty = replace).
 - **`ScriptExecutor`** — Stateless. Receives a `PlatformProvider` (`TeeBoxPlatformProvider`, carries `dataDir`) and a `TaskRunner` interface (not a concrete type). Parses script → builds builtins → runs `Scheduler` → returns `ExecutionResult`.
 - **`RunRegistry`** — In-memory `ConcurrentHashMap` cache backed by `RunStore`, with stdout/stderr ring buffers capped at 200 lines (`MAX_LOG_LINES`). Retention tiers (see Run Management).
 - **`RunStore`** — File-based persistence (`dataDir/runs/`). Atomic writes via temp file + rename; all public methods `synchronized`.
@@ -79,9 +79,17 @@ TeeBox has **two unrelated auth mechanisms**:
 
    Check is exact `Authorization: Bearer <token>`. **If the resolved token (and the `apiToken` fallback) is null/empty, that namespace is unauthenticated** (`isAuthorized` returns true).
 
-2. **Admin UI session login** (for the `/admin` HTML UI) — `AdminSessionManager`. Form-based username/password against config `adminUser`/`adminPassword`. `POST /admin/login` validates and sets an `HttpOnly`, `Path=/admin`, 8h `Max-Age` cookie `teebox-session=<32-byte hex>`; sessions are in-memory (`ConcurrentHashMap`, 8h expiry, reaped by a periodic maintenance task). `POST /admin/logout` clears it. **Login is enforced only when BOTH `adminUser` and `adminPassword` are set; otherwise the UI is fully open.** When enforced, login gates **only POST (mutating) admin-UI actions** — all GET pages stay viewable in read-only mode (`AdminPageRenderer.isReadOnly()`). This does NOT use `adminApiToken`.
+2. **Admin UI multi-user login** (for the `/admin` HTML UI) — `AdminSessionManager` over a `UserStore`. Multiple named users, each with a role (`admin` or `user`), backed by two files under `dataDir/users/`:
+   - **`users.json`** — the roster (an array of `{username, role}`), **operator-managed**: admins add/remove users by hand-editing it. Read fresh on every login, so edits apply without a restart. `role` other than `admin` normalizes to `user`.
+   - **`credentials.json`** — password hashes, **TeeBox-managed**. A user has no entry until they set a password on **first login** (the password they type is hashed and stored). Hashing is **PBKDF2-HMAC-SHA256** (JDK built-in, per-user random salt, 210k iterations, constant-time verify); the plaintext is never stored.
 
-**Open-by-default posture:** an unset namespace token (with no `apiToken` fallback) leaves that API namespace open; unset admin credentials leave the UI open. Security-relevant default.
+   `POST /admin/login` validates username+password (or provisions the password on first login) and sets an `HttpOnly`, `Path=/admin`, 8h `Max-Age` cookie `teebox-session=<32-byte hex>`; sessions are in-memory (`ConcurrentHashMap` of token→`Session{username, role, expiry}`, 8h expiry, reaped by a periodic maintenance task). `POST /admin/logout` clears it. **Login is required exactly when a roster exists** (`UserStore.hasRoster()`); with no roster the UI is fully open. Login gates **only POST (mutating) admin-UI actions** — all GET pages stay viewable in read-only mode (`AdminPageRenderer.isReadOnly()`). This does NOT use `adminApiToken`.
+
+   **Bootstrap admin:** on startup `UserStore.seedAdminIfEmpty(adminUser, adminPassword)` seeds the roster with `{adminUser, admin}` when the roster is missing/empty and config `adminUser` is set; if `adminPassword` is also set it becomes that admin's initial hashed credential (legacy single-admin login preserved), otherwise the admin sets it on first login. **Note:** a deployment that set only `adminUser` (no `adminPassword`) was fully open before and now requires that admin to log in (password set on first login).
+
+   **Per-script ownership (regular users):** each `ScriptInfo` carries an `owner` (the UI username that first registered it; `null` for legacy/API-registered scripts). Admins may act on any script; a `user` may only **modify/run/kill-tasks on scripts they own**. Any logged-in user may register a *new* script (becoming its owner). Enforcement is server-side in `TeeBoxServer.AdminHandler` (`canModifyScript`/`canModifyRun`/`canModifyTask` → 403; `/admin/shutdown` is admin-only); `AdminPageRenderer` also hides buttons the viewer can't use (display only — the server is the gate). The `/api/*` namespaces are **unaffected** (token-gated, unrestricted — no ownership checks).
+
+**Open-by-default posture:** an unset namespace token (with no `apiToken` fallback) leaves that API namespace open; no user roster (and no `adminUser` to seed one) leaves the UI open. Security-relevant default.
 
 ## 3 API Namespaces
 
@@ -238,11 +246,11 @@ Settings load order: system properties (`-D...`, highest) → config file (`--co
 |----------|---------|-------|
 | `bind` | `127.0.0.1` | bind address |
 | `port` | `18080` | |
-| `dataDir` | — | **REQUIRED** (the only required setting); holds `runs/`, `tasks/`, `script-registry/` |
+| `dataDir` | — | **REQUIRED** (the only required setting); holds `runs/`, `tasks/`, `script-registry/`, `users/` |
 | `maxRuns` | `64` | global thread-pool size for all scripts combined |
 | `apiToken` | — | fallback for the three namespace tokens |
 | `clientApiToken` / `publisherApiToken` / `adminApiToken` | — | each falls back to `apiToken` |
-| `adminUser` / `adminPassword` | — | admin UI session login (both required to enforce) |
+| `adminUser` / `adminPassword` | — | **bootstrap** admin UI user: seeds `users.json` with `{adminUser, admin}` when the roster is empty (`adminPassword`, if set, becomes the initial hashed credential). Multi-user login is roster-driven (`dataDir/users/`); see Authentication |
 
 There is **no `scriptsRoot`** setting — `TeeBoxConfig` has no such field and never reads it. Scripts live in the registry under `dataDir/script-registry/`. Any `-Dpropertee.teebox.scriptsRoot=...` is silently ignored.
 

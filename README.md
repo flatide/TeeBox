@@ -88,8 +88,8 @@ Useful settings:
 `propertee-teebox-dist.zip` is the recommended GitHub release artifact. It does not include a Java runtime, so deploy targets should install a Linux x86_64 Java 25 runtime separately under `runtime/`. (As of 1.0.0, TeeBox runs on the ProperTee v2 runtime, which requires Java 25.)
 
 ```bash
-git tag v1.4.0
-git push origin v1.4.0
+git tag v1.5.0
+git push origin v1.5.0
 ```
 
 If you need a prebundled internal package instead, build `propertee-teebox-dist-with-runtime.zip` locally with:

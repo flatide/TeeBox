@@ -36,6 +36,7 @@ public class TeeBoxServer {
     private final RunManager runManager;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private final AdminPageRenderer pageRenderer;
+    private final UserStore userStore;
     private final AdminSessionManager sessionManager;
     private final HttpServer server;
     private final java.util.concurrent.ExecutorService httpExecutor;
@@ -43,7 +44,9 @@ public class TeeBoxServer {
     public TeeBoxServer(TeeBoxConfig config) throws IOException {
         this.config = config;
         this.runManager = new RunManager(config.dataDir, config.maxConcurrentRuns, config);
-        this.sessionManager = new AdminSessionManager(config.adminUser, config.adminPassword);
+        this.userStore = new UserStore(config.dataDir);
+        this.userStore.seedAdminIfEmpty(config.adminUser, config.adminPassword);
+        this.sessionManager = new AdminSessionManager(userStore);
         // Periodic session cleanup
         runManager.addMaintenanceTask(new Runnable() {
             @Override
@@ -203,15 +206,17 @@ public class TeeBoxServer {
                     return;
                 }
 
-                // Auth check: POST requests require login (if login is configured)
-                boolean loggedIn = !sessionManager.isLoginRequired() || sessionManager.isValidSession(getSessionToken(exchange));
+                // Resolve the current session (null when not logged in, or in open mode).
+                AdminSessionManager.Session session = sessionManager.getSession(getSessionToken(exchange));
+                boolean loginRequired = sessionManager.isLoginRequired();
+                boolean loggedIn = !loginRequired || session != null;
                 if ("POST".equals(method) && !loggedIn) {
                     redirect(exchange, "/admin/login");
                     return;
                 }
 
-                // Pass login state to page renderer
-                pageRenderer.setLoggedIn(loggedIn);
+                // Pass login state + identity to the page renderer (drives per-owner button visibility)
+                pageRenderer.setSession(session, loginRequired);
 
                 if ("GET".equals(method) && "/admin".equals(path)) {
                     writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderIndexPage());
@@ -219,6 +224,10 @@ public class TeeBoxServer {
                 }
                 if ("POST".equals(method) && "/admin/submit".equals(path)) {
                     Map<String, String> form = parseForm(exchange);
+                    if (!canModifyScript(session, form.get("scriptId"))) {
+                        forbidden(exchange);
+                        return;
+                    }
                     RunRequest request = new RunRequest();
                     request.scriptId = form.get("scriptId");
                     String version = form.get("version");
@@ -247,15 +256,26 @@ public class TeeBoxServer {
                     if (content == null || content.trim().length() == 0) {
                         throw new IllegalArgumentException("Script content is required");
                     }
+                    // New script => any logged-in user may create it (becomes owner). Existing script
+                    // (add-version) => only the owner or an admin.
+                    if (!canModifyScript(session, scriptId.trim())) {
+                        forbidden(exchange);
+                        return;
+                    }
                     // Version is optional: blank => registry auto-assigns the next sequential integer.
                     String trimmedVersion = (version != null && version.trim().length() > 0) ? version.trim() : null;
                     List<OutputPublishRule> outputRules = parseOutputRuleFromForm(form);
-                    runManager.registerScriptVersion(scriptId.trim(), trimmedVersion, content, description, new ArrayList<String>(), activate, outputRules);
+                    String owner = session != null ? session.username : null;
+                    runManager.registerScriptVersion(scriptId.trim(), trimmedVersion, content, description, new ArrayList<String>(), activate, outputRules, owner);
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                     return;
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/scripts/settings/")) {
                     String scriptId = path.substring("/admin/scripts/settings/".length());
+                    if (!canModifyScript(session, scriptId)) {
+                        forbidden(exchange);
+                        return;
+                    }
                     Map<String, String> form = parseForm(exchange);
                     int maxConcurrent = 0;
                     String maxStr = form.get("maxConcurrentRuns");
@@ -272,6 +292,10 @@ public class TeeBoxServer {
                     if (scriptId.length() == 0) {
                         throw new IllegalArgumentException("Script ID is required");
                     }
+                    if (!canModifyScript(session, scriptId)) {
+                        forbidden(exchange);
+                        return;
+                    }
                     Map<String, String> form = parseForm(exchange);
                     String version = form.get("version");
                     if (version == null || version.trim().length() == 0) {
@@ -282,6 +306,10 @@ public class TeeBoxServer {
                     return;
                 }
                 if ("POST".equals(method) && "/admin/shutdown".equals(path)) {
+                    if (!isAdmin(session)) {
+                        forbidden(exchange);
+                        return;
+                    }
                     runManager.startDraining(5L * 60L * 1000L);
                     redirect(exchange, "/admin");
                     return;
@@ -291,6 +319,10 @@ public class TeeBoxServer {
                     if (scriptId.length() == 0) {
                         throw new IllegalArgumentException("Script ID is required");
                     }
+                    if (!canModifyScript(session, scriptId)) {
+                        forbidden(exchange);
+                        return;
+                    }
                     runManager.restoreScript(scriptId);
                     redirect(exchange, "/admin/scripts");
                     return;
@@ -299,6 +331,10 @@ public class TeeBoxServer {
                     String scriptId = path.substring("/admin/scripts/delete/".length());
                     if (scriptId.length() == 0) {
                         throw new IllegalArgumentException("Script ID is required");
+                    }
+                    if (!canModifyScript(session, scriptId)) {
+                        forbidden(exchange);
+                        return;
                     }
                     runManager.deleteScript(scriptId);
                     redirect(exchange, "/admin/scripts");
@@ -311,6 +347,10 @@ public class TeeBoxServer {
                     String content = form.get("content");
                     if (scriptId == null || scriptId.trim().length() == 0) {
                         throw new IllegalArgumentException("Script ID is required");
+                    }
+                    if (!canModifyScript(session, scriptId.trim())) {
+                        forbidden(exchange);
+                        return;
                     }
                     if (version == null || version.trim().length() == 0) {
                         throw new IllegalArgumentException("Version is required");
@@ -348,6 +388,10 @@ public class TeeBoxServer {
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/runs/") && path.endsWith("/kill-tasks")) {
                     String runId = path.substring("/admin/runs/".length(), path.length() - "/kill-tasks".length());
+                    if (!canModifyRun(session, runId)) {
+                        forbidden(exchange);
+                        return;
+                    }
                     runManager.killRunTasks(runId);
                     redirect(exchange, "/admin/runs/" + urlPath(runId));
                     return;
@@ -363,6 +407,10 @@ public class TeeBoxServer {
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/tasks/") && path.endsWith("/kill")) {
                     String taskId = path.substring("/admin/tasks/".length(), path.length() - "/kill".length());
+                    if (!canModifyTask(session, taskId)) {
+                        forbidden(exchange);
+                        return;
+                    }
                     TaskInfo info = runManager.getTask(taskId);
                     runManager.killTask(taskId);
                     if (info != null && info.runId != null) {
@@ -385,6 +433,75 @@ public class TeeBoxServer {
                 writeHtml(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR, pageRenderer.renderErrorPage("Server error", e.getMessage()));
             }
         }
+    }
+
+    // ---- Admin UI authorization ----
+    // In "open mode" (no user roster ⇒ login not required) every action is allowed, preserving the
+    // historical open-by-default posture. When a roster exists, admins do anything; a regular user may
+    // only act on scripts they own. The /api/* namespaces are unaffected (token-gated, unrestricted).
+
+    /** Open mode or an admin session. */
+    private boolean isAdmin(AdminSessionManager.Session session) {
+        return !sessionManager.isLoginRequired() || (session != null && session.isAdmin());
+    }
+
+    /**
+     * Whether the session may mutate/run the given script. True in open mode, for admins, and for the
+     * script's owner. A non-existent script returns true (new-script registration); callers that need
+     * an existing script let the operation fail naturally with a 400.
+     */
+    private boolean canModifyScript(AdminSessionManager.Session session, String scriptId) {
+        if (!sessionManager.isLoginRequired()) {
+            return true;
+        }
+        if (session == null) {
+            return false;
+        }
+        if (session.isAdmin()) {
+            return true;
+        }
+        if (scriptId == null || scriptId.trim().length() == 0) {
+            return false;
+        }
+        ScriptInfo info;
+        try {
+            info = runManager.getScript(scriptId.trim());
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (info == null) {
+            return true; // new script — any logged-in user may create it
+        }
+        return info.owner != null && info.owner.equals(session.username);
+    }
+
+    /** Whether the session may act on a run's tasks (resolved via the run's script owner). */
+    private boolean canModifyRun(AdminSessionManager.Session session, String runId) {
+        if (isAdmin(session)) {
+            return true;
+        }
+        RunInfo run = runId != null ? runManager.getRun(runId) : null;
+        if (run == null) {
+            return false;
+        }
+        return canModifyScript(session, run.scriptId);
+    }
+
+    /** Whether the session may act on a task (resolved via task → run → script owner). */
+    private boolean canModifyTask(AdminSessionManager.Session session, String taskId) {
+        if (isAdmin(session)) {
+            return true;
+        }
+        TaskInfo task = taskId != null ? runManager.getTask(taskId) : null;
+        if (task == null || task.runId == null) {
+            return false;
+        }
+        return canModifyRun(session, task.runId);
+    }
+
+    private void forbidden(HttpExchange exchange) throws IOException {
+        writeHtml(exchange, HttpURLConnection.HTTP_FORBIDDEN,
+                pageRenderer.renderErrorPage("Forbidden", "You do not have permission to modify this resource."));
     }
 
     private void handleAdminFragment(HttpExchange exchange, String path) throws IOException {
