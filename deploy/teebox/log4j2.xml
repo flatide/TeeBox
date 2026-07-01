@@ -23,6 +23,9 @@
     </Appenders>
 
     <Loggers>
+        <!-- Per-request API access log (method, path, client, response status, elapsed) is emitted on
+             the "access" logger. To quiet it (e.g. noisy client status-polling) raise its level here,
+             for example: <Logger name="access" level="WARN"/> -->
         <Root level="INFO">
             <AppenderRef ref="Console"/>
             <AppenderRef ref="File"/>

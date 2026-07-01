@@ -81,10 +81,68 @@ public class TeeBoxServer {
     }
 
     private void registerContexts() {
-        server.createContext("/api", new ApiHandler());
-        server.createContext("/admin", new AdminHandler());
+        // Access-log the API and admin-UI contexts (operator/client activity). /health (load-balancer
+        // probes) and "/" (favicon/static) are left unlogged to avoid flooding the log.
+        server.createContext("/api", accessLogged(new ApiHandler()));
+        server.createContext("/admin", accessLogged(new AdminHandler()));
         server.createContext("/health", new HealthHandler());
         server.createContext("/", new RootHandler());
+    }
+
+    /**
+     * Decorates a handler with one access-log line per request — method, path (+query), client, and the
+     * response status + elapsed time — emitted in a {@code finally} so it fires on success and error
+     * alike. Request/response bodies are intentionally not logged (they can carry API tokens, script
+     * source, or large payloads). The line goes to the {@code access} logger, so operators can retune or
+     * silence it independently in {@code log4j2.xml} (e.g. {@code <Logger name="access" level="WARN"/>}).
+     */
+    private HttpHandler accessLogged(final HttpHandler delegate) {
+        return new HttpHandler() {
+            @Override
+            public void handle(HttpExchange exchange) throws IOException {
+                long startNanos = System.nanoTime();
+                String method = exchange.getRequestMethod();
+                String rawPath = exchange.getRequestURI().getRawPath();
+                String rawQuery = exchange.getRequestURI().getRawQuery();
+                String target = rawQuery == null ? rawPath : rawPath + "?" + rawQuery;
+                String client = clientAddress(exchange);
+                Throwable failure = null;
+                try {
+                    delegate.handle(exchange);
+                } catch (IOException | RuntimeException e) {
+                    failure = e;
+                    throw e;
+                } finally {
+                    long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+                    // -1 until the handler sends response headers (e.g. it threw first).
+                    int status = exchange.getResponseCode();
+                    String line = accessLogLine(method, target, client, status, elapsedMs);
+                    if (failure != null) {
+                        TeeBoxLog.warn("access", line, failure);
+                    } else {
+                        TeeBoxLog.info("access", line);
+                    }
+                }
+            }
+        };
+    }
+
+    /** Format one access-log line: {@code "GET /api/client/runs/x?limit=10 from 127.0.0.1 -> 200 (4ms)"}. */
+    static String accessLogLine(String method, String target, String client, int status, long elapsedMs) {
+        return method + " " + target + " from " + client + " -> "
+                + (status >= 0 ? Integer.toString(status) : "no-response") + " (" + elapsedMs + "ms)";
+    }
+
+    /** Client IP for the access log: the first {@code X-Forwarded-For} hop if present (behind a proxy),
+     *  else the socket's remote address. */
+    private static String clientAddress(HttpExchange exchange) {
+        String forwarded = exchange.getRequestHeaders().getFirst("X-Forwarded-For");
+        if (forwarded != null && !forwarded.trim().isEmpty()) {
+            int comma = forwarded.indexOf(',');
+            return (comma >= 0 ? forwarded.substring(0, comma) : forwarded).trim();
+        }
+        java.net.InetSocketAddress remote = exchange.getRemoteAddress();
+        return remote != null && remote.getAddress() != null ? remote.getAddress().getHostAddress() : "-";
     }
 
     private class RootHandler implements HttpHandler {
