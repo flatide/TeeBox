@@ -2,6 +2,21 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.4.0
+
+- **HTTP builtins (`HTTP_GET`, `HTTP_POST`, `HTTP`) now work in embedded ProperTee scripts.** They were
+  missing from the ProperTee v2 runtime's builtin catalog, so HTTP calls were dead; the runtime
+  ([`propertee2-java`](https://github.com/flatide/propertee2-java)) restored them and TeeBox now bundles
+  that fix. Each returns the v1 Result shape `{status, ok, value:{status, body, headers}}` — a non-2xx
+  response is `ok=false` with the real status/body, a transport failure is `ok=false` with `status=0`;
+  `HTTP_POST` serializes an object body to JSON. They run off the cooperative baton (`Coop.blocking`),
+  through `TeeBoxPlatformProvider`'s host HTTP, so concurrent `multi` workers aren't stalled. No TeeBox
+  application-code change was needed — covered by a new end-to-end test.
+- **API access logging is now scoped to the `/api` context only.** The per-request access log
+  (added in 1.3.0) previously also covered the `/admin` operator HTML UI; it now logs only `/api` — the
+  JSON API called by external/upstream servers (client + publisher + admin API). `/admin`, `/health`,
+  and `/` are unlogged.
+
 ## 1.3.0
 
 - **Per-request API access logging.** The `/api` and `/admin` contexts now emit one access-log line
