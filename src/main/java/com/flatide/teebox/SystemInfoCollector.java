@@ -19,6 +19,8 @@ public class SystemInfoCollector {
     public SystemInfo collect() {
         SystemInfo info = new SystemInfo();
 
+        info.teeboxVersion = TeeBoxVersion.get();
+
         // JVM info
         info.javaVersion = System.getProperty("java.version", "unknown");
         info.javaVendor = System.getProperty("java.vendor", "unknown");

@@ -1,6 +1,7 @@
 package com.flatide.teebox;
 
 public class SystemInfo {
+    public String teeboxVersion;
     public long heapUsed;
     public long heapMax;
     public long nonHeapUsed;

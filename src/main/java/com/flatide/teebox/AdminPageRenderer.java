@@ -35,7 +35,8 @@ public class AdminPageRenderer {
     private String renderTopNav(String activePage) {
         StringBuilder sb = new StringBuilder();
         sb.append("<div class='top-nav'>");
-        sb.append("<a href='/admin' class='top-nav-brand'>TeeBox</a>");
+        sb.append("<a href='/admin' class='top-nav-brand'>TeeBox <span class='dim'>v")
+          .append(escape(TeeBoxVersion.get())).append("</span></a>");
         sb.append("<div class='top-nav-links'>");
         sb.append("<a href='/admin' class='top-nav-link").append("dashboard".equals(activePage) ? " active" : "").append("'>Dashboard</a>");
         sb.append("<a href='/admin/scripts' class='top-nav-link").append("scripts".equals(activePage) ? " active" : "").append("'>Scripts</a>");

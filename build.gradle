@@ -46,6 +46,14 @@ sourceSets {
     }
 }
 
+// Bake the build version into a classpath resource so the running server can display it (startup log,
+// admin UI, system API). Scoped to just this file so token expansion never touches log4j2.xml's ${sys:...}.
+processResources {
+    filesMatching('teebox-version.properties') {
+        expand(version: project.version)
+    }
+}
+
 // Guard the standalone client's self-contained contract: compile it with an EMPTY classpath
 // (proves zero external dependencies) targeting the --release 8 floor (JDK 17+ cannot emit
 // bytecode 7). Runs as part of `check` / `build`.

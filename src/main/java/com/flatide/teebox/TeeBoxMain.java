@@ -19,8 +19,10 @@ public class TeeBoxMain {
             }
         }, "propertee-teebox-shutdown"));
 
-        TeeBoxLog.info("TeeBox", "Listening on http://" + config.bindAddress + ":" + server.getPort() + "/admin");
-        System.out.println("TeeBox listening on http://" + config.bindAddress + ":" + server.getPort() + "/admin");
+        String banner = "TeeBox " + TeeBoxVersion.get() + " listening on http://"
+                + config.bindAddress + ":" + server.getPort() + "/admin";
+        TeeBoxLog.info("TeeBox", banner);
+        System.out.println(banner);
         while (true) {
             Thread.sleep(60000L);
         }
