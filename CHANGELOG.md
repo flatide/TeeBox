@@ -2,6 +2,25 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.6.0
+
+- **Embedded ProperTee runtime upgraded 0.2.0 → 0.5.0 (spec v0.6.0 → v0.9.0).** TeeBox now bundles
+  [`propertee2-java`](https://github.com/flatide/propertee2-java) 0.5.0, picking up three spec batches.
+  TeeBox's own HTTP API, embeddable client, and host behavior are **unchanged** (no application-code
+  change; the full suite passes on 0.5.0), but the **language your scripts run in has breaking
+  changes** — review scripts before upgrading (canonical migration notes: propertee2-java
+  `docs/LANGUAGE.md` §Changelog):
+  - ⚠️ **spec v0.7.0 (breaking):** non-boolean `if`/`loop` conditions now error (`Condition requires a
+    boolean value`); `and`/`or` short-circuit (right operand not evaluated when the left decides);
+    single-arg `RANDOM(max)` removed (use `RANDOM(0, max - 1)`); `SLICE(arr, start, count)` — the third
+    arg is a **count**, not an end index (migrate `SLICE(a, s, e)` → `SLICE(a, s, e - s + 1)`); `LEN` on
+    a non-collection errors.
+  - ⚠️ **spec v0.8.0 (breaking):** first-class `null` — `null` is a reserved word, and `JSON_PARSE` no
+    longer normalizes JSON `null` to `{}` (round-trips are now lossless).
+  - **spec v0.9.0 (nearly non-breaking):** Lua-style `elseif` added; `elseif` becomes reserved.
+- HTTP builtins, task-output merge, access logging, version display, and the multi-user admin UI from
+  earlier releases are unaffected.
+
 ## 1.5.0
 
 - **Multi-user admin UI with per-script ownership.** The `/admin` HTML UI now supports multiple named
