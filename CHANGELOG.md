@@ -2,6 +2,15 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.8.2
+
+- **Fix mismatched button heights/alignment in the Versions table Action column.** The `Edit` (an
+  `<a class="btn">`) and `Editing` (a `<span class="btn">`) controls inherited the body `line-height`
+  (1.5) while `Set active` (a `<button>`) used the UA default (~1.2), so the anchor/span rendered a few
+  pixels taller and off-baseline. The `.btn` rule now pins one `line-height`, `display:inline-block`,
+  `vertical-align:middle`, and `text-align:center` across all three element types, so the buttons are the
+  same height and sit on the same line. CSS-only.
+
 ## 1.8.1
 
 - **Any version can now be edited from the Versions list, not just the active one.** After the 1.8.0

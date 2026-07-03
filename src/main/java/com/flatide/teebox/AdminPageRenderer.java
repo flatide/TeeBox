@@ -1313,12 +1313,16 @@ public class AdminPageRenderer {
         sb.append(".badge-lost{background:#fecaca;color:#991b1b;} ");
         sb.append(".badge-active{background:#dbeafe;color:#1e40af;} ");
         sb.append(".badge-terminal{background:#f1f5f9;color:#475569;} ");
+        // Normalize height/alignment across the three .btn element types (button / a / span): give them
+        // one line-height, inline-block display, and middle vertical-align so an <a class=btn> Edit and a
+        // <button class=btn> Set active render at the same height and sit on the same line.
         sb.append("button,.btn{padding:8px 16px;background:#2563eb;color:#fff;border:none;border-radius:6px;");
-        sb.append("font-size:13px;font-weight:500;cursor:pointer;transition:background 0.15s;} ");
+        sb.append("font-size:13px;font-weight:500;font-family:inherit;line-height:1.4;display:inline-block;");
+        sb.append("vertical-align:middle;text-align:center;cursor:pointer;transition:background 0.15s;} ");
         sb.append("button:hover,.btn:hover{background:#1d4ed8;} ");
         sb.append(".btn-danger{background:#dc2626;} .btn-danger:hover{background:#b91c1c;} ");
         sb.append(".btn-sm{padding:4px 10px;font-size:12px;} ");
-        sb.append("a.btn{display:inline-block;text-decoration:none;} a.btn:hover{text-decoration:none;color:#fff;} ");
+        sb.append("a.btn{text-decoration:none;} a.btn:hover{text-decoration:none;color:#fff;} ");
         sb.append(".mono{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;font-size:12px;} ");
         sb.append(".dim{color:#94a3b8;} ");
         sb.append(".center{text-align:center;} ");
