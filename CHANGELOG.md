@@ -2,6 +2,18 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.8.1
+
+- **Any version can now be edited from the Versions list, not just the active one.** After the 1.8.0
+  editing rework, the source editor only ever targeted the active version, so an inactive version could
+  not be edited. Each row in the **Versions** table now has an **Edit** action that opens that version in
+  the source editor (`/admin/scripts/{id}?version={v}`); the row being edited is marked **Editing**. The
+  source card is retitled **Version Source (v)** with an `ACTIVE`/`inactive` badge, loads that version's
+  content and output-capture rule, and its **Save** overwrites that specific version in place —
+  **Save as new version** is unchanged. After an in-place save you stay on the version you edited (the
+  redirect preserves `?version=`) instead of snapping back to the active one. With no `?version` the page
+  behaves as before, editing the active version.
+
 ## 1.8.0
 
 - **Reworked the script-editing UI on the admin script page.** The standalone "Add New Version" card is

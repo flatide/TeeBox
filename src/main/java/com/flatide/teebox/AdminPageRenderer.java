@@ -857,10 +857,17 @@ public class AdminPageRenderer {
     }
 
     public String renderScriptPage(String scriptId) {
+        return renderScriptPage(scriptId, null);
+    }
+
+    public String renderScriptPage(String scriptId, String selectedVersionParam) {
         ScriptInfo script = runManager.getScript(scriptId);
         if (script == null) {
             return renderErrorPage("Script not found", scriptId);
         }
+        // The source editor targets the requested version when it exists, else the active one. This lets
+        // the Versions list open any version (including inactive ones) for editing, not just the active.
+        String selectedVersion = hasVersion(script, selectedVersionParam) ? selectedVersionParam : script.activeVersion;
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Script " + scriptId));
         sb.append(renderTopNav("scripts"));
@@ -947,11 +954,15 @@ public class AdminPageRenderer {
                 sb.append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(version.createdAt))).append("</td>");
                 if (canModify(script)) {
-                    sb.append("<td>");
-                    if (version.active) {
-                        sb.append("<span class='dim'>active</span>");
+                    sb.append("<td style='white-space:nowrap;'>");
+                    boolean editing = version.version != null && version.version.equals(selectedVersion);
+                    if (editing) {
+                        sb.append("<span class='btn btn-sm' style='background:#334155;cursor:default;' title='Shown in the editor below'>Editing</span>");
                     } else {
-                        sb.append("<form method='post' action='/admin/scripts/activate/").append(urlPath(scriptId)).append("' style='display:inline'>");
+                        sb.append("<a class='btn btn-sm' href='/admin/scripts/").append(urlPath(scriptId)).append("?version=").append(urlParam(version.version)).append("#version-source'>Edit</a>");
+                    }
+                    if (!version.active) {
+                        sb.append(" <form method='post' action='/admin/scripts/activate/").append(urlPath(scriptId)).append("' style='display:inline'>");
                         sb.append("<input type='hidden' name='version' value='").append(escape(version.version)).append("'/>");
                         sb.append("<button type='submit' class='btn btn-sm'>Set active</button></form>");
                     }
@@ -963,26 +974,34 @@ public class AdminPageRenderer {
         }
         sb.append("</div>");
 
-        // Active Version Source doubles as the "add a version" surface: editing the source and pressing
+        // Version Source doubles as the "add a version" surface: editing the source and pressing
         // "Save as new version" posts the editor content to /admin/scripts/register (blank version =>
         // next auto-increment integer). The dedicated "Add New Version" card was removed in favor of this
-        // surface, which frees the vertical room the editor now uses.
-        if (script.activeVersion != null && script.activeVersion.length() > 0) {
-            String content = runManager.getScriptVersionContent(scriptId, script.activeVersion);
+        // surface, which frees the vertical room the editor now uses. The version shown is the one picked
+        // from the Versions list (Edit link), defaulting to the active version.
+        if (selectedVersion != null && selectedVersion.length() > 0) {
+            String content = runManager.getScriptVersionContent(scriptId, selectedVersion);
             if (content != null) {
-                sb.append("<div class='card'>");
-                sb.append("<div class='card-header'><h2>Active Version Source (").append(escape(script.activeVersion)).append(")</h2></div>");
+                boolean selectedIsActive = selectedVersion.equals(script.activeVersion);
+                sb.append("<div class='card' id='version-source'>");
+                sb.append("<div class='card-header'><h2>Version Source (").append(escape(selectedVersion)).append(")");
+                if (selectedIsActive) {
+                    sb.append(" <span class='badge badge-completed'>ACTIVE</span>");
+                } else {
+                    sb.append(" <span class='tag'>inactive</span>");
+                }
+                sb.append("</h2></div>");
                 if (!canModify(script)) {
                     sb.append("<pre>").append(escape(content)).append("</pre>");
                 } else {
-                    // Default action = update-source (overwrite the active version). The "Save" button
+                    // Default action = update-source (overwrite the selected version). The "Save" button
                     // carries the version via its own name/value, and the "Save as new version" button
                     // overrides the action to /admin/scripts/register with no version (=> auto next #).
                     // Only the clicked submit button contributes its name/value, so the two never collide.
                     sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid'>");
                     sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
                     sb.append("<textarea name='content' rows='24' class='pt-editor-fallback' data-pt-editor data-pt-panel>").append(escape(content)).append("</textarea>");
-                    OutputPublishRule activeRule = findActiveOutputRule(script);
+                    OutputPublishRule activeRule = findOutputRuleForVersion(script, selectedVersion);
                     sb.append("<details style='margin-top:8px;'");
                     if (activeRule != null) sb.append(" open");
                     sb.append("><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule</summary>");
@@ -998,7 +1017,7 @@ public class AdminPageRenderer {
                     sb.append("<div class='form-row-inline' style='align-items:center;'>");
                     sb.append("<input type='text' name='description' placeholder='Description (used when saving as a new version)' style='flex:1;min-width:200px;'/>");
                     sb.append("<label class='checkbox-label' title='Applies only to \"Save as new version\"'><input type='checkbox' name='activate'/> Set new version active</label>");
-                    sb.append("<button type='submit' name='version' value='").append(escape(script.activeVersion)).append("' title='Overwrite the active version (").append(escape(script.activeVersion)).append(") in place'>Save</button>");
+                    sb.append("<button type='submit' name='version' value='").append(escape(selectedVersion)).append("' title='Overwrite version ").append(escape(selectedVersion)).append(" in place'>Save</button>");
                     sb.append("<button type='submit' formaction='/admin/scripts/register' style='background:#334155;' title='Register the editor content as a new version (auto next #)'>Save as new version</button>");
                     sb.append("</div>");
                     sb.append("</form>");
@@ -1299,6 +1318,7 @@ public class AdminPageRenderer {
         sb.append("button:hover,.btn:hover{background:#1d4ed8;} ");
         sb.append(".btn-danger{background:#dc2626;} .btn-danger:hover{background:#b91c1c;} ");
         sb.append(".btn-sm{padding:4px 10px;font-size:12px;} ");
+        sb.append("a.btn{display:inline-block;text-decoration:none;} a.btn:hover{text-decoration:none;color:#fff;} ");
         sb.append(".mono{font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;font-size:12px;} ");
         sb.append(".dim{color:#94a3b8;} ");
         sb.append(".center{text-align:center;} ");
@@ -1409,14 +1429,27 @@ public class AdminPageRenderer {
         return sb.toString();
     }
 
-    private OutputPublishRule findActiveOutputRule(ScriptInfo script) {
-        if (script == null || script.activeVersion == null) return null;
+    private OutputPublishRule findOutputRuleForVersion(ScriptInfo script, String version) {
+        if (script == null || version == null) return null;
         for (ScriptVersionInfo v : script.versions) {
-            if (script.activeVersion.equals(v.version) && v.outputRules != null && !v.outputRules.isEmpty()) {
+            if (version.equals(v.version) && v.outputRules != null && !v.outputRules.isEmpty()) {
                 return v.outputRules.get(0);
             }
         }
         return null;
+    }
+
+    private boolean hasVersion(ScriptInfo script, String version) {
+        if (script == null || version == null) return false;
+        for (ScriptVersionInfo v : script.versions) {
+            if (version.equals(v.version)) return true;
+        }
+        return false;
+    }
+
+    private String urlParam(String value) {
+        if (value == null) return "";
+        return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private String nullToEmpty(String text) {

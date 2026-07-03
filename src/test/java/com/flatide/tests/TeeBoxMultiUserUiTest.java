@@ -189,6 +189,47 @@ public class TeeBoxMultiUserUiTest {
         }
     }
 
+    @Test
+    public void inactiveVersionIsSelectableAndEditableFromVersionsList() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-multiuser-editver").toFile();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "alice-pw");
+            Assert.assertNotNull(alice);
+            // v1 (active), then a v2 that is NOT activated.
+            assertRedirect("register v1", postForm(base, "/admin/scripts/register",
+                    "scriptId=ev_script&content=" + enc("PRINT(\"one\")\n") + "&activate=on", alice));
+            assertRedirect("add v2 (not active)", postForm(base, "/admin/scripts/register",
+                    "scriptId=ev_script&content=" + enc("PRINT(\"two\")\n"), alice));
+
+            // Default page: edits the active version (1); the versions list offers an Edit link to v2.
+            String def = getBody(base, "/admin/scripts/ev_script", alice);
+            Assert.assertTrue("default targets the active version", def.contains("Version Source (1)"));
+            Assert.assertTrue("default Save overwrites v1", def.contains("Overwrite version 1 in place"));
+            Assert.assertTrue("versions list links to edit v2", def.contains("?version=2"));
+
+            // Selecting v2 (the inactive version) opens it in the editor and Save overwrites v2.
+            String v2 = getBody(base, "/admin/scripts/ev_script?version=2", alice);
+            Assert.assertTrue("selected version shown", v2.contains("Version Source (2)"));
+            Assert.assertTrue("selected version marked inactive", v2.contains("inactive"));
+            Assert.assertTrue("v2 content is loaded", v2.contains("PRINT(&quot;two&quot;)"));
+            Assert.assertTrue("Save overwrites v2, not the active one", v2.contains("Overwrite version 2 in place"));
+
+            // Overwrite the inactive v2 in place; v1 stays active, v2 reflects the edit.
+            assertRedirect("edit the inactive v2", postForm(base, "/admin/scripts/update-source",
+                    "scriptId=ev_script&version=2&content=" + enc("PRINT(\"two-edited\")\n"), alice));
+            String v2b = getBody(base, "/admin/scripts/ev_script?version=2", alice);
+            Assert.assertTrue("v2 shows the edit", v2b.contains("PRINT(&quot;two-edited&quot;)"));
+            Assert.assertTrue("the active version is still 1", v2b.contains("active (1)"));
+            String v1 = getBody(base, "/admin/scripts/ev_script?version=1", alice);
+            Assert.assertTrue("v1 is untouched by the v2 edit", v1.contains("PRINT(&quot;one&quot;)"));
+        } finally {
+            server.stop();
+        }
+    }
+
     // ---- helpers ----
 
     /** GET returning the response body (authed). */

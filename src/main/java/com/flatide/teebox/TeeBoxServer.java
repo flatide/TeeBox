@@ -364,7 +364,8 @@ public class TeeBoxServer {
                     // Parse output rule from form
                     List<OutputPublishRule> outputRules = parseOutputRuleFromForm(form);
                     runManager.updateScriptVersionContent(scriptId.trim(), version.trim(), content, outputRules);
-                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
+                    // Return to the version just edited (which may not be the active one), not the default.
+                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()) + "?version=" + urlParam(version.trim()));
                     return;
                 }
                 if ("GET".equals(method) && "/admin/runs".equals(path)) {
@@ -377,7 +378,8 @@ public class TeeBoxServer {
                 }
                 if ("GET".equals(method) && path.startsWith("/admin/scripts/")) {
                     String scriptId = path.substring("/admin/scripts/".length());
-                    writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderScriptPage(scriptId));
+                    String selectedVersion = trimToNull(parseQuery(exchange).get("version"));
+                    writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderScriptPage(scriptId, selectedVersion));
                     return;
                 }
                 if ("GET".equals(method) && path.startsWith("/admin/runs/")) {
@@ -1586,6 +1588,11 @@ public class TeeBoxServer {
     private String urlPath(String value) {
         if (value == null) return "";
         return value.replace(" ", "%20");
+    }
+
+    private String urlParam(String value) {
+        if (value == null) return "";
+        return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static class ScriptPublishRequest {
