@@ -2,6 +2,19 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.7.0
+
+- **Syntax-highlighting code editor in the admin script UI.** The script-content textareas (register,
+  add-version, edit-source) are now ProperTee code editors ported from the ProperTee playground:
+  syntax highlighting (keywords, builtins, strings, numbers, comments, operators), a line-number
+  gutter, and Tab / auto-indent / `Ctrl`+`/` comment shortcuts. Each editor carries a **built-in
+  function reference panel** — the 59 builtins by category; click one for its signature, description,
+  return/failure notes, and a runnable sample, then **Insert** to drop `NAME()` at the cursor. The
+  highlighter and the builtin catalog are ported verbatim; run/debug features were intentionally left
+  out. Editors keep the plain `<textarea>` as the form field (form submit and a no-JS fallback both
+  still work). Assets are inlined (TeeBox serves no static files); the heavier JS loads only on the
+  two editor pages, so the dashboard and login page stay lean.
+
 ## 1.6.0
 
 - **Embedded ProperTee runtime upgraded 0.2.0 → 0.5.0 (spec v0.6.0 → v0.9.0).** TeeBox now bundles
