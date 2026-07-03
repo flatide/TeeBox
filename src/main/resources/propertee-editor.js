@@ -252,8 +252,55 @@
         refresh();
 
         if (ta.hasAttribute('data-pt-panel')) {
-            row.appendChild(buildPanel(ta));
+            var resizer = document.createElement('div');
+            resizer.className = 'pt-editor-resizer';
+            resizer.title = 'Drag to resize';
+            var panel = buildPanel(ta);
+            row.appendChild(resizer);
+            row.appendChild(panel);
+            wireResizer(row, resizer, panel);
+            syncPanelHeight(editor, panel);
         }
+    }
+
+    // The panel stands exactly as tall as the code editor. The editor height is driven by the textarea
+    // (its `rows` + user resize), so observe it and mirror the height onto the panel; the panel's list
+    // scrolls internally. Falls back to a one-time sync where ResizeObserver is unavailable.
+    function syncPanelHeight(editor, panel) {
+        function apply() { panel.style.height = editor.offsetHeight + 'px'; }
+        apply();
+        if (typeof ResizeObserver === 'function') {
+            new ResizeObserver(apply).observe(editor);
+        }
+    }
+
+    // Drag the handle to trade width between the editor (flex:1) and the panel. Ported from the
+    // playground's fn-resizer; scoped to this row so multiple editors on a page don't interfere.
+    function wireResizer(row, resizer, panel) {
+        var MIN = 220, EDITOR_MIN = 320, dragging = false;
+        function onMove(clientX) {
+            var rect = row.getBoundingClientRect();
+            var width = rect.right - clientX;
+            var max = rect.width - EDITOR_MIN;
+            if (width < MIN) width = MIN;
+            if (width > max) width = Math.max(MIN, max);
+            panel.style.width = width + 'px';
+        }
+        resizer.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            dragging = true;
+            resizer.classList.add('dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+        document.addEventListener('mousemove', function (e) { if (dragging) onMove(e.clientX); });
+        document.addEventListener('mouseup', function () {
+            if (!dragging) return;
+            dragging = false;
+            resizer.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        });
     }
 
     function buildPanel(ta) {

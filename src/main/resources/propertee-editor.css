@@ -2,8 +2,15 @@
    Syntax token colors are verbatim from the ProperTee playground (catppuccin). The editor is a
    transparent <textarea> layered over a <pre> syntax overlay, with a synced line-number gutter. */
 
-.pt-editor-row { display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; }
+.pt-editor-row { display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; }
 .pt-editor-row > .pt-editor { flex:1 1 420px; min-width:0; }
+
+/* Drag handle between the editor and the builtin panel (playground-style left/right resize). */
+.pt-editor-resizer {
+    flex:0 0 auto; align-self:stretch; width:6px; min-height:60px; cursor:col-resize;
+    background:#313244; border-radius:3px; transition:background 0.12s;
+}
+.pt-editor-resizer:hover, .pt-editor-resizer.dragging { background:#89b4fa; }
 
 /* The <textarea> is the single height authority (its `rows` + user resize set the height). The gutter
    and the syntax overlay are absolute layers pinned to top:0/bottom:0, so they always match the
@@ -55,9 +62,12 @@
 .syn-op { color:#89dceb; }   /* operators */
 
 /* Built-in function reference panel */
+/* width is the resize axis (set by the drag handle); height is synced to the editor in JS so the panel
+   stands exactly as tall as the code area. min-width keeps it usable; overflow:hidden clips the list,
+   which scrolls internally (.pt-fn-list is flex:1 1 auto; overflow-y:auto). */
 .pt-fn-panel {
-    flex:0 0 300px; display:flex; flex-direction:column; background:#181825;
-    border:1px solid #313244; border-radius:6px; overflow:hidden; max-height:420px;
+    flex:0 0 auto; width:300px; min-width:220px; display:flex; flex-direction:column; background:#181825;
+    border:1px solid #313244; border-radius:6px; overflow:hidden; max-height:640px;
     font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;
 }
 .pt-fn-header {

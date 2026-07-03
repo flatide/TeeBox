@@ -137,10 +137,53 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("editor JS inlined (verbatim highlighter)", html.contains("function highlightSyntax"));
             Assert.assertTrue("builtin panel data inlined", html.contains("BUILTIN_DOCS"));
 
+            // The Active Version Source card is now the single edit + add-version surface: the separate
+            // "Add New Version" card is gone, and it carries both a "Save" (overwrite active) and a
+            // "Save as new version" button that overrides the form action to the register endpoint.
+            Assert.assertTrue("save-as-new-version button present", html.contains("Save as new version"));
+            Assert.assertTrue("new-version button targets the register endpoint",
+                    html.contains("formaction='/admin/scripts/register'"));
+            Assert.assertFalse("the standalone Add New Version card is removed", html.contains("Add New Version"));
+            Assert.assertTrue("editor is given more rows", html.contains("rows='24'"));
+
             // The heavy editor JS is only on editor pages — the dashboard stays lean.
             String dashboard = getBody(base, "/admin", alice);
             Assert.assertFalse("editor JS should not bloat non-editor pages",
                     dashboard.contains("function highlightSyntax"));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    public void activeSourceSaveAsNewVersionAddsVersionWithoutChangingActive() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-multiuser-addver").toFile();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "alice-pw");
+            Assert.assertNotNull(alice);
+            // First version registers and auto-activates.
+            assertRedirect("alice registers v1", postForm(base, "/admin/scripts/register",
+                    "scriptId=av_script&content=" + enc("PRINT(\"one\")\n") + "&activate=on", alice));
+            String before = getBody(base, "/admin/scripts/av_script", alice);
+            Assert.assertTrue("one version to start", before.contains("Versions (1)"));
+
+            // "Save as new version" = POST the editor content to the register endpoint with a blank
+            // version (auto next #) and no activate: a new version is added, the active one is unchanged.
+            assertRedirect("alice saves as a new version", postForm(base, "/admin/scripts/register",
+                    "scriptId=av_script&content=" + enc("PRINT(\"two\")\n") + "&description=" + enc("second"), alice));
+            String after = getBody(base, "/admin/scripts/av_script", alice);
+            Assert.assertTrue("a second version was added", after.contains("Versions (2)"));
+            Assert.assertTrue("the active version is unchanged (still 1)", after.contains("active (1)"));
+
+            // "Save" = POST to update-source overwrites the active version in place (no new version).
+            assertRedirect("alice overwrites the active version", postForm(base, "/admin/scripts/update-source",
+                    "scriptId=av_script&version=1&content=" + enc("PRINT(\"one-edited\")\n"), alice));
+            String edited = getBody(base, "/admin/scripts/av_script", alice);
+            Assert.assertTrue("still two versions after an in-place save", edited.contains("Versions (2)"));
+            Assert.assertTrue("active source reflects the in-place edit", edited.contains("one-edited"));
         } finally {
             server.stop();
         }

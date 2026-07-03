@@ -2,6 +2,25 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.8.0
+
+- **Reworked the script-editing UI on the admin script page.** The standalone "Add New Version" card is
+  removed; the **Active Version Source** editor is now the single surface for both editing and adding
+  versions. It has two submit buttons over the same content: **Save** overwrites the active version in
+  place (`/admin/scripts/update-source`), and **Save as new version** registers the editor content as a
+  new version (`/admin/scripts/register`, auto next #), with the adjacent *Description* and *Set new
+  version active* controls applying to that new version. Only the clicked button contributes its
+  `name`/`value`, so the two actions never collide (no JavaScript needed). The active source now shows
+  `2` more table columns of code — the editor grew from 14 to **24 rows**, using the space the removed
+  card freed.
+- **The code editor and its builtin-function panel are now resizable side by side**, like the ProperTee
+  playground: a drag handle between them trades width (the editor keeps a usable minimum, the panel a
+  minimum of 220px), and the panel's height tracks the editor so the two stay aligned as the textarea is
+  resized. The 1.7.1 editor-height fix is preserved — the gutter and syntax overlay remain pinned to the
+  textarea's height, so neither the panel nor the line count can stretch the box.
+- Note: the removed card's file-upload field is gone from this surface (paste the source instead); a new
+  script's first version is still registered from the **Register** modal on the Scripts list.
+
 ## 1.7.1
 
 - **Fix the code editor (1.7.0) confining the caret and scrollbar to the top portion of the box.** In a
