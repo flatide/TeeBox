@@ -2,7 +2,17 @@
 
 All notable changes to TeeBox are documented here.
 
-## 1.7.0
+## 1.7.1
+
+- **Fix the code editor (1.7.0) confining the caret and scrollbar to the top portion of the box.** In a
+  script longer than the visible rows, the textarea's scrollbar spanned only part of the editor and the
+  caret could not reach past roughly the middle, so typing lower down misbehaved. The line-number gutter
+  was a normal flex child with no height bound, so it grew to the full line count and — as the tallest
+  child — stretched the `.pt-editor` box past the textarea's height (TeeBox's global `pre{max-height}`
+  compounded it on the syntax overlay). The gutter and the syntax overlay are now absolute layers pinned
+  to the box's top and bottom, so the **textarea alone sets the height**; both are clipped and
+  scroll-synced to it. CSS-only change to `propertee-editor.css`; no behavior change to the highlighter,
+  the builtin panel, or form submission.
 
 - **Syntax-highlighting code editor in the admin script UI.** The script-content textareas (register,
   add-version, edit-source) are now ProperTee code editors ported from the ProperTee playground:

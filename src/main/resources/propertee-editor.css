@@ -2,22 +2,28 @@
    Syntax token colors are verbatim from the ProperTee playground (catppuccin). The editor is a
    transparent <textarea> layered over a <pre> syntax overlay, with a synced line-number gutter. */
 
-.pt-editor-row { display:flex; gap:12px; align-items:stretch; flex-wrap:wrap; }
+.pt-editor-row { display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; }
 .pt-editor-row > .pt-editor { flex:1 1 420px; min-width:0; }
 
+/* The <textarea> is the single height authority (its `rows` + user resize set the height). The gutter
+   and the syntax overlay are absolute layers pinned to top:0/bottom:0, so they always match the
+   textarea's height and can never stretch the box — clipped with overflow:hidden, scroll-synced in JS.
+   (In the playground the wrapper got a definite height from a 100vh flex chain; here there is none, so
+   a free-growing flex gutter would otherwise drive the box taller than the textarea.) */
 .pt-editor {
-    display:flex; position:relative; border:1px solid #313244; border-radius:6px; overflow:hidden;
-    background:#1e1e2e;
+    position:relative; border:1px solid #313244; border-radius:6px; overflow:hidden;
+    background:#1e1e2e; padding-left:44px;
     font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;
 }
 .pt-editor-lines {
-    flex:0 0 auto; min-width:40px; background:#181825; color:#6c7086; font-size:13px; line-height:1.7;
+    position:absolute; top:0; left:0; bottom:0; width:44px; box-sizing:border-box;
+    background:#181825; color:#6c7086; font-size:13px; line-height:1.7;
     padding:10px 8px 10px 0; text-align:right; overflow:hidden; user-select:none;
     border-right:1px solid #313244; white-space:pre;
 }
-.pt-editor-body { position:relative; flex:1 1 auto; min-width:0; }
+.pt-editor-body { position:relative; }
 .pt-editor-syntax {
-    position:absolute; top:0; left:0; right:0; bottom:0; margin:0; padding:10px 12px;
+    position:absolute; top:0; left:0; right:0; bottom:0; margin:0; padding:10px 12px; max-height:none;
     font-family:inherit; font-size:13px; line-height:1.7; white-space:pre; overflow:hidden;
     pointer-events:none; color:#cdd6f4; background:transparent; tab-size:4; -moz-tab-size:4;
 }
