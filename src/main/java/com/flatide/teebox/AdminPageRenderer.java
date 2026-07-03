@@ -18,6 +18,29 @@ public class AdminPageRenderer {
     private String currentUser = null;
     private String currentRole = null;
 
+    /** ProperTee code-editor assets (ported from the ProperTee playground), loaded once from the
+     *  classpath and inlined into admin pages (TeeBox serves no static assets, and the login gate
+     *  would block a separate /admin asset request anyway). */
+    private static final String EDITOR_CSS = loadResource("/propertee-editor.css");
+    private static final String EDITOR_JS = loadResource("/propertee-editor.js");
+
+    private static String loadResource(String path) {
+        try (java.io.InputStream in = AdminPageRenderer.class.getResourceAsStream(path)) {
+            if (in == null) {
+                return "";
+            }
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                out.write(buf, 0, n);
+            }
+            return new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            return "";
+        }
+    }
+
     public AdminPageRenderer(TeeBoxConfig config, RunManager runManager, Gson gson) {
         this.config = config;
         this.runManager = runManager;
@@ -801,7 +824,7 @@ public class AdminPageRenderer {
         sb.append("<div class='form-row'><label>Script File</label>");
         sb.append("<input type='file' id='script-file' accept='.tee,.txt' style='font-size:13px;'/>");
         sb.append("</div>");
-        sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='script-content' rows='8' style='font-family:monospace;font-size:13px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;' placeholder='return {\"ok\": true}'></textarea></div>");
+        sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='script-content' rows='10' class='pt-editor-fallback' data-pt-editor data-pt-panel placeholder='return {\"ok\": true}'></textarea></div>");
         sb.append("<details style='margin-top:4px;'><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule (optional)</summary>");
         sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
         sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
@@ -828,6 +851,7 @@ public class AdminPageRenderer {
         sb.append("});");
         sb.append("</script>");
 
+        sb.append(editorScript());
         sb.append(pageEnd());
         return sb.toString();
     }
@@ -949,7 +973,7 @@ public class AdminPageRenderer {
             sb.append("<div class='form-row'><label>Version <span class='dim'>(blank = auto, next #)</span></label><input type='text' name='version' placeholder='auto (next #)'/></div>");
             sb.append("<div class='form-row'><label>Description</label><input type='text' name='description' placeholder=''/></div>");
             sb.append("<div class='form-row'><label>Script File</label><input type='file' id='addver-file' accept='.tee,.txt' style='font-size:13px;'/></div>");
-            sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='addver-content' rows='10' style='font-family:\"SF Mono\",SFMono-Regular,Consolas,\"Liberation Mono\",Menlo,monospace;font-size:12px;padding:12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;line-height:1.6;background:#1e293b;color:#e2e8f0;' placeholder='return {\"ok\": true}'></textarea></div>");
+            sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='addver-content' rows='12' class='pt-editor-fallback' data-pt-editor data-pt-panel placeholder='return {\"ok\": true}'></textarea></div>");
             sb.append("<details style='margin-top:4px;'><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule (optional)</summary>");
             sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
             sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
@@ -984,7 +1008,7 @@ public class AdminPageRenderer {
                     sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid'>");
                     sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
                     sb.append("<input type='hidden' name='version' value='").append(escape(script.activeVersion)).append("'/>");
-                    sb.append("<textarea name='content' rows='12' style='font-family:\"SF Mono\",SFMono-Regular,Consolas,\"Liberation Mono\",Menlo,monospace;font-size:12px;padding:12px;border:1px solid #cbd5e1;border-radius:6px;resize:vertical;line-height:1.6;background:#1e293b;color:#e2e8f0;'>").append(escape(content)).append("</textarea>");
+                    sb.append("<textarea name='content' rows='14' class='pt-editor-fallback' data-pt-editor data-pt-panel>").append(escape(content)).append("</textarea>");
                     OutputPublishRule activeRule = findActiveOutputRule(script);
                     sb.append("<details style='margin-top:8px;'");
                     if (activeRule != null) sb.append(" open");
@@ -1024,6 +1048,7 @@ public class AdminPageRenderer {
         sb.append("</div></form></div>");
         } // end canModify check for Run Script
 
+        sb.append(editorScript());
         sb.append(pageEnd());
         return sb.toString();
     }
@@ -1343,8 +1368,16 @@ public class AdminPageRenderer {
         sb.append(".task-output-block{margin-bottom:16px;} .task-output-block:last-child{margin-bottom:0;} ");
         sb.append(".task-output-label{font-size:12px;color:#64748b;margin-bottom:4px;} ");
         sb.append(".task-output-block pre{margin-top:4px;} ");
+        sb.append(EDITOR_CSS);
         sb.append("</style></head><body>");
         return sb.toString();
+    }
+
+    /** The ProperTee code editor JS (upgrades any {@code <textarea data-pt-editor>}). Inlined only on
+     *  pages that render a script editor, so other admin pages (and the login page) stay lean. The
+     *  editor CSS is small and lives in {@code pageStart} for all pages. */
+    private String editorScript() {
+        return "<script>" + EDITOR_JS + "</script>";
     }
 
     private String pageEnd() {

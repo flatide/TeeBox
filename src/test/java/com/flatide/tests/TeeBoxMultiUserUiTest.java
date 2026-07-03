@@ -117,7 +117,59 @@ public class TeeBoxMultiUserUiTest {
         }
     }
 
+    @Test
+    public void scriptEditorIsInjectedIntoAdminScriptPages() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-multiuser-editor").toFile();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "alice-pw");
+            Assert.assertNotNull(alice);
+            assertRedirect("alice registers", postForm(base, "/admin/scripts/register",
+                    "scriptId=ed_script&content=" + enc("return {\"ok\": true}\n") + "&activate=on", alice));
+
+            // The script detail page (edit-source) must carry the ported code editor: an upgradable
+            // textarea, the syntax-highlight CSS, the verbatim highlighter JS, and the builtin panel data.
+            String html = getBody(base, "/admin/scripts/ed_script", alice);
+            Assert.assertTrue("textarea marked for upgrade", html.contains("data-pt-editor"));
+            Assert.assertTrue("editor CSS inlined (syntax token class)", html.contains(".syn-fn"));
+            Assert.assertTrue("editor JS inlined (verbatim highlighter)", html.contains("function highlightSyntax"));
+            Assert.assertTrue("builtin panel data inlined", html.contains("BUILTIN_DOCS"));
+
+            // The heavy editor JS is only on editor pages — the dashboard stays lean.
+            String dashboard = getBody(base, "/admin", alice);
+            Assert.assertFalse("editor JS should not bloat non-editor pages",
+                    dashboard.contains("function highlightSyntax"));
+        } finally {
+            server.stop();
+        }
+    }
+
     // ---- helpers ----
+
+    /** GET returning the response body (authed). */
+    private String getBody(String base, String path, String cookie) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + path).openConnection();
+        conn.setInstanceFollowRedirects(false);
+        conn.setRequestMethod("GET");
+        if (cookie != null) {
+            conn.setRequestProperty("Cookie", "teebox-session=" + cookie);
+        }
+        int code = conn.getResponseCode();
+        java.io.InputStream in = code < 400 ? conn.getInputStream() : conn.getErrorStream();
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        if (in != null) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                out.write(buf, 0, n);
+            }
+            in.close();
+        }
+        conn.disconnect();
+        return out.toString("UTF-8");
+    }
 
     /** GET with an optional session cookie; no redirect following. Returns the status code. */
     private int get(String base, String path, String cookie) throws IOException {
