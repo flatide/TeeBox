@@ -1,0 +1,39 @@
+// 06 — one script, three outcomes, one envelope (TeeBox 1.9.0)
+//
+// The run-result envelope unifies what the host used to receive in three
+// fragmented forms. Read it at:  GET /api/client/runs/{runId}/result → "result"
+// (the whole run viewed as a ProperTee Result — {status, ok, value}, run = "thread #0")
+//
+// Submit this script three times with properties {"mode": ...}:
+//   {"mode": "ok"}         → envelope {status:"done",  ok:true,  value:{...report...}}
+//   {"mode": "data-error"} → envelope {status:"done",  ok:true,  value:{status:"error", ok:false, ...}}
+//                            (the run SUCCEEDED; the inner Result is the script's structured
+//                             payload, nested by design — TeeBox never inspects the shape)
+//   {"mode": "fail"}       → run FAILED; envelope {status:"error", ok:false,
+//                                                  value:"upstream unreachable: giving up"}
+// Poll before it finishes and the same field reads {status:"running", ok:false, value:{}}.
+
+mode = "ok"
+if HAS_KEY(_PROPS, "mode") then
+    mode = _PROPS.mode
+end
+
+// a little real work so the run shows up in the task list too
+shell = SHELL("echo envelope-demo-work")
+PRINT("shell ok:", shell.ok)
+
+if mode == "ok" then
+    // plain success: the envelope carries this object in value
+    return {"job": "envelope-demo", "shell_ok": shell.ok, "answer": 42}
+elseif mode == "data-error" then
+    // deliberately return a Result AS DATA (spec v0.10.0 ERR): the outer envelope
+    // stays ok:true because the RUN succeeded — the inner ok:false is structured
+    // error detail for the host (use this when the caller needs fields, not a message)
+    return ERR({"reason": "upstream said no", "code": 503})
+elseif mode == "fail" then
+    // escalate (spec v0.10.0 FAIL): declare the error fatal — the run itself FAILS
+    // (use this when a message is enough and the run must not look successful)
+    FAIL("upstream unreachable: giving up")
+end
+
+return {"note": "unknown mode '" + mode + "' — pass {\"mode\": \"ok\" | \"data-error\" | \"fail\"}"}
