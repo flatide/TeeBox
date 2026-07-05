@@ -124,6 +124,11 @@ public class ScriptRegistry {
 
         ScriptInfo info = loadScript(scriptId);
         long now = System.currentTimeMillis();
+        // A version added to a pre-existing script (incl. an empty shell from createScript) never
+        // auto-activates — activation is explicit. Only a script created together with its first
+        // version in this same call still auto-activates (preserves the Publisher API's one-shot
+        // register→runnable behavior).
+        boolean scriptCreatedNow = (info == null);
         if (info == null) {
             info = new ScriptInfo();
             info.scriptId = scriptId;
@@ -167,12 +172,33 @@ public class ScriptRegistry {
             }
         }
         info.versions.add(versionInfo);
-        if (activate || info.activeVersion == null || info.activeVersion.length() == 0) {
+        if (activate || (scriptCreatedNow && (info.activeVersion == null || info.activeVersion.length() == 0))) {
             info.activeVersion = resolvedVersion;
         }
         info.updatedAt = now;
         markActiveVersion(info);
         sortVersions(info);
+        saveScript(info);
+        return info.copy();
+    }
+
+    /**
+     * Create an empty script "shell" — no versions, no active version — so the operator can register the
+     * script first and add its code afterward (via the detail-page editor / {@link #registerVersion}).
+     * @param owner admin-UI username recorded as the script owner (null = unset, admin-only in the UI).
+     * @throws IllegalArgumentException if the scriptId is invalid or a script with that id already exists.
+     */
+    public synchronized ScriptInfo createScript(String scriptId, String owner) {
+        validateName("scriptId", scriptId);
+        if (loadScript(scriptId) != null) {
+            throw new IllegalArgumentException("Script already exists: " + scriptId);
+        }
+        long now = System.currentTimeMillis();
+        ScriptInfo info = new ScriptInfo();
+        info.scriptId = scriptId;
+        info.createdAt = now;
+        info.updatedAt = now;
+        info.owner = (owner != null && owner.trim().length() > 0) ? owner.trim() : null;
         saveScript(info);
         return info.copy();
     }

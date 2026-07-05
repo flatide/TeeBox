@@ -817,41 +817,22 @@ public class AdminPageRenderer {
         sb.append("<div class='modal-content'>");
         sb.append("<div class='card-header'><h2>Register Script</h2>");
         sb.append("<button class='btn-refresh' onclick='document.getElementById(\"register-modal\").style.display=\"none\"'>Close</button></div>");
+        // First registration is metadata-only: it creates an empty script (no version, not active). The
+        // code — and activation — happen afterward on the script detail page, so runs never serve an
+        // untested first version. No editor / file upload here on purpose.
         sb.append("<form method='post' action='/admin/scripts/register' class='form-grid' id='register-form'>");
-        sb.append("<div class='form-row'><label>Script ID</label><input type='text' name='scriptId' placeholder='calc_sum' required/></div>");
-        sb.append("<div class='form-row'><label>Version <span class='dim'>(blank = auto)</span></label><input type='text' name='version' placeholder='auto (next #)'/></div>");
-        sb.append("<div class='form-row'><label>Description</label><input type='text' name='description' placeholder=''/></div>");
-        sb.append("<div class='form-row'><label>Script File</label>");
-        sb.append("<input type='file' id='script-file' accept='.tee,.txt' style='font-size:13px;'/>");
-        sb.append("</div>");
-        sb.append("<div class='form-row'><label>Script Content</label><textarea name='content' id='script-content' rows='10' class='pt-editor-fallback' data-pt-editor data-pt-panel placeholder='return {\"ok\": true}'></textarea></div>");
-        sb.append("<details style='margin-top:4px;'><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule (optional)</summary>");
-        sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
-        sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
-        sb.append("<div class='form-row'><label>Publish Key</label><input type='text' name='publishKey' placeholder='jobId'/></div>");
-        sb.append("<div style='display:flex;gap:12px;'>");
-        sb.append("<div class='form-row' style='flex:1'><label>Capture Group</label><input type='number' name='captureGroup' value='1' min='0' style='width:60px;'/></div>");
-        sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'><option value='stdout'>stdout</option><option value='stderr'>stderr</option></select></div>");
-        sb.append("</div></div></details>");
-        sb.append("<div class='form-row-inline'>");
-        sb.append("<label class='checkbox-label'><input type='checkbox' name='activate' checked/> Activate</label>");
-        sb.append("<button type='submit'>Register</button>");
-        sb.append("</div></form>");
+        sb.append("<div class='form-row'><label>Script ID</label><input type='text' name='scriptId' placeholder='calc_sum' required autofocus/></div>");
+        sb.append("<p class='dim' style='font-size:12px;margin:-4px 0 0;'>Creates an empty script. You'll add the code and activate a version on the next page.</p>");
+        sb.append("<div class='form-row-inline'><button type='submit'>Register</button></div>");
+        sb.append("</form>");
         sb.append("</div></div>");
 
         sb.append("<script>");
-        sb.append("document.getElementById('script-file').addEventListener('change',function(e){");
-        sb.append("var file=e.target.files[0];if(!file)return;");
-        sb.append("var reader=new FileReader();");
-        sb.append("reader.onload=function(ev){document.getElementById('script-content').value=ev.target.result;};");
-        sb.append("reader.readAsText(file);");
-        sb.append("});");
         sb.append("document.getElementById('register-modal').addEventListener('click',function(e){");
         sb.append("if(e.target===this)this.style.display='none';");
         sb.append("});");
         sb.append("</script>");
 
-        sb.append(editorScript());
         sb.append(pageEnd());
         return sb.toString();
     }
@@ -865,9 +846,20 @@ public class AdminPageRenderer {
         if (script == null) {
             return renderErrorPage("Script not found", scriptId);
         }
-        // The source editor targets the requested version when it exists, else the active one. This lets
-        // the Versions list open any version (including inactive ones) for editing, not just the active.
-        String selectedVersion = hasVersion(script, selectedVersionParam) ? selectedVersionParam : script.activeVersion;
+        // The source editor targets the requested version when it exists, else the active one, else the
+        // latest version (a script may now have versions but no active one — activation is explicit), else
+        // null for a freshly-registered shell with no versions yet. This lets the Versions list open any
+        // version (including inactive ones) for editing, not just the active.
+        String selectedVersion;
+        if (hasVersion(script, selectedVersionParam)) {
+            selectedVersion = selectedVersionParam;
+        } else if (script.activeVersion != null && script.activeVersion.length() > 0) {
+            selectedVersion = script.activeVersion;
+        } else if (!script.versions.isEmpty()) {
+            selectedVersion = script.versions.get(0).version; // newest first (sortVersions is desc)
+        } else {
+            selectedVersion = null; // shell — no versions yet
+        }
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Script " + scriptId));
         sb.append(renderTopNav("scripts"));
@@ -976,63 +968,85 @@ public class AdminPageRenderer {
 
         // Version Source doubles as the "add a version" surface: editing the source and pressing
         // "Save as new version" posts the editor content to /admin/scripts/register (blank version =>
-        // next auto-increment integer). The dedicated "Add New Version" card was removed in favor of this
-        // surface, which frees the vertical room the editor now uses. The version shown is the one picked
-        // from the Versions list (Edit link), defaulting to the active version.
-        if (selectedVersion != null && selectedVersion.length() > 0) {
-            String content = runManager.getScriptVersionContent(scriptId, selectedVersion);
-            if (content != null) {
-                boolean selectedIsActive = selectedVersion.equals(script.activeVersion);
-                sb.append("<div class='card' id='version-source'>");
-                sb.append("<div class='card-header'><h2>Version Source (").append(escape(selectedVersion)).append(")");
-                if (selectedIsActive) {
-                    sb.append(" <span class='badge badge-completed'>ACTIVE</span>");
-                } else {
-                    sb.append(" <span class='tag'>inactive</span>");
-                }
-                sb.append("</h2></div>");
-                if (!canModify(script)) {
-                    sb.append("<pre>").append(escape(content)).append("</pre>");
-                } else {
-                    // Default action = update-source (overwrite the selected version). The "Save" button
-                    // carries the version via its own name/value, and the "Save as new version" button
-                    // overrides the action to /admin/scripts/register with no version (=> auto next #).
-                    // Only the clicked submit button contributes its name/value, so the two never collide.
-                    sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid'>");
-                    sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
-                    sb.append("<textarea name='content' rows='24' class='pt-editor-fallback' data-pt-editor data-pt-panel>").append(escape(content)).append("</textarea>");
-                    OutputPublishRule activeRule = findOutputRuleForVersion(script, selectedVersion);
-                    sb.append("<details style='margin-top:8px;'");
-                    if (activeRule != null) sb.append(" open");
-                    sb.append("><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule</summary>");
-                    sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
-                    sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' value='").append(activeRule != null ? escape(activeRule.pattern) : "").append("' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
-                    sb.append("<div class='form-row'><label>Publish Key</label><input type='text' name='publishKey' value='").append(activeRule != null ? escape(activeRule.publishKey) : "").append("' placeholder='jobId'/></div>");
-                    sb.append("<div style='display:flex;gap:12px;'>");
-                    sb.append("<div class='form-row' style='flex:1'><label>Capture Group</label><input type='number' name='captureGroup' value='").append(activeRule != null ? activeRule.captureGroup : 1).append("' min='0' style='width:60px;'/></div>");
-                    sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'>");
-                    sb.append("<option value='stdout'").append(activeRule == null || !"stderr".equals(activeRule.stream) ? " selected" : "").append(">stdout</option>");
-                    sb.append("<option value='stderr'").append(activeRule != null && "stderr".equals(activeRule.stream) ? " selected" : "").append(">stderr</option>");
-                    sb.append("</select></div></div></div></details>");
-                    sb.append("<div class='form-row-inline' style='align-items:center;'>");
-                    sb.append("<input type='text' name='description' placeholder='Description (used when saving as a new version)' style='flex:1;min-width:200px;'/>");
-                    sb.append("<label class='checkbox-label' title='Applies only to \"Save as new version\"'><input type='checkbox' name='activate'/> Set new version active</label>");
-                    sb.append("<button type='submit' name='version' value='").append(escape(selectedVersion)).append("' title='Overwrite version ").append(escape(selectedVersion)).append(" in place'>Save</button>");
-                    sb.append("<button type='submit' formaction='/admin/scripts/register' style='background:#334155;' title='Register the editor content as a new version (auto next #)'>Save as new version</button>");
-                    sb.append("</div>");
-                    sb.append("</form>");
-                }
-                sb.append("</div>");
+        // next auto-increment integer). It renders for any modifiable script — including a freshly
+        // registered shell with no versions yet (empty editor, "Save as new version" only). Versions
+        // never auto-activate, so the card also warns when the script has no active version. The version
+        // shown is the one picked from the Versions list (Edit link), else active, else latest.
+        boolean canEditSource = canModify(script);
+        boolean hasSelected = selectedVersion != null && selectedVersion.length() > 0;
+        if (hasSelected || canEditSource) {
+            String content = hasSelected ? runManager.getScriptVersionContent(scriptId, selectedVersion) : "";
+            if (content == null) content = "";
+            boolean selectedIsActive = hasSelected && selectedVersion.equals(script.activeVersion);
+            boolean noActive = script.activeVersion == null || script.activeVersion.length() == 0;
+            sb.append("<div class='card' id='version-source'>");
+            sb.append("<div class='card-header'><h2>");
+            if (hasSelected) {
+                sb.append("Version Source (").append(escape(selectedVersion)).append(")");
+                sb.append(selectedIsActive ? " <span class='badge badge-completed'>ACTIVE</span>" : " <span class='tag'>inactive</span>");
+            } else {
+                sb.append("New Version Source <span class='tag'>no versions yet</span>");
             }
+            sb.append("</h2></div>");
+            if (!canEditSource) {
+                if (hasSelected) sb.append("<pre>").append(escape(content)).append("</pre>");
+            } else {
+                if (noActive) {
+                    sb.append("<div class='callout'>");
+                    sb.append(hasSelected
+                        ? "No active version yet &mdash; use <strong>Set active</strong> in the Versions table to make a version runnable."
+                        : "This script has no code yet &mdash; write it below and press <strong>Save as new version</strong>, then <strong>Set active</strong> in the Versions table to make it runnable.");
+                    sb.append("</div>");
+                }
+                // Default action = update-source (overwrite the selected version). The "Save" button
+                // carries the version via its own name/value; "Save as new version" overrides the action
+                // to /admin/scripts/register (no version => auto next #). Only the clicked submit button
+                // contributes its name/value, so the two never collide. A shell has no version to
+                // overwrite, so it shows only "Save as new version".
+                sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid'>");
+                sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
+                sb.append("<textarea name='content' rows='24' class='pt-editor-fallback' data-pt-editor data-pt-panel placeholder='return {\"ok\": true}'>").append(escape(content)).append("</textarea>");
+                OutputPublishRule activeRule = hasSelected ? findOutputRuleForVersion(script, selectedVersion) : null;
+                sb.append("<details style='margin-top:8px;'");
+                if (activeRule != null) sb.append(" open");
+                sb.append("><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Output Capture Rule</summary>");
+                sb.append("<div style='display:flex;flex-direction:column;gap:8px;margin-top:8px;'>");
+                sb.append("<div class='form-row'><label>Regex Pattern</label><input type='text' name='publishPattern' value='").append(activeRule != null ? escape(activeRule.pattern) : "").append("' placeholder='jobid:\\s*(\\S+)' style='font-family:monospace;font-size:12px;'/></div>");
+                sb.append("<div class='form-row'><label>Publish Key</label><input type='text' name='publishKey' value='").append(activeRule != null ? escape(activeRule.publishKey) : "").append("' placeholder='jobId'/></div>");
+                sb.append("<div style='display:flex;gap:12px;'>");
+                sb.append("<div class='form-row' style='flex:1'><label>Capture Group</label><input type='number' name='captureGroup' value='").append(activeRule != null ? activeRule.captureGroup : 1).append("' min='0' style='width:60px;'/></div>");
+                sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'>");
+                sb.append("<option value='stdout'").append(activeRule == null || !"stderr".equals(activeRule.stream) ? " selected" : "").append(">stdout</option>");
+                sb.append("<option value='stderr'").append(activeRule != null && "stderr".equals(activeRule.stream) ? " selected" : "").append(">stderr</option>");
+                sb.append("</select></div></div></div></details>");
+                sb.append("<div class='form-row-inline' style='align-items:center;'>");
+                sb.append("<input type='text' name='description' placeholder='Description (used when saving as a new version)' style='flex:1;min-width:200px;'/>");
+                sb.append("<label class='checkbox-label' title='Applies only to \"Save as new version\"'><input type='checkbox' name='activate'/> Set new version active</label>");
+                if (hasSelected) {
+                    sb.append("<button type='submit' name='version' value='").append(escape(selectedVersion)).append("' title='Overwrite version ").append(escape(selectedVersion)).append(" in place'>Save</button>");
+                }
+                sb.append("<button type='submit' formaction='/admin/scripts/register' style='background:#334155;' title='Register the editor content as a new version (auto next #)'>Save as new version</button>");
+                sb.append("</div>");
+                sb.append("</form>");
+            }
+            sb.append("</div>");
         }
 
-        if (canModify(script)) {
+        if (canModify(script) && !script.versions.isEmpty()) {
+        boolean runNoActive = script.activeVersion == null || script.activeVersion.length() == 0;
         sb.append("<div class='card'>");
         sb.append("<h2>Run Script</h2>");
+        if (runNoActive) {
+            sb.append("<div class='callout'>No active version yet &mdash; pick a specific version to run, or <strong>Set active</strong> one first.</div>");
+        }
         sb.append("<form method='post' action='/admin/submit' class='form-grid'>");
         sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
-        sb.append("<div class='form-row'><label>Version (blank = active)</label><select name='version' style='padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;'>");
-        sb.append("<option value=''>active (").append(escape(script.activeVersion)).append(")</option>");
+        sb.append("<div class='form-row'><label>Version").append(runNoActive ? "" : " (blank = active)").append("</label><select name='version' style='padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;'>");
+        if (runNoActive) {
+            sb.append("<option value='' disabled selected>&mdash; select a version &mdash;</option>");
+        } else {
+            sb.append("<option value=''>active (").append(escape(script.activeVersion)).append(")</option>");
+        }
         for (ScriptVersionInfo version : script.versions) {
             sb.append("<option value='").append(escape(version.version)).append("'>").append(escape(version.version)).append("</option>");
         }

@@ -260,6 +260,11 @@ public class RunManager {
         return scriptRegistry.registerVersion(scriptId, version, content, description, labels, activate, outputRules, owner);
     }
 
+    /** Create an empty script shell (no versions, not active); code is added later. See ScriptRegistry. */
+    public ScriptInfo createScript(String scriptId, String owner) {
+        return scriptRegistry.createScript(scriptId, owner);
+    }
+
     public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content) {
         return scriptRegistry.updateVersionContent(scriptId, version, content, null);
     }

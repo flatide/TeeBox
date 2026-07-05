@@ -267,13 +267,22 @@ public class TeeBoxServer {
                     if (scriptId == null || scriptId.trim().length() == 0) {
                         throw new IllegalArgumentException("Script ID is required");
                     }
-                    if (content == null || content.trim().length() == 0) {
-                        throw new IllegalArgumentException("Script content is required");
-                    }
                     // New script => any logged-in user may create it (becomes owner). Existing script
                     // (add-version) => only the owner or an admin.
                     if (!canModifyScript(session, scriptId.trim())) {
                         forbidden(exchange);
+                        return;
+                    }
+                    // Content-less register = create an empty script "shell" (no version, not active); the
+                    // operator adds the code afterward from the detail-page editor. Only valid for a
+                    // brand-new script — a content-less register against an existing script is an error.
+                    if (content == null || content.trim().length() == 0) {
+                        if (runManager.getScript(scriptId.trim()) != null) {
+                            throw new IllegalArgumentException("Script content is required");
+                        }
+                        String shellOwner = session != null ? session.username : null;
+                        runManager.createScript(scriptId.trim(), shellOwner);
+                        redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                         return;
                     }
                     // Version is optional: blank => registry auto-assigns the next sequential integer.

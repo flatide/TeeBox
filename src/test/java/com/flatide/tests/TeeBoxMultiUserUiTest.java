@@ -230,6 +230,50 @@ public class TeeBoxMultiUserUiTest {
         }
     }
 
+    @Test
+    public void firstRegistrationCreatesInactiveShellThenCodeIsAddedSeparately() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-multiuser-shell").toFile();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "alice-pw");
+            Assert.assertNotNull(alice);
+
+            // First registration is metadata-only: no content => an empty script shell (no version).
+            assertRedirect("register empty shell", postForm(base, "/admin/scripts/register",
+                    "scriptId=shell_script", alice));
+            String shell = getBody(base, "/admin/scripts/shell_script", alice);
+            Assert.assertTrue("shell has no versions", shell.contains("Versions (0)"));
+            Assert.assertTrue("shell shows the empty-source editor", shell.contains("New Version Source"));
+            Assert.assertTrue("shell prompts to add code", shell.contains("no versions yet"));
+            Assert.assertTrue("shell can save-as-new-version", shell.contains("Save as new version"));
+            Assert.assertFalse("shell has nothing to overwrite (no Save button)", shell.contains("Overwrite version"));
+
+            // Content-less register against an EXISTING script is an error (not another shell).
+            Assert.assertEquals("re-register with no content is rejected", 400,
+                    postForm(base, "/admin/scripts/register", "scriptId=shell_script", alice));
+
+            // Add the code from the detail page. The first version must NOT auto-activate.
+            assertRedirect("add first version", postForm(base, "/admin/scripts/register",
+                    "scriptId=shell_script&content=" + enc("PRINT(\"hi\")\n"), alice));
+            String withV1 = getBody(base, "/admin/scripts/shell_script?version=1", alice);
+            Assert.assertTrue("now has one version", withV1.contains("Versions (1)"));
+            Assert.assertTrue("editing version 1", withV1.contains("Version Source (1)"));
+            Assert.assertTrue("version 1 is inactive", withV1.contains("inactive"));
+            Assert.assertTrue("warns there is no active version", withV1.contains("No active version yet"));
+
+            // Explicit activation makes it runnable.
+            assertRedirect("activate version 1", postForm(base, "/admin/scripts/activate/shell_script",
+                    "version=1", alice));
+            String active = getBody(base, "/admin/scripts/shell_script?version=1", alice);
+            Assert.assertTrue("version 1 is now active", active.contains("ACTIVE"));
+            Assert.assertFalse("no-active warning is gone", active.contains("No active version yet"));
+        } finally {
+            server.stop();
+        }
+    }
+
     // ---- helpers ----
 
     /** GET returning the response body (authed). */
