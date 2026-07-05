@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -111,11 +112,17 @@ public class ScriptExecutor {
             Scheduler scheduler = new Scheduler(visitor, callbacks != null ? new CallbackSchedulerListener(callbacks) : null);
             ProperTeeInterpreter.RootStepper mainStepper = visitor.createRootStepper(tree);
             Object result = scheduler.run(mainStepper);
-            Object outputData = null;
+            // Resolve the run's result value. ProperTee has "no implicit null" — absence is {} (an empty
+            // object), never null — so a script that neither returns nor sets a `result` variable yields
+            // {} here, exactly like `return` / `return {}`. (An explicit `return null` still produces the
+            // first-class null value; that is a deliberate value, not absence.)
+            Object outputData;
             if (mainStepper.hasExplicitReturn()) {
                 outputData = TypeChecker.deepCopy(result);
             } else if (visitor.variables.containsKey("result")) {
                 outputData = TypeChecker.deepCopy(visitor.variables.get("result"));
+            } else {
+                outputData = new LinkedHashMap<String, Object>();
             }
             return ExecutionResult.completed(mainStepper.hasExplicitReturn(), outputData);
         } catch (Throwable error) {

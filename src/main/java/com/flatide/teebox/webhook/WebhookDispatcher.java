@@ -45,7 +45,12 @@ public class WebhookDispatcher {
     // tombstone always outlives its run — this is what lets reconcile tell "never enqueued" (no record)
     // from "already delivered" (record present) without a time-window heuristic, even after restart.
     private final long tombstoneRetentionMs;
-    private final Gson gson = new Gson();
+    // Defensive: the current MVP payload carries no result value tree, but should it ever include one,
+    // the engine's first-class null must serialize as JSON null (not {}). See JsonNullGsonAdapter.
+    private final Gson gson = new com.google.gson.GsonBuilder()
+            .registerTypeAdapter(com.flatide.propertee2.value.JsonNull.class,
+                    new com.flatide.teebox.JsonNullGsonAdapter())
+            .create();
 
     private final ScheduledExecutorService scanScheduler = Executors.newSingleThreadScheduledExecutor();
     private final ThreadPoolExecutor workerPool;

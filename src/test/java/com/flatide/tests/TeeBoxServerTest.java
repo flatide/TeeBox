@@ -148,9 +148,14 @@ public class TeeBoxServerTest {
                 "value = 41\n" +
                 "result = {\"ok\": true, \"value\": value + 1}\n",
                 "variable result test", Arrays.asList("test"), true);
+            // No return and no `result` variable: ProperTee's "no implicit null" means the result is {}
+            // (empty object), never null — consistent with `return` / `return {}`.
+            client.registerScript("no_return", "v1", "PRINT(\"test\")\n",
+                "no-return result test", Arrays.asList("test"), true);
 
             String returnRunId = (String) client.submitRun("return_result", null, new LinkedHashMap<String, Object>()).get("runId");
             String variableRunId = (String) client.submitRun("variable_result", null, new LinkedHashMap<String, Object>()).get("runId");
+            String noReturnRunId = (String) client.submitRun("no_return", null, new LinkedHashMap<String, Object>()).get("runId");
 
             Map<String, Object> returnDetail = waitForRunStatus(testServer.baseUrl, returnRunId, "COMPLETED", 8000L);
             @SuppressWarnings("unchecked")
@@ -169,6 +174,47 @@ public class TeeBoxServerTest {
             Map<String, Object> variableData = (Map<String, Object>) variableRun.get("resultData");
             Assert.assertEquals(Boolean.TRUE, variableData.get("ok"));
             Assert.assertEquals(42.0, ((Number) variableData.get("value")).doubleValue(), 0.0);
+
+            Map<String, Object> noReturnDetail = waitForRunStatus(testServer.baseUrl, noReturnRunId, "COMPLETED", 8000L);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> noReturnRun = (Map<String, Object>) noReturnDetail.get("run");
+            Assert.assertEquals(Boolean.FALSE, noReturnRun.get("hasExplicitReturn"));
+            Object noReturnData = noReturnRun.get("resultData");
+            Assert.assertNotNull("no-return result must be {} (no implicit null), not null", noReturnData);
+            Assert.assertTrue("no-return result is an empty object", noReturnData instanceof Map);
+            Assert.assertTrue("no-return result is empty", ((Map<?, ?>) noReturnData).isEmpty());
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void firstClassNullInResultSerializesAsJsonNullNotEmptyObject() throws Exception {
+        // ProperTee's first-class null (spec v0.8.0) is null != {}. The engine's JsonNull singleton must
+        // reach API consumers as JSON null, not {} (which means "absence") — a lossless-round-trip fix at
+        // the host serialization boundary (JsonNullGsonAdapter), not in the language.
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("null_in_data", "v1", "return {\"coupon\": null, \"n\": 1}\n",
+                "nested null", Arrays.asList("test"), true);
+            client.registerScript("null_top", "v1", "return null\n",
+                "top-level null", Arrays.asList("test"), true);
+
+            String dataRunId = (String) client.submitRun("null_in_data", null, new LinkedHashMap<String, Object>()).get("runId");
+            String topRunId = (String) client.submitRun("null_top", null, new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(testServer.baseUrl, dataRunId, "COMPLETED", 8000L);
+            waitForRunStatus(testServer.baseUrl, topRunId, "COMPLETED", 8000L);
+
+            // Assert on the raw JSON so {} vs null is unambiguous (a parser would collapse both to a map/absent).
+            String dataJson = getHtml(testServer.baseUrl + "/api/client/runs/" + dataRunId + "/result", 200);
+            Assert.assertTrue("nested null preserved as JSON null, not {}\n" + dataJson,
+                dataJson.contains("\"coupon\": null"));
+            Assert.assertFalse("null must not become {}", dataJson.contains("\"coupon\": {}"));
+
+            String topJson = getHtml(testServer.baseUrl + "/api/client/runs/" + topRunId + "/result", 200);
+            Assert.assertTrue("top-level return null is JSON null\n" + topJson,
+                topJson.contains("\"resultData\": null"));
         } finally {
             testServer.close();
         }

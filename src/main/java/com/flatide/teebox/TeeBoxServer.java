@@ -34,7 +34,13 @@ import java.util.concurrent.Executors;
 public class TeeBoxServer {
     private final TeeBoxConfig config;
     private final RunManager runManager;
-    private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    // The engine's first-class null (JsonNull.NULL) must serialize as JSON null, not {} — see
+    // JsonNullGsonAdapter. Applies to run result values (resultData + the result envelope) and any
+    // RunInfo the API returns; harmless everywhere else (only JsonNull values are affected).
+    private final Gson gson = new GsonBuilder()
+            .setPrettyPrinting()
+            .registerTypeAdapter(com.flatide.propertee2.value.JsonNull.class, new JsonNullGsonAdapter())
+            .create();
     private final AdminPageRenderer pageRenderer;
     private final UserStore userStore;
     private final AdminSessionManager sessionManager;
@@ -1322,9 +1328,10 @@ public class TeeBoxServer {
      *
      * No shape inspection ever happens: a script that deliberately returns a ProperTee Result
      * simply nests it inside {@code value} (legitimate double-wrapping — the inner run's
-     * {@code ok:false} can never be mistaken for this run's failure). A missing return
-     * ({@code resultData == null}) maps to {@code {}}, the language's "no value" — this also keeps
-     * the {@code value} key present under Gson's null-dropping serialization.
+     * {@code ok:false} can never be mistaken for this run's failure). Per "no implicit null",
+     * {@code ScriptExecutor} already yields {@code {}} (not null) for a no-return script, so
+     * {@code resultData} is normally non-null here; the {@code != null} guard is a defensive backstop
+     * that also keeps the {@code value} key present under Gson's null-dropping serialization.
      */
     private static Map<String, Object> buildRunEnvelope(RunInfo run, Object resultValue) {
         Map<String, Object> envelope = new LinkedHashMap<String, Object>();
