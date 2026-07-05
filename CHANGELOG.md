@@ -2,6 +2,21 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.10.1
+
+- **Fix — run results now survive a server restart byte-faithfully** (the disk half of 1.10.0's
+  first-class-`null` fix, which covered only outbound API serialization). Two reload corruptions
+  fixed in `RunStore`: the persistence Gson lacked `JsonNullGsonAdapter`, so the engine's `null`
+  was already written to disk as `{}`; and reload used Gson's generic `Object` mapping, which
+  turns JSON `null` into a Java null (the key then silently vanished from responses) and **every
+  number into a `Double`** — a pre-existing bug where `"n": 1` was served as `"n": 1.0` after a
+  restart. `RunStore` now registers the adapter on write and re-parses the `resultData` subtree
+  with the engine's own JSON parser on load, restoring the exact engine value shapes
+  (`JsonNull.NULL`, `Integer` vs `Double` by literal, insertion order). A restart integration
+  test pins the served result JSON as byte-identical before/after; `RunStoreTest` pins the value
+  matrix. Files written before 1.10.x carry `{}` where `null` was — those load unchanged
+  (unrecoverable by design).
+
 ## 1.10.0
 
 - **Fix — first-class `null` survives the API boundary.** A script result carrying ProperTee's
