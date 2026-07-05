@@ -35,7 +35,7 @@ TeeBox is the ProperTee execution service module. It exposes an HTTP admin UI an
 
 Open `http://127.0.0.1:18080/admin`.
 
-For local development, TeeBox resolves `propertee-core` from the sibling composite build at `../propertee-java`.
+For local development, TeeBox resolves `propertee-core` from the sibling composite build at `../propertee2-java` (the ProperTee v2 reference runtime).
 
 ## API Namespaces
 
