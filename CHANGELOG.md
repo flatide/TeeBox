@@ -2,6 +2,40 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.10.0
+
+- **Fix — first-class `null` survives the API boundary.** A script result carrying ProperTee's
+  first-class `null` (spec v0.8.0, `null != {}`) — e.g. `return {"coupon": null}` or
+  `return null` — was serialized by Gson as `{}` (the engine's `JsonNull.NULL` singleton has no
+  fields, and `{}` means "absence" in ProperTee), silently breaking the lossless JSON round-trip
+  for API consumers. `JsonNullGsonAdapter` now emits it as JSON `null` (flipping `serializeNulls`
+  only around that one value, so unrelated Java-`null` response fields — `errorMessage` etc. —
+  are still omitted); registered on the API-response Gson (client result + envelope + admin
+  `RunInfo`) and, defensively, the webhook Gson. Also: a script with no top-level `return` and no
+  `result` global now yields `resultData: {}` (previously the key was absent), matching
+  "no implicit null". Known limit: outbound-only — a result reloaded from disk after a restart
+  still collapses `null`; reload-side reconstruction is a follow-up.
+- **Admin UI — metadata-only first registration (script shells).** The Register modal collects
+  only a Script ID; registering creates an **empty script shell** (no versions, not active) and
+  lands on the detail page, where the code is written and a version activated explicitly. A
+  version added to a pre-existing script (including a shell) **never auto-activates** — only the
+  one-shot Publisher-API register (content included) still yields an immediately-runnable active
+  version. A content-less register against an existing script is a 400.
+- **Test infrastructure — the suite was silently truncated; fixed and fully green.** The drain
+  test exercised the real graceful-shutdown path, whose `System.exit(0)` killed the test fork;
+  Gradle treated the clean exit as success, so tests scheduled after it silently never ran
+  (`TeeBoxServerTest`: only 2 of 27 executed). The drain path now exits through an injectable
+  `RunManager.ExitHandler` (production unchanged); the test injects a recorder and also asserts
+  the exit request. **Full suite verified: 181/181 tests across all 21 classes execute, 0
+  failures** — including, for the first time in a while, the whole live-server integration class
+  against the current embedded runtime.
+- **Embedded runtime:** [`propertee2-java`](https://github.com/flatide/propertee2-java)
+  0.9.1 → 0.9.2 — `[THREAD ERROR]`/`[MONITOR ERROR]` lines and loop-limit warnings now reach the
+  host's **stderr** print sink as in v1 (they were mis-tagged as stdout in run logs), and
+  `iterationLimitBehavior="warn"` (the run-submission `warnLoops` option) works again: the
+  offending loop stops with a warning instead of failing the run. No TeeBox code change
+  (composite build).
+
 ## 1.9.1
 
 - **`errorMessage` (and the envelope's `value` for FAILED runs) now carries the error position** —
