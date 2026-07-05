@@ -221,6 +221,46 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void resultDataSurvivesAServerRestartByteFaithfully() throws Exception {
+        // The disk round-trip half of the first-class-null fix: RunStore persists the engine's null as
+        // JSON null and reconstructs engine value shapes on load — without this, a restart turned
+        // "coupon": null into a dropped key and "n": 1 into 1.0 (Gson's generic Object mapping).
+        TestServer testServer = createServer();
+        TeeBoxServer restarted = null;
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("restart_null", "v1", "return {\"coupon\": null, \"n\": 1}\n",
+                "restart round-trip", Arrays.asList("test"), true);
+            String runId = (String) client.submitRun("restart_null", null, new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 8000L);
+            String before = getHtml(testServer.baseUrl + "/api/client/runs/" + runId + "/result", 200);
+
+            testServer.server.stop();
+            TeeBoxConfig config = new TeeBoxConfig();
+            config.bindAddress = "127.0.0.1";
+            config.port = 0;
+            config.dataDir = testServer.dataDir;   // same data — a real restart
+            config.maxConcurrentRuns = 2;
+            restarted = new TeeBoxServer(config);
+            restarted.start();
+            String base = "http://127.0.0.1:" + restarted.getPort();
+
+            String after = getHtml(base + "/api/client/runs/" + runId + "/result", 200);
+            Assert.assertTrue("null survives the restart\n" + after, after.contains("\"coupon\": null"));
+            Assert.assertFalse("null must not collapse to {} after reload", after.contains("\"coupon\": {}"));
+            Assert.assertTrue("integers keep their shape (not 1.0)\n" + after, after.contains("\"n\": 1\n")
+                || after.contains("\"n\": 1,"));
+            Assert.assertFalse("no Double corruption on reload", after.contains("\"n\": 1.0"));
+            Assert.assertEquals("the served result JSON is byte-identical across the restart", before, after);
+        } finally {
+            if (restarted != null) {
+                restarted.stop();
+            }
+            testServer.close();
+        }
+    }
+
+    @Test
     public void clientRunAndWaitShouldReturnResultSynchronously() throws Exception {
         TestServer testServer = createServer();
         try {

@@ -21,7 +21,12 @@ import java.util.List;
 
 public class RunStore {
     private final File runsDir;
-    private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+    // The engine's first-class null (JsonNull.NULL) must persist as JSON null, not reflect into {} —
+    // same boundary rule as the API Gson. See JsonNullGsonAdapter and parseRun for the load side.
+    private final Gson gson = new GsonBuilder()
+            .setPrettyPrinting()
+            .registerTypeAdapter(com.flatide.propertee2.value.JsonNull.class, new JsonNullGsonAdapter())
+            .create();
     private final File indexFile;
     private final File indexTmpFile;
 
@@ -71,7 +76,7 @@ public class RunStore {
         try {
             fis = new FileInputStream(file);
             String json = readAll(fis);
-            return gson.fromJson(json, RunInfo.class);
+            return parseRun(json);
         } catch (IOException e) {
             return null;
         } finally {
@@ -82,6 +87,40 @@ public class RunStore {
                 }
             }
         }
+    }
+
+    /**
+     * Deserialize a run file, reconstructing {@code resultData} as the engine-shaped value tree it was
+     * saved from. Gson's generic {@code Object} mapping corrupts the result on reload: JSON {@code null}
+     * becomes a Java null (so the engine's first-class {@code null} vanishes when the run is served
+     * again) and every number becomes a {@code Double} ({@code "n": 1} would be served as {@code 1.0}
+     * after a restart). Re-parsing the {@code resultData} subtree with the engine's own
+     * {@code JsonParser} restores exactly the shapes the engine produced — {@code Integer} vs
+     * {@code Double} by literal, {@code JsonNull.NULL}, {@code LinkedHashMap}/{@code ArrayList} — so a
+     * run's result reads back identical across restarts. A run file with no {@code resultData} key is a
+     * value-less legacy run (Gson omits Java-null fields on write) and stays null.
+     */
+    private RunInfo parseRun(String json) {
+        com.google.gson.JsonElement tree;
+        try {
+            tree = com.google.gson.JsonParser.parseString(json);
+        } catch (RuntimeException malformed) {
+            return null;   // a corrupt run file is skipped (callers already handle a null load)
+        }
+        RunInfo run = gson.fromJson(tree, RunInfo.class);
+        if (run == null || !tree.isJsonObject()) {
+            return run;
+        }
+        com.google.gson.JsonElement resultData = tree.getAsJsonObject().get("resultData");
+        if (resultData != null) {
+            try {
+                // A present "resultData": null is the engine's first-class null (the adapter wrote it).
+                run.resultData = com.flatide.propertee2.value.JsonParser.parse(resultData.toString());
+            } catch (RuntimeException e) {
+                // keep Gson's best-effort shape rather than dropping the whole run
+            }
+        }
+        return run;
     }
 
     public synchronized int count(String status) {
