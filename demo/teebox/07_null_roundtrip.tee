@@ -1,0 +1,28 @@
+// 07 — first-class null, end to end (spec v0.8.0; TeeBox 1.10.0/1.10.1)
+//
+// ProperTee's null is DATA, not a language mechanism: the language never produces
+// it on its own (absence is {}), it enters only via the null literal or JSON —
+// and null != {}. TeeBox preserves that distinction across its whole pipeline:
+//
+//   engine value  →  API response      (1.10.0: JsonNullGsonAdapter — null, not {})
+//                →  on-disk run store  (1.10.1: persisted as JSON null, reloaded
+//                                       as the engine's null — NOT a dropped key)
+//
+// Read the result at:  GET /api/client/runs/{runId}/result
+// Expected resultData — byte-identical BEFORE and AFTER a server restart:
+//   {"coupon": null, "n": 1, "shape": {"absence": {}, "explicit": null}, "list": [1, null, 3]}
+// Note "n" stays 1 after the restart (1.10.1 also fixed reloads turning it into 1.0).
+
+// null arrives from data: an upstream JSON payload, parsed losslessly
+payload = UNWRAP(JSON_PARSE("{\"coupon\":null,\"n\":1}"))
+
+// check for it explicitly at the data boundary — null only equals null
+PRINT("coupon == null:", payload.coupon == null)
+PRINT("coupon == {}:  ", payload.coupon == {})
+PRINT("TYPE_OF:       ", TYPE_OF(payload.coupon))
+
+// keep the two "no value" notions distinct in the result:
+//   {} = absence (the language's own "no value")   null = explicit JSON null (data)
+shape = {"absence": {}, "explicit": null}
+
+return {"coupon": payload.coupon, "n": payload.n, "shape": shape, "list": [1, null, 3]}

@@ -32,6 +32,8 @@ http://127.0.0.1:18080/admin
   - Minimal registered-script example for the `publisher -> client` flow.
 - `06_run_envelope.tee`
   - **One script, three outcomes, one envelope** (TeeBox 1.9.0). Prop-driven (`{"mode": "ok" | "data-error" | "fail"}`), it produces a plain success, a script-returned `ERR(...)` Result (nested as data), and a `FAIL(...)`-escalated run failure — all read through the additive `result` field of `GET /api/client/runs/{runId}/result`, which always has the one ProperTee-Result shape `{status, ok, value}`. Also exercises spec v0.10.0 (`ERR`/`FAIL`), `elseif` (v0.9.0), and `_PROPS`.
+- `07_null_roundtrip.tee`
+  - **First-class `null`, end to end** (spec v0.8.0; TeeBox 1.10.0/1.10.1). `null` enters via `JSON_PARSE`, is checked with `== null` at the data boundary, and comes back through the result API as JSON `null` — never `{}` ("absence", kept deliberately distinct in the same result) and never a dropped key. The served result JSON is **byte-identical across a server restart**, and `"n": 1` stays `1` (1.10.1 also fixed reloads turning every number into a `Double`, e.g. `1.0`).
 
 ## Suggested checks
 
@@ -61,6 +63,18 @@ http://127.0.0.1:18080/admin
    | `ok` | COMPLETED | `{"status":"done","ok":true,"value":{"job":"envelope-demo","shell_ok":true,"answer":42}}` |
    | `data-error` | COMPLETED | `{"status":"done","ok":true,"value":{"status":"error","ok":false,"value":{"reason":"upstream said no","code":503}}}` — the run succeeded; the inner Result is the script's data |
    | `fail` | FAILED | `{"status":"error","ok":false,"value":"Runtime Error at line 37:4: upstream unreachable: giving up"}` — since 1.9.1 the message pinpoints the `FAIL` site |
+
+7. Register `07_null_roundtrip.tee` (same curl flow, `scriptId: null_roundtrip`), run it once, and read
+   the result. Expected `resultData` (live-verified):
+
+   ```json
+   {"coupon": null, "n": 1, "shape": {"absence": {}, "explicit": null}, "list": [1, null, 3]}
+   ```
+
+   Then **restart the TeeBox server** (same `dataDir`) and GET the same
+   `/api/client/runs/{runId}/result` again — the response is byte-identical: `null` values survive the
+   on-disk round trip (1.10.1) instead of vanishing as dropped keys, `"absence": {}` stays distinct
+   from `"explicit": null`, and `"n"` is still `1`, not `1.0`.
 
 ## Upstream Mock Example
 
