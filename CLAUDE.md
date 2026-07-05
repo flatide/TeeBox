@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ProperTee TeeBox is an HTTP API and admin UI service for remote ProperTee script execution, run management, task monitoring, and script registry. Java 17, Gradle build, uses the built-in `com.sun.net.httpserver` — no frameworks.
+ProperTee TeeBox is an HTTP API and admin UI service for remote ProperTee script execution, run management, task monitoring, and script registry. Built with a **JDK 25 toolchain** (the embedded ProperTee v2 runtime needs virtual threads + `ScopedValue`), Gradle build, uses the built-in `com.sun.net.httpserver` — no frameworks. Only the embeddable client (`client/`) is held to Java 7 bytecode; everything else compiles and runs on Java 25.
 
 ## Build & Run Commands
 
@@ -39,15 +39,15 @@ The only entry point / `mainClass` is **`com.flatide.teebox.TeeBoxMain`**. NOTE:
 | `teeBoxJar` | fat jar `propertee-teebox.jar` (Main-Class `TeeBoxMain`) |
 | `teeBoxDist` | `build/teebox-dist/` (lib/jar + conf + bin + log4j2.xml) |
 | `teeBoxZip` | `build/distributions/propertee-teebox-dist.zip` (also copied to `./dist`) |
-| `fetchRuntimeLinuxX64` | downloads + SHA-256-verifies + unpacks **OpenJDK 21** linux-x64 to `build/runtime-linux-x64` |
-| `teeBoxDistWithRuntime` / `teeBoxZipWithRuntime` | dist bundle including the Linux Java 21 runtime under `runtime/` |
-| `clientJar` | `build/libs/teebox-client-<version>.jar` — the embeddable zero-dependency client packaged as a jar. **Java 7 bytecode (major 51), loads on Java 7+.** Compiled by `compileClientJava7` via a **JDK 8 toolchain** (JDK 17+ alone cannot emit bytecode 7); Gradle auto-detects an installed JDK 8 (point it at one with `org.gradle.java.installations.paths` if needed). The general `build`/`check` does **not** need JDK 8 — that path uses `compileStandaloneClient` (`--release 8` on the JDK 21 build). |
+| `fetchRuntimeLinuxX64` | downloads + SHA-256-verifies + unpacks **OpenJDK 25.0.2** linux-x64 to `build/runtime-linux-x64` (URL/SHA in `build.gradle`, overridable via `-Dpropertee.teebox.runtimeLinuxX64Url`) |
+| `teeBoxDistWithRuntime` / `teeBoxZipWithRuntime` | dist bundle including the Linux Java 25 runtime under `runtime/` |
+| `clientJar` | `build/libs/teebox-client-<version>.jar` — the embeddable zero-dependency client packaged as a jar. **Java 7 bytecode (major 51), loads on Java 7+.** Compiled by `compileClientJava7` via a **JDK 8 toolchain** (JDK 17+ alone cannot emit bytecode 7); Gradle auto-detects an installed JDK 8 (point it at one with `org.gradle.java.installations.paths` if needed). The general `build`/`check` does **not** need JDK 8 — that path uses `compileStandaloneClient` (`--release 8` on the JDK 25 build). |
 | `clientSourcesJar` | `build/libs/teebox-client-<version>-sources.jar` (IDE source attachment) |
 | `distJars` | copies the two standalone jars into `./dist`: `teebox-client-<version>.jar` (client) and `propertee-teebox-<version>.jar` (runnable server fat jar). Sub-tasks `clientJarToDist` / `teeBoxJarToDist`. Needs the JDK 8 toolchain (for `clientJar`). |
 
 **`./dist` holds the committed release artifacts:** `propertee-teebox-<version>-dist.zip` (full bundle, from `teeBoxZip`), `propertee-teebox-<version>.jar` (server fat jar), and `teebox-client-<version>.jar` (embeddable client). The jars are produced/refreshed by `distJars`.
 
-**Java targets:** code compiles to Java **17** (`source/targetCompatibility = 17`), but the bundled/recommended deploy runtime is **JDK 21** (fetched by `fetchRuntimeLinuxX64`). The Java 7 bytecode constraint applies only to the embeddable client (`client/`); the core (`../propertee2-java/propertee-core`) needs a **JDK 25 toolchain** (virtual threads + `ScopedValue`), auto-resolved by Gradle through the composite build.
+**Java targets:** the whole build (server + tests) uses a **JDK 25 toolchain** (`java { toolchain { languageVersion = 25 } }`) — the embedded core (`../propertee2-java/propertee-core`) needs virtual threads + `ScopedValue`, so the host that embeds it compiles and runs on 25 too. The bundled/recommended deploy runtime is **OpenJDK 25.0.2** (fetched by `fetchRuntimeLinuxX64`). The Java 7 bytecode constraint applies **only** to the embeddable client (`client/`), built by the separate `compileClientJava7` / JDK 8 path. (Older docs saying "Java 17 / JDK 21" are stale — the 1.0.0 switch to the v2 runtime moved everything to 25.)
 
 ## Architecture
 
@@ -112,13 +112,15 @@ TeeBox has **two unrelated auth mechanisms**:
 | GET | `/api/client/runs` | List runs (status/offset/limit) |
 | GET | `/api/client/runs/{runId}` | Run summary |
 | GET | `/api/client/runs/{runId}/status` | Run status only |
-| GET | `/api/client/runs/{runId}/result` | Run result data (stream descriptors redacted to `{stream,contentType,size}`) |
+| GET | `/api/client/runs/{runId}/result` | Run result data (stream descriptors redacted to `{stream,contentType,size}`). Also carries an **additive `result` field** (1.9.0) — the whole run as a ProperTee Result (`{status, ok, value}`, run = "thread #0"): terminal COMPLETED → `{done, ok:true, value}`, FAILED → `{error, ok:false, value:<errorMessage>}`. Client accessor `TeeBoxClient.getRunEnvelope`. |
 | GET | `/api/client/runs/{runId}/result-stream` | Stream a `STREAM_FILE` result's bytes (raw file, no buffering; 409 if not a stream result) |
 | GET | `/api/client/runs/{runId}/stdout` | Captured run stdout: script `PRINT` output (`lines`) **+ merged external `SHELL` task output** (`taskLines`, default last 200 lines, override `?taskLines=N` (`<=0` = no line cap); `taskLineCount`, `taskLinesTruncated`, `taskCount`, per-task `tasks` breakdown). Existing `lines`/`lineCount` unchanged (backward compatible). |
 | GET | `/api/client/runs/{runId}/stderr` | Captured run stderr (same shape: script `lines` + task `taskLines`) |
 | GET | `/api/client/runs/{runId}/tasks-summary` | Task status counts |
 
 The legacy `POST /api/client/runs` (scriptPath-based) endpoint has been removed from the server.
+
+**First-class `null` at the serialization boundary:** a script's result may contain the engine's first-class `null` (spec v0.8.0 — `null != {}`), e.g. `return {"coupon": null}` or `return null`. The engine represents it as the fieldless singleton `com.flatide.propertee2.value.JsonNull.NULL`, which plain Gson reflects into `{}` (silently turning `null` into "absence"). `JsonNullGsonAdapter` (a streaming `TypeAdapter` that flips `serializeNulls` on only while writing that one value — so unrelated Java-`null` response fields stay omitted, no global `serializeNulls`) fixes this and is registered on every Gson that serializes a run result value tree (`TeeBoxServer.gson` for the client-result + admin-RunInfo responses; the webhook Gson defensively). **Any new Gson that serializes `resultData`/a run value must register it.** Caveat: this is an outbound-serialization fix — a result persisted to disk and reloaded after a restart still collapses `null` (Gson reads JSON `null` back as a Java null, not `JsonNull.NULL`); full round-trip would need a reload-side reconstruction. Separately, `ScriptExecutor` yields `{}` (not Java null) for a script with no top-level `return` and no `result` global, so "absence" is `{}` per "no implicit null".
 
 ### Publisher API Endpoints (`/api/publisher`)
 
@@ -153,9 +155,19 @@ The legacy `POST /api/client/runs` (scriptPath-based) endpoint has been removed 
 
 ### Admin UI routes (`/admin/*`, server-rendered HTML)
 
-A parallel control surface to the JSON APIs: `GET /admin`, `/admin/scripts`, `/admin/runs`, `/admin/scripts/{id}`, `/admin/runs/{id}`, `/admin/tasks/{id}`; `POST /admin/submit`, `/admin/scripts/register`, `/admin/scripts/update-source`, `/admin/scripts/settings/{id}`, `/admin/scripts/activate/{id}`, `/admin/scripts/delete/{id}`, `/admin/scripts/restore/{id}`, `/admin/shutdown`, `/admin/runs/{id}/kill-tasks`, `/admin/tasks/{id}/kill`; `GET /admin/login`, `POST /admin/login`, `POST /admin/logout`; AJAX fragments `GET /admin/fragments/{dashboard-runs|dashboard-sysinfo|nav-counts|all-runs|run-detail/{id}|task-detail/{id}}`.
+A parallel control surface to the JSON APIs: `GET /admin`, `/admin/scripts`, `/admin/runs`, `/admin/scripts/{id}` (**optional `?version=` selects which version the source editor targets**, default active), `/admin/runs/{id}`, `/admin/tasks/{id}`; `POST /admin/submit`, `/admin/scripts/register`, `/admin/scripts/update-source`, `/admin/scripts/settings/{id}`, `/admin/scripts/activate/{id}`, `/admin/scripts/delete/{id}`, `/admin/scripts/restore/{id}`, `/admin/shutdown`, `/admin/runs/{id}/kill-tasks`, `/admin/tasks/{id}/kill`; `GET /admin/login`, `POST /admin/login`, `POST /admin/logout`; AJAX fragments `GET /admin/fragments/{dashboard-runs|dashboard-sysinfo|nav-counts|all-runs|run-detail/{id}|task-detail/{id}}`.
 
-The script detail page (`/admin/scripts/{id}`) offers three version operations: **Add New Version** (a form posting to `/admin/scripts/register` with the scriptId prefilled — blank version auto-increments; "Set active immediately" optional, default off for staging), **Set active** (per-version, posts to `/admin/scripts/activate/{id}`), and **edit the active version's source** in place (`/admin/scripts/update-source`). `/admin/scripts/register` thus serves both first-time registration (from the scripts list) and adding a version to an existing script — same `registerScriptVersion` path as the Publisher API's register + add-version endpoints.
+**First registration is metadata-only (1.10.x):** the scripts-list **Register** modal collects only a Script ID and POSTs a **content-less** `/admin/scripts/register`, which creates an **empty script shell** (`RunManager.createScript` → `ScriptRegistry.createScript`: no versions, not active) and redirects to the detail page. No editor / file upload in the modal — you write the code afterward. A content-less register against an *existing* script is a 400. This means **a script can exist with zero versions**, and (see below) **versions never auto-activate except in the one-shot API path** — so activation is always an explicit operator step.
+
+The script detail page (`/admin/scripts/{id}`) drives version management from two places (the standalone "Add New Version" card was removed in 1.8.x):
+- **Versions table** — each row has **Set active** (non-active rows → `/admin/scripts/activate/{id}`) and **Edit**, a link to `/admin/scripts/{id}?version={v}` that opens *that* version (active or not) in the source editor; the row being edited shows an `Editing` marker.
+- **Version Source card** — the single edit **and** add-version surface. It shows the selected version (requested `?version=`, else active, else latest) in the code editor, **or renders empty for a shell** ("New Version Source — no versions yet", *Save as new version* only). Two submit buttons over one `<textarea name=content>`: **Save** (overwrites the selected version in place via `/admin/scripts/update-source`; the button carries the version in its own `name/value`; hidden on a shell — nothing to overwrite) and **Save as new version** (a `formaction` override to `/admin/scripts/register` with no version ⇒ auto-increment; adjacent *Description* / *Set new version active* apply only here). Only the clicked submit button contributes its `name/value`, so the two never collide — no JS. After an in-place Save the redirect preserves `?version=`. A callout warns while there is no active version, and the **Run Script** card is hidden until at least one version exists.
+
+**Auto-activate rule (`ScriptRegistry.registerVersion`):** a version auto-activates only when `activate` is requested **or** the script is created together with its first version *in the same call* (`scriptCreatedNow`). So the Publisher API's one-shot `register` (content included) still yields an immediately-runnable active version, while a version added to a pre-existing script — **including a shell** — never auto-activates. `/admin/scripts/register` thus serves shell creation (content-less), first-time one-shot register, and "save as new version" — same `registerScriptVersion`/`createScript` paths as the Publisher API.
+
+### Admin UI code editor (`propertee-editor.css` / `propertee-editor.js`)
+
+The script-source `<textarea>`s are progressively enhanced into a syntax-highlighting ProperTee code editor **ported verbatim from the ProperTee playground** (`../propertee-js/docs/index.html` — the highlighter and builtin catalog are copied unchanged; only the wiring is new). `AdminPageRenderer` inlines the two assets from `src/main/resources/` at class-load time (`loadResource` → `EDITOR_CSS`/`EDITOR_JS` statics) because **TeeBox serves no static files** and the login gate would block any `/admin` asset request — so all CSS/JS must be inline. The CSS is appended to every page's `<style>`; the heavier JS (`editorScript()`) is emitted only on the script **detail** page (the sole editor surface since the Register modal became metadata-only in 1.10.x), keeping the dashboard and scripts list lean. Any `<textarea data-pt-editor>` is upgraded to a transparent textarea over a `<pre>` syntax overlay + line gutter; `data-pt-panel` also attaches a builtin-function reference panel, resizable against the editor via a drag handle. Layout invariant (learned via regressions — see CHANGELOG 1.7.1/1.8.2): the **textarea is the sole height authority** (gutter + overlay are absolute layers pinned to it, never free-growing), and `.btn` height is normalized across `<button>`/`<a>`/`<span>` so mixed action buttons line up.
 
 ## Run Management (`RunManager` / `RunRegistry`)
 
@@ -165,7 +177,7 @@ Background work runs on a single-thread `ScheduledExecutorService`:
 - **Flush task — every 2s (`FLUSH_INTERVAL_MS`, hardcoded):** persists dirty runs and scans output watchers (`RunInfo.published`).
 - **Maintenance task — default 60s, configurable via `propertee.teebox.maintenanceIntervalMs`:** run retention (archive/purge), task archival, soft-deleted script purge + concurrency-map cleanup, plus any `addMaintenanceTask` hooks (an extension point for other components).
 
-Graceful shutdown (drain mode): `startDraining(maxWaitMs)` rejects new runs, waits for active+queued+pending to reach zero, then `System.exit(0)` (forced exit on timeout). `getQueuedCount()`/health aggregate three sources: `runExecutor` queue + `immediateExecutor` queue + per-script pending runs.
+Graceful shutdown (drain mode): `startDraining(maxWaitMs)` rejects new runs, waits for active+queued+pending to reach zero, then exits the JVM (forced exit on timeout). The exit goes through an injectable `RunManager.ExitHandler` (production default `System.exit(0)`; hook via `TeeBoxServer.getRunManager().setExitHandler`) — **any test exercising drain MUST inject a no-op**: a real `System.exit(0)` kills the test fork, and Gradle treats the clean exit as success, silently skipping every test scheduled after it (this truncated the suite undetected until 1.10.0 — when claiming "suite green", compare the XML `tests=` counts in `build/test-results` against the `@Test` counts). `getQueuedCount()`/health aggregate three sources: `runExecutor` queue + `immediateExecutor` queue + per-script pending runs.
 
 Prefer bounded tail reads (`getTaskStdoutTail`/`getTaskStderrTail`) over full stdout/stderr to avoid OOM on large task output.
 
@@ -185,6 +197,10 @@ On startup, any persisted run still in a non-terminal state is recovered as `SER
 - `COMPLETED` — finished successfully
 - `FAILED` — terminated with an error
 - `SERVER_RESTARTED` — run was active when the server restarted and could not be resumed
+
+## Webhooks (opt-in run-terminal callbacks) — `com.flatide.teebox.webhook`
+
+A durable "notify me when the run finishes" mechanism, **disabled by default**. A run submission may include a `callback` (a string URL or `{"url": ...}`); on run terminal, `RunManager`'s `WebhookDispatcher.onRunTerminal(run)` enqueues a `WebhookDelivery` to a file-backed outbox (`${dataDir}/webhooks/`, `WebhookStore`) and retries POSTing it with backoff until a 2xx (**DELIVERED**) or the attempt budget is exhausted (**DEAD**). Survives restart: PENDING records resume, and a reconcile re-enqueues any terminal run that has a callback but no delivery record (idempotent, keyed by `runId`). Enabled/validated by config: `webhookEnabled` (default false — `parseCallback` rejects with HTTP 400 when off), `webhookUrlAllowlist` (comma-separated `host[:port]`, **required when enabled**; callback URLs are scheme + allowlist checked), `webhookTimeoutMs` (per-POST connect/read, default 10000). Covered by `WebhookDispatcherTest` / `WebhookServerIntegrationTest`.
 
 ## Task Execution Subsystem
 
@@ -208,7 +224,7 @@ The **authoritative** task state; core `Task.status` is *derived* from it (`sync
 
 Invariants: ACTIVE has no terminalState; TERMINAL requires one; `lossReason` ⇒ LOST; terminal is monotonic. **kill-wins**: `KILLED` may override another terminal state, but only *before* it is persisted (`markPersisted()` locks it). **first-terminal-wins** among COMPLETED/FAILED/LOST. `deriveLegacyStatus()` maps lifecycle → legacy status; lifecycle is serialized into meta/archive JSON and reloaded on startup (`normalizeFromRunner` migrates legacy tasks). Archived tasks' lifecycle is stripped from memory and lazily re-read from `archive.json`.
 
-### Restart recovery & ownership (Java 17 ProcessHandle)
+### Restart recovery & ownership (ProcessHandle)
 
 `execute()` records the process `startInstant` as `pidStartTime`. On `init()`, transient tasks are re-evaluated: alive + matching start time (1000ms tolerance) ⇒ stays RUNNING; alive but mismatched ⇒ `LOST(PID_REUSED)`; dead ⇒ finalized from the exit-code file or `LOST(PROCESS_MISSING)`.
 
@@ -231,10 +247,13 @@ When a script defines `outputRules`, `OutputWatchingTaskRunner` registers a `Tas
 - **Denied env vars** — task env containing `LD_PRELOAD`, `LD_LIBRARY_PATH`, or any `DYLD_*` is rejected (`validateEnv`).
 - **Outbound HTTP** — the core `HTTP_GET`/`HTTP_POST`/`HTTP` builtins are **available and unrestricted** in TeeBox: `TeeBoxPlatformProvider` extends `DefaultPlatformProvider`, whose `httpRequest` (HttpURLConnection) is inherited as-is. This is a deliberate closed-network default-allow — scripts can reach any URL the host can (an SSRF surface in untrusted-script scenarios). To restrict it, override `httpRequest` in `TeeBoxPlatformProvider` (e.g. host allowlist) — there is currently no allowlist/flag.
 - **`STREAM_FILE(path, [contentType])` (host builtin, stream result)** — TeeBox-only builtin registered in `ScriptExecutor` (via `builtins.register`, returns a **raw descriptor object**, not a `Result`). A script returns `STREAM_FILE(path)` instead of reading+`JOIN`+`JSON_PARSE`+returning a large file — the payload never enters the engine heap, the deep-copies, or the buffered JSON response. The descriptor `{"__teebox_stream__":true,"path","contentType","size"}` rides as `resultData` (tiny); `GET .../result-stream` re-validates and streams the file straight to the socket in 64KB chunks (O(1) heap, `Content-Length`=file size). `GET .../result` returns a **redacted** descriptor (no server path). **Path is confined** to allowed roots (`StreamResultSupport`): `propertee.teebox.streamRoots` (a `File.pathSeparator` list), default `[dataDir]` — a path outside fails the script with a clear error (validated at `STREAM_FILE` time and again before streaming, TOCTOU-safe). Lifecycle is **reference-only**: the file must outlive the result fetch (TeeBox does not copy/own it); a stream result is available during the active window (archive nulls `resultData` after 24h). Client helpers: `TeeBoxClient.streamRunResult(runId, OutputStream)` (fetch a stream result), and `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` (the one-call convenience for streaming scripts — submit → client-side poll to terminal → stream; the streaming-script analogue of `runAndWait`).
+- **`THUMBNAIL(srcPath, destPath, maxWidth, [maxHeight])` (host builtin)** — TeeBox-only image scaler registered in `ScriptExecutor` as a **blocking** builtin (`builtins.registerBlocking`, so the CPU/disk work runs off the cooperative baton via the `Coop.blocking` contract and never stalls concurrent `multi` workers). Scales via `Thumbnailer`/`ImageIO`, preserving aspect ratio (never upscaling), writes a PNG, returns `{path, width, height}` or a `Result.error`. Both paths are confined to the same allowed roots as `STREAM_FILE` (`StreamResultSupport` / `propertee.teebox.streamRoots`), and it is registered only when that allowed-roots policy is present.
 
 ## Logging
 
 Log4j2 (`log4j-api`/`log4j-core` 2.24.3). All logging goes through the `TeeBoxLog` static facade (the component string is the logger name; `AUDIT` is the logger for command allow/block decisions). Config in `src/main/resources/log4j2.xml`: console (SYSTEM_ERR) + rolling file `teebox.log` under `${propertee.teebox.logDir}` (default `logs`), 50MB/daily rotation, gzipped, 30 kept. Distribution bundles `deploy/teebox/log4j2.xml`.
+
+**Access log:** a dedicated `access` logger emits one line per request — method, path (+query), client IP (honoring `X-Forwarded-For`), status, elapsed ms (e.g. `GET /api/client/runs?limit=10 from 127.0.0.1 -> 200 (4ms)`). It is scoped to the **`/api` context only** (external/upstream callers) via `accessLogged()` in `registerContexts()`; `/admin`, `/health`, and `/` are unlogged. Bodies are deliberately not logged (tokens/source/payloads). Retune/silence independently with `<Logger name="access" .../>`.
 
 ## Configuration
 
@@ -251,6 +270,9 @@ Settings load order: system properties (`-D...`, highest) → config file (`--co
 | `apiToken` | — | fallback for the three namespace tokens |
 | `clientApiToken` / `publisherApiToken` / `adminApiToken` | — | each falls back to `apiToken` |
 | `adminUser` / `adminPassword` | — | **bootstrap** admin UI user: seeds `users.json` with `{adminUser, admin}` when the roster is empty (`adminPassword`, if set, becomes the initial hashed credential). Multi-user login is roster-driven (`dataDir/users/`); see Authentication |
+| `webhookEnabled` | `false` | opt-in run-terminal callbacks (see Webhooks) |
+| `webhookUrlAllowlist` | — | comma-separated `host[:port]` allowlist, **required when `webhookEnabled`** |
+| `webhookTimeoutMs` | `10000` | per-POST connect/read timeout for webhook delivery |
 
 There is **no `scriptsRoot`** setting — `TeeBoxConfig` has no such field and never reads it. Scripts live in the registry under `dataDir/script-registry/`. Any `-Dpropertee.teebox.scriptsRoot=...` is silently ignored.
 
@@ -274,18 +296,20 @@ There is **no `scriptsRoot`** setting — `TeeBoxConfig` has no such field and n
 
 ## Testing
 
-Tests live in `src/test/java/com/flatide/tests/`. Integration tests (`TeeBoxServerTest`) start a live server with temp directories.
+Tests live in `src/test/java/com/flatide/tests/` (plus a few in `com/flatide/teebox/`). Many are **live-server integration tests** that start a real `TeeBoxServer` on a temp `dataDir` and drive it over HTTP — including the deployable `client/` source (pulled into the test source set, see `build.gradle`), so integration tests exercise the real client, not a mock. Not exhaustive:
 
 | Test class | Coverage |
 |------------|----------|
 | `TeeBoxServerTest` | Live-server integration: auth, kill, results, run lifecycle |
-| `TeeBoxConfigTest` | Property loading and token fallback |
-| `CommandGuardTest` | Shell command allow/block guard |
-| `RuntimePolicyTest` | Root-UID blocking / uid parsing |
-| `TaskLifecycleTest` | Task state-machine transitions |
-| `ManagedTaskEngineTest` | Kill-after-restart, disk recovery of running tasks |
-| `DurationParserTest` | Duration suffix parsing |
-| `SimulatedTaskRunnerTest` | Simulated (Windows) runner behavior |
+| `TeeBoxMultiUserUiTest` | Admin-UI login/ownership, the injected code editor, per-version editing (`?version=`) |
+| `StandaloneClientIntegrationTest` | End-to-end through the deployable `client/` `TeeBoxClient` |
+| `UserStoreTest` / `AdminSessionManagerTest` | PBKDF2 credentials, roster, cookie sessions |
+| `AccessLogTest` | `/api`-scoped access logging |
+| `WebhookDispatcherTest` / `WebhookServerIntegrationTest` | Webhook outbox, retry, restart reconcile |
+| `StreamResultTest` / `ThumbnailBuiltinIntegrationTest` | `STREAM_FILE` / `THUMBNAIL` host builtins |
+| `CommandGuardTest` / `RuntimePolicyTest` | Shell allow/block guard; root-UID blocking |
+| `TaskLifecycleTest` / `ManagedTaskEngineTest` | Task state machine; kill-after-restart, disk recovery |
+| `DurationParserTest` / `SimulatedTaskRunnerTest` / `TeeBoxConfigTest` | Duration parsing; Windows runner; config/token fallback |
 
 ## Run Submission
 
@@ -310,7 +334,7 @@ Three distinct layers, often confused:
 
 ## Embeddable client (`client/`)
 
-`client/com/flatide/teebox/client/TeeBoxClient.java` is a **standalone, zero-dependency, Java 7** client for embedding TeeBox into other (often legacy) programs. It is a **single self-contained source file** — copy it into the host project, **or** depend on the prebuilt jar from the `clientJar` task (`build/libs/teebox-client-<version>.jar`, **Java 7 bytecode** built via a JDK 8 toolchain so it loads on Java 7+; `compileStandaloneClient` + `StandaloneClientIntegrationTest` keep it in the build/test path). It uses only the JDK (`HttpURLConnection` + a tiny built-in JSON parser/writer in the nested `TeeBoxClient.Json`), so it never conflicts with a host's Gson/Jackson. Scope: register/update scripts (`registerScript` / `addScriptVersion` / `activateScriptVersion`; each has an overload that omits the version so the server auto-increments it), list/read scripts (`listScripts` / `getScript` / `getScriptContent`; `listActiveScripts` / `getActiveScript` are client-side variants that reduce each script's `versions` list to just the active version), run (`submitRun`), and track (`getRunStatus` / `getRunResult` / `getRunTasksSummary` / `getRunStdout` / `getRunStderr` / `getRunStdoutLines` / `getRunStderrLines` / `waitForRunTerminal` / `runAndWait` / `runAndStream` / `streamRunResult` / `waitForPublished`). `getRunStdout`/`getRunStderr` return the run's captured `PRINT` output (the most recent `MAX_LOG_LINES` lines — a server ring buffer; readable while RUNNING and after). Register/add-version overloads accept `outputRules` (build them with the static `outputRule(...)` helper) so callers can capture a long job's id from stdout and await it via `waitForPublished(runId, key, timeoutMs)`. No auth by default (internal-network target); set a shared token with `setBearerToken(...)`, or per-namespace tokens with `setClientApiToken(...)` / `setPublisherApiToken(...)` when the operator splits `clientApiToken`/`publisherApiToken` (the client picks the right token per request path). **Distinct from** the in-module `com.flatide.teebox.TeeBoxClient` (Java 17, depends on Gson, used only by the test suite). JDK 17+ cannot emit bytecode 7 (`javac --release 7` is unsupported), so two toolchains cover the source: `compileStandaloneClient` (`--release 8` on the JDK 21 build) is the always-on `check` gate, and `clientJar` → `compileClientJava7` uses a **JDK 8 toolchain** (`-source/-target 7`) to emit the real bytecode-7 artifact. Keep the source free of Java 8+ APIs/syntax (no lambdas/streams/`java.time`).
+`client/com/flatide/teebox/client/TeeBoxClient.java` is a **standalone, zero-dependency, Java 7** client for embedding TeeBox into other (often legacy) programs. It is a **single self-contained source file** — copy it into the host project, **or** depend on the prebuilt jar from the `clientJar` task (`build/libs/teebox-client-<version>.jar`, **Java 7 bytecode** built via a JDK 8 toolchain so it loads on Java 7+; `compileStandaloneClient` + `StandaloneClientIntegrationTest` keep it in the build/test path). It uses only the JDK (`HttpURLConnection` + a tiny built-in JSON parser/writer in the nested `TeeBoxClient.Json`), so it never conflicts with a host's Gson/Jackson. Scope: register/update scripts (`registerScript` / `addScriptVersion` / `activateScriptVersion`; each has an overload that omits the version so the server auto-increments it), list/read scripts (`listScripts` / `getScript` / `getScriptContent`; `listActiveScripts` / `getActiveScript` are client-side variants that reduce each script's `versions` list to just the active version), run (`submitRun`), and track (`getRunStatus` / `getRunResult` / `getRunTasksSummary` / `getRunStdout` / `getRunStderr` / `getRunStdoutLines` / `getRunStderrLines` / `waitForRunTerminal` / `runAndWait` / `runAndStream` / `streamRunResult` / `waitForPublished`). `getRunStdout`/`getRunStderr` return the run's captured `PRINT` output (the most recent `MAX_LOG_LINES` lines — a server ring buffer; readable while RUNNING and after). Register/add-version overloads accept `outputRules` (build them with the static `outputRule(...)` helper) so callers can capture a long job's id from stdout and await it via `waitForPublished(runId, key, timeoutMs)`. No auth by default (internal-network target); set a shared token with `setBearerToken(...)`, or per-namespace tokens with `setClientApiToken(...)` / `setPublisherApiToken(...)` when the operator splits `clientApiToken`/`publisherApiToken` (the client picks the right token per request path). **Distinct from** the in-module `com.flatide.teebox.TeeBoxClient` (compiled on the Java 25 build, depends on Gson, used only by the test suite). JDK 17+ cannot emit bytecode 7 (`javac --release 7` is unsupported), so two toolchains cover the source: `compileStandaloneClient` (`--release 8` on the JDK 25 build) is the always-on `check` gate, and `clientJar` → `compileClientJava7` uses a **JDK 8 toolchain** (`-source/-target 7`) to emit the real bytecode-7 artifact. Keep the source free of Java 8+ APIs/syntax (no lambdas/streams/`java.time`). The client also gained `getRunEnvelope` (the run-result envelope) alongside the run/track accessors.
 
 ## Concurrency Model
 
