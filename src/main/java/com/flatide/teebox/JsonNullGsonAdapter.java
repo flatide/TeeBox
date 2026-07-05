@@ -21,10 +21,12 @@ import java.io.IOException;
  * {@code null} field elsewhere in the same response is still omitted exactly as before — no global
  * {@code serializeNulls}, which would expose unrelated null fields across every response.
  *
- * <p>Register on any Gson instance that serializes a run result value tree (e.g. the API-response and
- * webhook Gson). Note: this is a serialization-boundary fix; a result persisted to disk and reloaded
- * after a restart still collapses {@code null} (Gson deserializes JSON {@code null} to a Java null, not
- * back to {@code JsonNull.NULL}) — full round-trip would additionally need a reload-side reconstruction.
+ * <p>Register on any Gson instance that serializes a run result value tree (currently: the
+ * API-response Gson, the webhook Gson, and {@code RunStore}'s persistence Gson). The disk round-trip's
+ * load side is handled separately (1.10.1): {@code RunStore.parseRun} re-parses the {@code resultData}
+ * subtree with the engine's own {@code value/JsonParser}, restoring {@code JsonNull.NULL} and the
+ * engine's number shapes — this adapter's {@link #read} only covers fields declared as {@code JsonNull},
+ * which generic {@code Object} trees never are.
  */
 public final class JsonNullGsonAdapter extends TypeAdapter<JsonNull> {
 

@@ -10,13 +10,13 @@ This bundle runs TeeBox without Gradle.
 
 This produces the default GitHub release artifact without a bundled Java runtime.
 
-If you explicitly want a Linux x86_64 Java 21 runtime bundled into the zip:
+If you explicitly want a Linux x86_64 Java 25 runtime bundled into the zip:
 
 ```bash
 ./gradlew fetchRuntimeLinuxX64 teeBoxZipWithRuntime
 ```
 
-By default this downloads the official OpenJDK 21.0.2 Linux/x64 archive from `download.java.net` and verifies its SHA-256.
+By default this downloads the official OpenJDK 25.0.2 Linux/x64 archive from `download.java.net` and verifies its SHA-256.
 
 Override only if needed:
 
@@ -42,7 +42,7 @@ build/distributions/propertee-teebox-dist-with-runtime.zip
 
 1. Copy `propertee-teebox-dist.zip` to the target server.
 2. Unzip it.
-3. Download a Linux x86_64 Java 21 runtime archive separately.
+3. Download a Linux x86_64 Java 25 runtime archive separately.
 4. Create a `runtime/` directory under the unzipped TeeBox root and unpack the runtime there so `runtime/bin/java` exists.
 5. Edit `conf/teebox.properties`.
 6. Create the configured `dataDir` directory.
@@ -91,7 +91,7 @@ The scripts accept extra CLI arguments and respect:
 - The deployment jar is `lib/propertee-teebox.jar`.
 - `teeBoxZip` is the recommended GitHub release artifact. It does not include a Java runtime.
 - If `runtime/bin/java` exists in the deployed bundle, `run-teebox.sh` uses it before `JAVA_HOME` or system `java`.
-- The default bundled runtime source is the official OpenJDK 21.0.2 Linux/x64 archive from `download.java.net`.
+- The default bundled runtime source is the official OpenJDK 25.0.2 Linux/x64 archive from `download.java.net`.
 - `fetchRuntimeLinuxX64` unpacks downloads into `build/runtime-linux-x64/`.
 - `teeBoxZipWithRuntime` is optional and mainly useful for local packaging or controlled internal distribution.
 - System properties in `JAVA_OPTS` override values from `conf/teebox.properties`.

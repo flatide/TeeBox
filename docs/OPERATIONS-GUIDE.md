@@ -15,7 +15,7 @@ cd propertee-teebox && ./gradlew teeBoxZip
 unzip propertee-teebox-dist.zip -d /opt/teebox
 ```
 
-The default GitHub distribution zip does not include a Java runtime. On the deployment server, download a Linux x86_64 Java 21 runtime archive separately and extract it under `/opt/teebox/runtime/` so that `runtime/bin/java` exists.
+The default GitHub distribution zip does not include a Java runtime. On the deployment server, download a Linux x86_64 Java 25 runtime archive separately and extract it under `/opt/teebox/runtime/` so that `runtime/bin/java` exists.
 
 Directory layout:
 ```
@@ -23,7 +23,7 @@ Directory layout:
   bin/run-teebox.sh     # launcher script
   conf/teebox.properties # configuration file
   lib/propertee-teebox.jar
-  runtime/bin/java      # separately installed Java 21 runtime
+  runtime/bin/java      # separately installed Java 25 runtime
 ```
 
 ### Configuration
@@ -73,7 +73,7 @@ Duration format:
 
 ### Dependencies
 
-- Linux x86_64 Java 21 runtime (`runtime/bin/java`) or system Java 17+
+- Linux x86_64 Java 25 runtime (`runtime/bin/java`) or system Java 25+
 - `setsid` (util-linux) — Required for task process group isolation. Included by default on Linux.
 - For development, a `../propertee-java` composite build is required.
 
