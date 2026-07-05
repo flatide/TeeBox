@@ -60,7 +60,7 @@ http://127.0.0.1:18080/admin
    |---|---|---|
    | `ok` | COMPLETED | `{"status":"done","ok":true,"value":{"job":"envelope-demo","shell_ok":true,"answer":42}}` |
    | `data-error` | COMPLETED | `{"status":"done","ok":true,"value":{"status":"error","ok":false,"value":{"reason":"upstream said no","code":503}}}` — the run succeeded; the inner Result is the script's data |
-   | `fail` | FAILED | `{"status":"error","ok":false,"value":"upstream unreachable: giving up"}` |
+   | `fail` | FAILED | `{"status":"error","ok":false,"value":"Runtime Error at line 37:4: upstream unreachable: giving up"}` — since 1.9.1 the message pinpoints the `FAIL` site |
 
 ## Upstream Mock Example
 

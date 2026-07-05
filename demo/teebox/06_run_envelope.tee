@@ -10,7 +10,8 @@
 //                            (the run SUCCEEDED; the inner Result is the script's structured
 //                             payload, nested by design — TeeBox never inspects the shape)
 //   {"mode": "fail"}       → run FAILED; envelope {status:"error", ok:false,
-//                                                  value:"upstream unreachable: giving up"}
+//                              value:"Runtime Error at line 37:4: upstream unreachable: giving up"}
+//                            (since 1.9.1 the errorMessage pinpoints the FAIL site)
 // Poll before it finishes and the same field reads {status:"running", ok:false, value:{}}.
 
 mode = "ok"

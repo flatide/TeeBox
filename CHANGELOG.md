@@ -2,6 +2,25 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.9.1
+
+- **`errorMessage` (and the envelope's `value` for FAILED runs) now carries the error position** —
+  `"Runtime Error at line L:C: <message>"` — pinpointing e.g. the `FAIL(...)` site. This is a
+  propertee-core 0.9.1 fix (the v1 façade used to rethrow the engine's `TeeError` whose
+  `getMessage()` lacked the position, breaking the v1 host contract where the position was baked
+  into the exception message); TeeBox picks it up through the composite build — no TeeBox code
+  change. Integration test pins the positioned prefix; demo `06_run_envelope.tee` docs updated
+  with the exact live-verified envelope.
+- **Embedded runtime note (belated for 1.9.0):** across 1.9.0/1.9.1 the bundled
+  [`propertee2-java`](https://github.com/flatide/propertee2-java) moved 0.5.0 → 0.9.1
+  (spec v0.9.0 → v0.12.0). New for scripts: `FAIL`/`UNWRAP`/`OK`/`ERR`/`IS_RESULT` + genuine
+  Results (v0.10.0, additive), pinned name resolution (v0.11.0, additive), and ⚠️ **v0.12.0
+  (breaking): all-uppercase script function definitions (`function LEN(...)`) are now a
+  definition-time error** — the ALL-CAPS namespace is reserved for built-in/host functions
+  (a corpus audit found no such definitions in TeeBox scripts). Hosts also gain the opt-in
+  static validation pass (`validate`, ProperTee #9). Canonical migration notes:
+  propertee2-java `docs/LANGUAGE.md` §Changelog.
+
 ## 1.9.0
 
 - **Run-result envelope** (ProperTee `docs/design-draft-result-handling.md` §5 — the deferred

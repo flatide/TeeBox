@@ -138,6 +138,9 @@ public class StandaloneClientIntegrationTest {
             String message = String.valueOf(env.get("value"));
             Assert.assertTrue("envelope value carries the error message: " + message,
                 message.contains("fatal: db down"));
+            // v1 host contract (propertee-core 0.9.1): errorMessage carries the FAIL site's position
+            Assert.assertTrue("errorMessage is positioned: " + message,
+                message.startsWith("Runtime Error at line "));
             Assert.assertEquals(client.getRunResult(failId).get("errorMessage"), env.get("value"));
 
             // ④ no return, no result variable → value {} (the language's "no value", never null)
