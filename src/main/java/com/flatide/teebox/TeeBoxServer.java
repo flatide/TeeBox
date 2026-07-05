@@ -83,6 +83,11 @@ public class TeeBoxServer {
         return server.getAddress().getPort();
     }
 
+    /** The server's run manager — an embedding/test hook (e.g. to inject a drain {@link RunManager.ExitHandler}). */
+    public RunManager getRunManager() {
+        return runManager;
+    }
+
     private void registerContexts() {
         // Access-log only the /api context — the JSON API called by external/upstream servers
         // (client + publisher + admin API). The /admin operator HTML UI, /health (load-balancer

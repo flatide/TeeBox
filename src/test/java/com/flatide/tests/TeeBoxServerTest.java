@@ -2,6 +2,7 @@ package com.flatide.tests;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import com.flatide.teebox.RunManager;
 import com.flatide.teebox.TeeBoxClient;
 import com.flatide.teebox.TeeBoxServer;
 import com.flatide.teebox.TeeBoxConfig;
@@ -952,6 +953,19 @@ public class TeeBoxServerTest {
     public void drainShouldRejectNewRuns() throws Exception {
         TestServer testServer = createServer();
         try {
+            // The drain thread ends by calling the JVM exit hook. Replace it with a recorder BEFORE
+            // triggering drain — the production System.exit(0) kills this test fork, and Gradle treats
+            // the clean exit as success, silently dropping every test scheduled after this one.
+            final java.util.concurrent.CountDownLatch exited = new java.util.concurrent.CountDownLatch(1);
+            final java.util.concurrent.atomic.AtomicInteger exitStatus = new java.util.concurrent.atomic.AtomicInteger(-1);
+            testServer.server.getRunManager().setExitHandler(new RunManager.ExitHandler() {
+                @Override
+                public void exit(int status) {
+                    exitStatus.set(status);
+                    exited.countDown();
+                }
+            });
+
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript("drain_test", "v1",
                 "PRINT(\"hello\")\n",
@@ -968,6 +982,11 @@ public class TeeBoxServerTest {
             Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
             runPayload.put("props", new LinkedHashMap<String, Object>());
             assertStatus(testServer.baseUrl + "/api/client/scripts/drain_test/runs", "POST", runPayload, null, 409);
+
+            // With nothing in flight the drain completes and requests JVM exit (status 0)
+            Assert.assertTrue("drain thread should request JVM exit",
+                exited.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            Assert.assertEquals(0, exitStatus.get());
         } finally {
             testServer.close();
         }

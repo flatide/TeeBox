@@ -397,6 +397,30 @@ public class RunManager {
         return total;
     }
 
+    /** JVM exit hook used by the drain path. Injectable so a test can drain without killing its own JVM. */
+    public interface ExitHandler {
+        void exit(int status);
+    }
+
+    private volatile ExitHandler exitHandler = new ExitHandler() {
+        @Override
+        public void exit(int status) {
+            System.exit(status);
+        }
+    };
+
+    /**
+     * Replace the JVM exit call the drain thread makes (production: {@code System.exit}). A test that
+     * exercises {@link #startDraining} MUST inject a no-op here — a real {@code System.exit(0)} kills
+     * the test fork mid-suite, and Gradle treats the clean exit as success, silently skipping every
+     * test scheduled after it (this truncated the suite for a long time before it was caught).
+     */
+    public void setExitHandler(ExitHandler handler) {
+        if (handler != null) {
+            this.exitHandler = handler;
+        }
+    }
+
     /**
      * Initiate graceful shutdown: reject new runs, wait for all in-flight to complete,
      * then exit the JVM. Returns immediately; drain happens on a background thread.
@@ -419,7 +443,7 @@ public class RunManager {
                     int pending = getPendingScriptRunsCount();
                     if (active == 0 && queued == 0 && pending == 0) {
                         TeeBoxLog.info("RunManager", "Drain complete — shutting down");
-                        System.exit(0);
+                        exitHandler.exit(0);
                         return;
                     }
                     try {
@@ -430,7 +454,7 @@ public class RunManager {
                     }
                 }
                 TeeBoxLog.warn("RunManager", "Drain timeout exceeded — forcing shutdown");
-                System.exit(0);
+                exitHandler.exit(0);
             }
         }, "teebox-drain");
         drainThread.setDaemon(false);
