@@ -1288,14 +1288,60 @@ public class TeeBoxServer {
         result.put("hasExplicitReturn", Boolean.valueOf(run.hasExplicitReturn));
         // A stream-result descriptor carries an internal server path; expose only a redacted hint
         // ({stream, contentType, size}). Clients fetch the bytes via GET .../result-stream.
+        Object clientResultData;
         if (StreamResultSupport.isStreamDescriptor(run.resultData)) {
-            result.put("resultData", StreamResultSupport.redactForClient(run.resultData));
+            clientResultData = StreamResultSupport.redactForClient(run.resultData);
+            result.put("resultData", clientResultData);
             result.put("stream", Boolean.TRUE);
         } else {
-            result.put("resultData", run.resultData);
+            clientResultData = run.resultData;
+            result.put("resultData", clientResultData);
         }
         result.put("errorMessage", run.errorMessage);
+        result.put("result", buildRunEnvelope(run, clientResultData));
         return result;
+    }
+
+    /**
+     * The whole run viewed as a ProperTee Result — the "thread #0" envelope (ProperTee
+     * design-draft-result-handling.md §5). Every outcome has one shape, {@code {status, ok, value}},
+     * exactly like a {@code multi} collection entry, so client code is always
+     * {@code env.ok ? use(env.value) : handle(env.value)}:
+     *
+     * <pre>
+     *   COMPLETED               → {status:"done",    ok:true,  value:&lt;resultData&gt;}
+     *   FAILED                  → {status:"error",   ok:false, value:&lt;errorMessage&gt;}
+     *   QUEUED/PENDING/RUNNING  → {status:"running", ok:false, value:{}}
+     *   SERVER_RESTARTED        → {status:"error",   ok:false, value:"server restarted"}
+     * </pre>
+     *
+     * No shape inspection ever happens: a script that deliberately returns a ProperTee Result
+     * simply nests it inside {@code value} (legitimate double-wrapping — the inner run's
+     * {@code ok:false} can never be mistaken for this run's failure). A missing return
+     * ({@code resultData == null}) maps to {@code {}}, the language's "no value" — this also keeps
+     * the {@code value} key present under Gson's null-dropping serialization.
+     */
+    private static Map<String, Object> buildRunEnvelope(RunInfo run, Object resultValue) {
+        Map<String, Object> envelope = new LinkedHashMap<String, Object>();
+        RunStatus status = run.status;
+        if (status == RunStatus.COMPLETED) {
+            envelope.put("status", "done");
+            envelope.put("ok", Boolean.TRUE);
+            envelope.put("value", resultValue != null ? resultValue : new LinkedHashMap<String, Object>());
+        } else if (status == RunStatus.FAILED) {
+            envelope.put("status", "error");
+            envelope.put("ok", Boolean.FALSE);
+            envelope.put("value", run.errorMessage != null ? run.errorMessage : "");
+        } else if (status == RunStatus.SERVER_RESTARTED) {
+            envelope.put("status", "error");
+            envelope.put("ok", Boolean.FALSE);
+            envelope.put("value", "server restarted");
+        } else {   // QUEUED / PENDING / RUNNING (or unknown): not finished yet
+            envelope.put("status", "running");
+            envelope.put("ok", Boolean.FALSE);
+            envelope.put("value", new LinkedHashMap<String, Object>());
+        }
+        return envelope;
     }
 
     /** Default per-task line cap for the merged run-output endpoint — mirrors the script-output ring

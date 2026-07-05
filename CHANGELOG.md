@@ -2,6 +2,27 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.9.0
+
+- **Run-result envelope** (ProperTee `docs/design-draft-result-handling.md` §5 — the deferred
+  host-side track, now landed). `GET /api/client/runs/{id}/result` gains an additive `result`
+  field: the whole run viewed as a ProperTee Result — one `{status, ok, value}` shape for every
+  outcome, exactly like a `multi` collection entry (the run is "thread #0"):
+  `COMPLETED` → `{status:"done", ok:true, value:<resultData>}`, `FAILED` →
+  `{status:"error", ok:false, value:<errorMessage>}`, not yet terminal →
+  `{status:"running", ok:false, value:{}}`, `SERVER_RESTARTED` →
+  `{status:"error", ok:false, value:"server restarted"}`. Client code is always
+  `env.ok ? use(env.value) : handle(env.value)` — the three fragmented outcomes (runtime error /
+  script-returned Result / plain value) unify without any shape inspection: a script that
+  deliberately returns a Result simply nests inside `value` (its `ok:false` can never be mistaken
+  for the run's failure), and a value-less run yields `value:{}` (the language's "no value").
+  Existing fields and endpoints are unchanged (fully additive); the admin `RunInfo` surface and
+  webhook payload deliberately do not carry the envelope (the webhook still omits `resultData`).
+- **Client:** `TeeBoxClient.getRunEnvelope(runId)` — convenience accessor for the envelope
+  (additive; Java 7 source level preserved). The envelope also arrives through the existing
+  `getRunResult`/`runAndWait` maps under the `"result"` key.
+- swagger.yaml: `RunResultEnvelope` schema, referenced from `ClientRunResult`.
+
 ## 1.8.2
 
 - **Fix mismatched button heights/alignment in the Versions table Action column.** The `Edit` (an

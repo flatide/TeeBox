@@ -1061,6 +1061,28 @@ components:
           type: object
           description: Captured output values from task stdout/stderr
           additionalProperties: true
+        result:
+          $ref: '#/components/schemas/RunResultEnvelope'
+
+    RunResultEnvelope:
+      type: object
+      description: >
+        The whole run viewed as a ProperTee Result — one shape for every outcome, exactly like a
+        `multi` collection entry (the run is "thread #0"). `COMPLETED` → `{status: done, ok: true,
+        value: <resultData>}`; `FAILED` → `{status: error, ok: false, value: <errorMessage>}`;
+        not yet terminal → `{status: running, ok: false, value: {}}`; `SERVER_RESTARTED` →
+        `{status: error, ok: false, value: "server restarted"}`. A script that deliberately returns
+        a ProperTee Result nests it inside `value` (the shape is never inspected). A value-less run
+        yields `value: {}`.
+      properties:
+        status:
+          type: string
+          enum: [done, error, running]
+        ok:
+          type: boolean
+        value:
+          description: Script return value (done), error message (error), or {} (running/value-less)
+          nullable: true
 
     ClientRunOutput:
       type: object

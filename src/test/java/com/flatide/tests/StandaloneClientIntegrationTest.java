@@ -82,6 +82,88 @@ public class StandaloneClientIntegrationTest {
         }
     }
 
+    /**
+     * The run-result envelope (ProperTee design-draft-result-handling.md §5): every run outcome is
+     * additionally exposed in the one ProperTee-Result shape {@code {status, ok, value}} — the run
+     * viewed as "thread #0". Covers all four RunStatus rows reachable in a test (COMPLETED, FAILED,
+     * not-yet-terminal) plus the two documented edges: deliberate double-wrapping (a script that
+     * returns a Result nests it; the outer {@code ok} stays {@code true}) and a value-less run
+     * ({@code value} is {@code {}}, the language's "no value").
+     */
+    @Test
+    public void exposesRunResultEnvelopeThroughDeployableClient() throws Exception {
+        TestServer server = startServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+
+            // ① COMPLETED, plain return → {status:"done", ok:true, value:42}
+            client.registerScript("env_done", "return 40 + 2\n", true);
+            String doneId = String.valueOf(
+                client.submitRun("env_done", new LinkedHashMap<String, Object>()).get("runId"));
+            client.waitForRunTerminal(doneId, 30000L);
+            Map<String, Object> env = client.getRunEnvelope(doneId);
+            Assert.assertEquals("done", env.get("status"));
+            Assert.assertEquals(Boolean.TRUE, env.get("ok"));
+            Assert.assertEquals(42.0, ((Number) env.get("value")).doubleValue(), 0.0001);
+
+            // Additive: the envelope rides on getRunResult as the "result" field; legacy fields stay.
+            Map<String, Object> result = client.getRunResult(doneId);
+            Assert.assertEquals(42.0, ((Number) result.get("resultData")).doubleValue(), 0.0001);
+            Assert.assertEquals(env, result.get("result"));
+
+            // ② COMPLETED, script deliberately returns a ProperTee Result → nested; outer ok TRUE.
+            // (This is exactly the case a conditional pass-through would misjudge — the inner run's
+            // ok:false is the script's DATA, not this run's failure.)
+            client.registerScript("env_nested", "return ERR(\"boom\")\n", true);
+            String nestedId = String.valueOf(
+                client.submitRun("env_nested", new LinkedHashMap<String, Object>()).get("runId"));
+            client.waitForRunTerminal(nestedId, 30000L);
+            env = client.getRunEnvelope(nestedId);
+            Assert.assertEquals("done", env.get("status"));
+            Assert.assertEquals(Boolean.TRUE, env.get("ok"));
+            Map<?, ?> inner = (Map<?, ?>) env.get("value");
+            Assert.assertEquals("error", inner.get("status"));
+            Assert.assertEquals(Boolean.FALSE, inner.get("ok"));
+            Assert.assertEquals("boom", inner.get("value"));
+
+            // ③ FAILED via FAIL() → {status:"error", ok:false, value:<errorMessage>}
+            client.registerScript("env_fail", "FAIL(\"fatal: db down\")\n", true);
+            String failId = String.valueOf(
+                client.submitRun("env_fail", new LinkedHashMap<String, Object>()).get("runId"));
+            Map<String, Object> failTerminal = client.waitForRunTerminal(failId, 30000L);
+            Assert.assertEquals("FAILED", String.valueOf(failTerminal.get("status")));
+            env = client.getRunEnvelope(failId);
+            Assert.assertEquals("error", env.get("status"));
+            Assert.assertEquals(Boolean.FALSE, env.get("ok"));
+            String message = String.valueOf(env.get("value"));
+            Assert.assertTrue("envelope value carries the error message: " + message,
+                message.contains("fatal: db down"));
+            Assert.assertEquals(client.getRunResult(failId).get("errorMessage"), env.get("value"));
+
+            // ④ no return, no result variable → value {} (the language's "no value", never null)
+            client.registerScript("env_void", "x = 1\n", true);
+            String voidId = String.valueOf(
+                client.submitRun("env_void", new LinkedHashMap<String, Object>()).get("runId"));
+            client.waitForRunTerminal(voidId, 30000L);
+            env = client.getRunEnvelope(voidId);
+            Assert.assertEquals("done", env.get("status"));
+            Assert.assertEquals(Boolean.TRUE, env.get("ok"));
+            Assert.assertTrue("value is {} for a value-less run", ((Map<?, ?>) env.get("value")).isEmpty());
+
+            // ⑤ not terminal yet → {status:"running", ok:false, value:{}}
+            client.registerScript("env_slow", "SLEEP(2000)\nreturn 1\n", true);
+            String slowId = String.valueOf(
+                client.submitRun("env_slow", new LinkedHashMap<String, Object>()).get("runId"));
+            env = client.getRunEnvelope(slowId);
+            Assert.assertEquals("running", env.get("status"));
+            Assert.assertEquals(Boolean.FALSE, env.get("ok"));
+            Assert.assertTrue("value is {} while running", ((Map<?, ?>) env.get("value")).isEmpty());
+            client.waitForRunTerminal(slowId, 30000L);   // drain before teardown
+        } finally {
+            server.close();
+        }
+    }
+
     @Test
     public void mergesTaskStdoutIntoRunStdoutThroughDeployableClient() throws Exception {
         TestServer server = startServer();

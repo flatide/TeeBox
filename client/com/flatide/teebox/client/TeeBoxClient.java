@@ -414,6 +414,26 @@ public class TeeBoxClient {
     }
 
     /**
+     * The run's <b>Result envelope</b> — the whole run viewed as a ProperTee Result
+     * ({@code {status, ok, value}}, like a {@code multi} collection entry; the run is "thread #0").
+     * Every outcome has the same shape, so callers are always one check away from the value:
+     *
+     * <pre>
+     *   Map&lt;String, Object&gt; env = client.getRunEnvelope(runId);
+     *   if (Boolean.TRUE.equals(env.get("ok"))) { use(env.get("value")); }      // script's return value
+     *   else { handle(env.get("value")); }   // error message, or {} while still running
+     * </pre>
+     *
+     * {@code status} is {@code "done"} (completed), {@code "error"} (failed / server restarted), or
+     * {@code "running"} (not terminal yet). A script that deliberately returns a ProperTee Result
+     * nests it inside {@code value} — TeeBox never inspects the shape. Convenience over
+     * {@link #getRunResult}'s {@code "result"} field.
+     */
+    public Map<String, Object> getRunEnvelope(String runId) throws IOException {
+        return asMap(getRunResult(runId).get("result"));
+    }
+
+    /**
      * Stream a run's result body to {@code out} when the script returned a stream descriptor
      * (e.g. {@code return STREAM_FILE(path)}). The server streams the referenced file directly — the
      * large payload is never materialized in the script engine, the JSON response, or here. Use this

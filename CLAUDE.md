@@ -8,7 +8,7 @@ ProperTee TeeBox is an HTTP API and admin UI service for remote ProperTee script
 
 ## Build & Run Commands
 
-Requires the **sibling repo `../propertee-java`** to be checked out: `propertee-core` is resolved through a Gradle **composite build**, not from a Maven repo (`settings.gradle` declares `includeBuild('../propertee-java')` with a `dependencySubstitution` mapping `com.flatide:propertee-core` → `project(':propertee-core')`). The `0.9.0` Maven coordinate in `build.gradle` is only a substitution key; the code is built from `../propertee-java/propertee-core`.
+Requires the **sibling repo `../propertee2-java`** (the ProperTee v2 reference runtime) to be checked out: `propertee-core` is resolved through a Gradle **composite build**, not from a Maven repo (`settings.gradle` declares `includeBuild('../propertee2-java')` with a `dependencySubstitution` mapping `com.flatide:propertee-core` → `project(':propertee-core')`). The `0.9.0` Maven coordinate in `build.gradle` is only a substitution key; the code is built from `../propertee2-java/propertee-core` — i.e. **whatever is checked out there** (TeeBox rides the propertee2 working tree; rebuild + run the suite after runtime-side changes).
 
 ```bash
 # Build (compile + test). Gradle 9.3.1 wrapper.
@@ -47,7 +47,7 @@ The only entry point / `mainClass` is **`com.flatide.teebox.TeeBoxMain`**. NOTE:
 
 **`./dist` holds the committed release artifacts:** `propertee-teebox-<version>-dist.zip` (full bundle, from `teeBoxZip`), `propertee-teebox-<version>.jar` (server fat jar), and `teebox-client-<version>.jar` (embeddable client). The jars are produced/refreshed by `distJars`.
 
-**Java targets:** code compiles to Java **17** (`source/targetCompatibility = 17`), but the bundled/recommended deploy runtime is **JDK 21** (fetched by `fetchRuntimeLinuxX64`). The Java 7 bytecode constraint applies only to the *core* repo (`../propertee-java/propertee-core`), not this module.
+**Java targets:** code compiles to Java **17** (`source/targetCompatibility = 17`), but the bundled/recommended deploy runtime is **JDK 21** (fetched by `fetchRuntimeLinuxX64`). The Java 7 bytecode constraint applies only to the embeddable client (`client/`); the core (`../propertee2-java/propertee-core`) needs a **JDK 25 toolchain** (virtual threads + `ScopedValue`), auto-resolved by Gradle through the composite build.
 
 ## Architecture
 
@@ -267,7 +267,7 @@ There is **no `scriptsRoot`** setting — `TeeBoxConfig` has no such field and n
 
 ## Dependencies
 
-- `com.flatide:propertee-core` (version 0.9.0) — supplied via **composite build** from `../propertee-java` (dependency substitution; not fetched from Maven). Provides `ScriptParser`, builtins, `Scheduler`, `TaskRunner`.
+- `com.flatide:propertee-core` (version 0.9.0 — a substitution key only) — supplied via **composite build** from `../propertee2-java` (dependency substitution; not fetched from Maven). Provides `ScriptParser`, builtins, `Scheduler`, `TaskRunner`.
 - `com.google.code.gson:gson:2.11.0` — JSON serialization
 - `org.apache.logging.log4j:log4j-api` / `log4j-core` 2.24.3 — logging
 - `junit:junit:4.13.2` — tests
@@ -301,7 +301,7 @@ Three distinct layers, often confused:
 
 2. **The run (background job) — blocks until the whole script finishes.** The pool thread calls `ScriptExecutor.execute` → `Scheduler.run(mainStepper)`, which returns only when the script *and all of its threads* complete. Status transitions `QUEUED → RUNNING → COMPLETED / FAILED`; result/output are available only after completion.
    - **Threads (`thread` / `multi … monitor`)** run concurrently under the core `Scheduler` (cooperative scheduling + async builtins). A `multi … monitor N` block **awaits all its threads** (collecting results into `result.<name>.value`, firing a monitor callback every `N` ms). The run reaches `COMPLETED` only after every thread finishes — threads are intra-run parallelism, never fire-and-forget.
-   - **`SLEEP()` nesting limitation (current core behavior).** Cooperative, non-blocking `SLEEP` only applies at a statement's top level (or a directly-spawned worker, e.g. `thread a: SLEEP(500)`). `SLEEP` **inside a `loop`/function/`if`/`monitor` body** uses a **blocking `Thread.sleep` fallback** in the core (correct duration, but it blocks the scheduler thread for that run, so the run's other `multi` workers and `monitor` ticks don't advance during it). It no longer silently no-ops. Single-threaded scripts are unaffected; this does **not** block other runs (each run executes on its own pool thread). See `../propertee-java/LANGUAGE.md` (SLEEP section) — a future core release makes nested `SLEEP` fully cooperative.
+   - **`SLEEP()` is fully cooperative on the propertee2 core** — wherever it appears (statement, nested `if`/`loop`/function body, mid-expression): the fiber suspends in place and the run's other `multi` workers and `monitor` ticks keep advancing. (The old stepper-era "nested SLEEP falls back to blocking `Thread.sleep`" limitation belonged to the frozen propertee-java v1 core and no longer applies.) See `../propertee2-java/docs/LANGUAGE.md` §Blocking and Suspension.
 
 3. **`SHELL(...)` — synchronous to the script, detached at the OS level.** The core `SHELL` builtin (`taskRunner.execute()` then `waitForCompletion(taskId, 0)`) **blocks the calling ProperTee thread until the external process exits**, then returns its captured (heap-capped) stdout/stderr. e.g. `result = SHELL("sleep 300; …")` does not return for 300s.
    - Underneath, the process is launched **detached** (`setsid`, its own process group `pgid==pid`) and tracked on disk as a Task. "Detached" means **process-group isolation** (clean group-kill, no orphan re-parenting) — **not** fire-and-forget; the script still waits.
