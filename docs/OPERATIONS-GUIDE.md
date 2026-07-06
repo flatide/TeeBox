@@ -111,6 +111,34 @@ Recommended operational patterns:
 - Job status polling should be split into a separate short script and invoked periodically by an external scheduler or cron.
 - Avoid patterns that launch a background job inside a single ProperTee run and then perform a long `wait` or maintain a polling loop within the same run.
 
+### Run Submitter Identity (`X-TeeBox-User`)
+
+A run submit may carry an optional **`X-TeeBox-User`** request header identifying who submitted it
+(the `TeeBoxClient` run methods take it as a trailing `userId` argument; `null` = anonymous, no header
+sent). TeeBox sanitizes the value (control characters stripped, trimmed, capped at 128 chars) and
+records it on the run as `submittedBy`. Runs submitted from the admin UI record the logged-in
+operator's username in the same field.
+
+Where it appears:
+- Admin **Runs list** — a dedicated **By** column (dash for anonymous runs).
+- Admin **run detail page** — the **Submitted By** field.
+- Run JSON — `submittedBy` in run status/summary/result responses.
+
+This is **display/audit metadata only** — it is caller-supplied and not authenticated. Do not use it
+for authorization; API access is still governed by the Bearer tokens.
+
+### Runs List Filters (admin UI)
+
+The `/admin/runs` list filters server-side:
+- **Include instant** checkbox — **unchecked by default, so runs of `immediate=true` scripts
+  ("instant runs") are hidden** (they tend to be high-frequency and would otherwise drown the list).
+  Check it to include them; instant rows carry an `instant` tag.
+- **Search box** — case-insensitive substring match on the script name or run ID.
+- **Status** select and pagination combine freely with both.
+
+`GET /api/admin/runs` accepts the same filters: `instant=exclude|only` (absent = all) and
+`q=<substring>`, alongside `status`/`offset`/`limit`.
+
 ### Per-Script Concurrency Control
 
 > **Note:** There are two separate concurrency limits:

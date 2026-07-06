@@ -111,6 +111,32 @@ Publisher API로 스크립트 등록 -> Client API로 run 제출 -> TeeBox가 �
 - job status polling은 별도 짧은 스크립트로 분리하고 외부 스케줄러나 cron에서 주기 호출
 - 하나의 ProperTee run 안에서 background job 후 장시간 `wait` 하거나 polling loop를 유지하는 패턴은 비권장
 
+### Run 제출자 식별 (`X-TeeBox-User`)
+
+run 제출 시 선택적으로 **`X-TeeBox-User`** 요청 헤더로 제출자를 식별할 수 있습니다
+(`TeeBoxClient` 실행 메서드의 마지막 `userId` 인자로 전달; `null` = 익명, 헤더 미전송).
+TeeBox는 값을 정제(제어문자 제거, trim, 128자 제한)해 run에 `submittedBy` 로 기록합니다.
+admin UI에서 제출한 run은 로그인한 운영자의 username이 같은 필드에 기록됩니다.
+
+표시 위치:
+- admin **Runs 목록** — 전용 **By** 컬럼 (익명 run은 대시)
+- admin **run 상세 페이지** — **Submitted By** 필드
+- run JSON — 상태/요약/결과 응답의 `submittedBy`
+
+이 값은 **표시/감사용 메타데이터**입니다 — 호출자가 넣는 값이며 인증되지 않습니다.
+인가 판단에 사용하지 마세요. API 접근 제어는 여전히 Bearer 토큰이 담당합니다.
+
+### Runs 목록 필터 (admin UI)
+
+`/admin/runs` 목록은 서버측 필터링을 지원합니다:
+- **Include instant** 체크박스 — **기본 해제 = `immediate=true` 스크립트의 run("instant run")을 숨김**
+  (고빈도 실행이 목록을 뒤덮는 것을 방지). 체크하면 포함되며, instant run 행에는 `instant` 태그가 붙습니다.
+- **검색창** — 스크립트명 또는 run ID의 대소문자 무시 부분일치.
+- **Status** 셀렉트·페이지네이션과 자유롭게 조합됩니다.
+
+`GET /api/admin/runs` 도 같은 필터를 받습니다: `instant=exclude|only` (미지정 = 전체),
+`q=<substring>`, 그리고 기존 `status`/`offset`/`limit`.
+
 ### 스크립트별 동시 실행 제어
 
 > **참고:** 두 가지 별개의 동시 실행 제한이 있습니다:

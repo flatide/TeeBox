@@ -112,6 +112,17 @@ paths:
         - ClientToken: []
       parameters:
         - $ref: '#/components/parameters/ScriptId'
+        - name: X-TeeBox-User
+          in: header
+          required: false
+          description: >-
+            Optional submitter identity, recorded on the run as `submittedBy` (shown in the admin
+            Runs list "By" column and run detail page, returned in run status/summary/result JSON).
+            Sanitized server-side (control chars stripped, trimmed, max 128 chars). Display/audit
+            only — NOT authentication.
+          schema:
+            type: string
+            maxLength: 128
       requestBody:
         required: true
         content:
@@ -309,6 +320,21 @@ paths:
         - AdminToken: []
       parameters:
         - $ref: '#/components/parameters/StatusFilter'
+        - name: instant
+          in: query
+          required: false
+          description: >-
+            Instant-run filter ("instant" = a run of an immediate=true script): `exclude` hides
+            instant runs, `only` returns only them; absent = all runs.
+          schema:
+            type: string
+            enum: [exclude, only]
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive substring match on the run ID or the script ID.
+          schema:
+            type: string
         - $ref: '#/components/parameters/Offset'
         - $ref: '#/components/parameters/Limit'
       responses:
@@ -866,6 +892,13 @@ components:
           $ref: '#/components/schemas/RunStatus'
         archived:
           type: boolean
+        immediate:
+          type: boolean
+          description: True when the run's script had immediate=true at submit time (an "instant run").
+        submittedBy:
+          type: string
+          nullable: true
+          description: Submitter identity (X-TeeBox-User header / admin-UI session username); null = anonymous.
         createdAt:
           type: integer
           format: int64
@@ -982,6 +1015,10 @@ components:
           type: string
         status:
           type: string
+        submittedBy:
+          type: string
+          nullable: true
+          description: Submitter identity (X-TeeBox-User header / admin-UI session username); null = anonymous.
         createdAt:
           type: integer
           format: int64

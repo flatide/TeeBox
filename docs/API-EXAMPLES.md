@@ -157,6 +157,31 @@ curl -X POST $HOST/api/client/scripts/hello/runs \
   }'
 ```
 
+### 2.3 제출자 id 기록 (`X-TeeBox-User`, 선택)
+
+제출자 식별용 헤더를 붙이면 run에 `submittedBy` 로 기록됩니다 — admin Runs 목록의 **By** 컬럼과
+run 상세 페이지(**Submitted By**)에 표시되고, run 상태/요약/결과 JSON에 `submittedBy` 로 반환됩니다.
+헤더가 없으면 익명 run입니다. (표시/감사용이며 인증이 아닙니다 — 값은 정제 후 최대 128자.)
+
+```bash
+curl -X POST $HOST/api/client/scripts/hello/runs \
+  -H 'Content-Type: application/json' \
+  -H 'X-TeeBox-User: journey.kim' \
+  -d '{"props": {}}'
+```
+
+응답 예 (`submittedBy` 포함):
+```json
+{
+  "runId": "run-20260508-103022-abc",
+  "scriptId": "hello",
+  "version": "v1",
+  "status": "QUEUED",
+  "submittedBy": "journey.kim",
+  "createdAt": 1746701422000
+}
+```
+
 ### 2.3 Run 목록
 
 ```bash
@@ -303,9 +328,20 @@ curl $HOST/api/admin/system
 ```bash
 curl $HOST/api/admin/runs
 
-# 상태 + scriptId 필터
-curl "$HOST/api/admin/runs?status=RUNNING&scriptId=deploy&offset=0&limit=50"
+# 상태 필터 + 페이지네이션
+curl "$HOST/api/admin/runs?status=RUNNING&offset=0&limit=50"
+
+# instant run(immediate 스크립트의 run) 제외 / instant run만
+curl "$HOST/api/admin/runs?instant=exclude"
+curl "$HOST/api/admin/runs?instant=only"
+
+# 검색: 스크립트명 또는 run ID의 부분일치 (대소문자 무시). 필터끼리 조합 가능
+curl "$HOST/api/admin/runs?q=deploy"
+curl "$HOST/api/admin/runs?status=RUNNING&instant=exclude&q=deploy"
 ```
+
+> 이전 예시의 `scriptId=` 파라미터는 이 엔드포인트가 읽지 않는 값이었습니다(무시됨) — 스크립트로
+> 좁히려면 `q=<scriptId>` 를 쓰거나 client API의 `GET /api/client/scripts/{scriptId}/runs` 를 사용하세요.
 
 ### 3.4 Run 상세 (admin 전체 정보 포함)
 
