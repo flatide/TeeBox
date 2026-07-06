@@ -2,6 +2,14 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.11.2
+
+- **Runs now record the caller's IP address at submit time** (`submittedFrom`), for both API and
+  admin-UI submits — resolved the same X-Forwarded-For-aware way as the access log (first XFF hop
+  behind a proxy, else the socket peer). Shown on the **run detail page** as **From (IP)** and carried
+  in the admin run-detail JSON; deliberately **not** echoed in the client-facing run responses
+  (caller IPs stay operator-side). Audit/display only.
+
 ## 1.11.1
 
 - **The Runs list gets a dedicated "By" column** showing each run's submitter (the 1.11.0
