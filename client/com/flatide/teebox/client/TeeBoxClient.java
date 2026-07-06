@@ -381,6 +381,17 @@ public class TeeBoxClient {
      */
     public Map<String, Object> submitRun(String scriptId, String version, Map<String, Object> props,
                                          String callbackUrl) throws IOException {
+        return submitRun(scriptId, version, props, callbackUrl, null);
+    }
+
+    /**
+     * Full submit form: optional webhook callback plus an optional submitter id. {@code userId} (may be
+     * {@code null} = anonymous) is sent as the {@code X-TeeBox-User} request header; the server records
+     * it on the run for display/audit — shown on the admin Runs pages and returned as
+     * {@code submittedBy} in run status/summary responses. It is NOT an auth credential.
+     */
+    public Map<String, Object> submitRun(String scriptId, String version, Map<String, Object> props,
+                                         String callbackUrl, String userId) throws IOException {
         requireText("scriptId", scriptId);
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         if (version != null && version.trim().length() > 0) {
@@ -392,7 +403,7 @@ public class TeeBoxClient {
             callback.put("url", callbackUrl.trim());
             body.put("callback", callback);
         }
-        return asMap(request("POST", "/api/client/scripts/" + enc(scriptId) + "/runs", body, 202));
+        return asMap(request("POST", "/api/client/scripts/" + enc(scriptId) + "/runs", body, 202, userId));
     }
 
     /** Full run summary. (GET /api/client/runs/{runId}) */
@@ -612,7 +623,18 @@ public class TeeBoxClient {
      */
     public Map<String, Object> runAndWait(String scriptId, String version, Map<String, Object> props, long timeoutMs)
             throws IOException, InterruptedException {
-        Map<String, Object> submitted = submitRun(scriptId, version, props);
+        return runAndWait(scriptId, version, props, timeoutMs, null);
+    }
+
+    /**
+     * {@link #runAndWait(String, String, Map, long)} with an optional submitter id ({@code userId} may
+     * be {@code null}), sent as the {@code X-TeeBox-User} header and recorded on the run (see
+     * {@link #submitRun(String, String, Map, String, String)}).
+     */
+    public Map<String, Object> runAndWait(String scriptId, String version, Map<String, Object> props,
+                                          long timeoutMs, String userId)
+            throws IOException, InterruptedException {
+        Map<String, Object> submitted = submitRun(scriptId, version, props, null, userId);
         Object runIdValue = submitted.get("runId");
         if (runIdValue == null) {
             throw new IOException("Submit response did not include a runId");
@@ -662,10 +684,20 @@ public class TeeBoxClient {
      */
     public long runAndStream(String scriptId, String version, Map<String, Object> props,
                              OutputStream out, long timeoutMs) throws IOException {
+        return runAndStream(scriptId, version, props, out, timeoutMs, null);
+    }
+
+    /**
+     * {@link #runAndStream(String, String, Map, OutputStream, long)} with an optional submitter id
+     * ({@code userId} may be {@code null}), sent as the {@code X-TeeBox-User} header and recorded on
+     * the run (see {@link #submitRun(String, String, Map, String, String)}).
+     */
+    public long runAndStream(String scriptId, String version, Map<String, Object> props,
+                             OutputStream out, long timeoutMs, String userId) throws IOException {
         if (out == null) {
             throw new IllegalArgumentException("out is required");
         }
-        Map<String, Object> submitted = submitRun(scriptId, version, props);
+        Map<String, Object> submitted = submitRun(scriptId, version, props, null, userId);
         Object runIdValue = submitted.get("runId");
         if (runIdValue == null) {
             throw new IOException("Submit response did not include a runId");
@@ -731,12 +763,20 @@ public class TeeBoxClient {
     // ===================== HTTP plumbing =====================
 
     private Object request(String method, String path, Object body, int expectedStatus) throws IOException {
+        return request(method, path, body, expectedStatus, null);
+    }
+
+    private Object request(String method, String path, Object body, int expectedStatus, String userId)
+            throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(baseUrl + path).openConnection();
         try {
             conn.setRequestMethod(method);
             conn.setConnectTimeout(connectTimeoutMs);
             conn.setReadTimeout(readTimeoutMs);
             conn.setRequestProperty("Accept", "application/json");
+            if (userId != null && userId.trim().length() > 0) {
+                conn.setRequestProperty("X-TeeBox-User", userId.trim());
+            }
             String token = tokenForPath(path);
             if (token != null && token.length() > 0) {
                 conn.setRequestProperty("Authorization", "Bearer " + token);

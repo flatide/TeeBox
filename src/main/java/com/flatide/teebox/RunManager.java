@@ -155,11 +155,15 @@ public class RunManager {
         run.iterationLimitBehavior = request.warnLoops ? "warn" : "error";
         run.properties = sanitizeProperties(request.props);
         run.callback = request.callback;
-        runRegistry.register(run);
+        run.submittedBy = request.userId;
 
+        // Resolve the script's execution settings BEFORE registering so run.immediate is persisted
+        // (and indexed) from the first write — the Runs UI/API filter on it.
         ScriptInfo scriptInfo = scriptRegistry.loadScript(target.scriptId);
         boolean isImmediate = scriptInfo != null && scriptInfo.immediate;
         int maxPerScript = scriptInfo != null ? scriptInfo.maxConcurrentRuns : 0;
+        run.immediate = isImmediate;
+        runRegistry.register(run);
 
         // Check per-script concurrency limit (applies to both immediate and normal)
         if (maxPerScript > 0) {
@@ -304,6 +308,12 @@ public class RunManager {
         return runRegistry.countRuns(status);
     }
 
+    /** Filtered count; {@code immediate}: null=all, TRUE=instant only, FALSE=exclude instant.
+     *  {@code search}: case-insensitive substring on runId or scriptId. */
+    public int countRuns(String status, Boolean immediate, String search) {
+        return runRegistry.countRuns(status, immediate, search);
+    }
+
     public List<RunInfo> listRuns() {
         return listRuns(null, 0, -1);
     }
@@ -314,6 +324,11 @@ public class RunManager {
 
     public List<RunInfo> listRuns(String status, String scriptId, int offset, int limit) {
         return runRegistry.listRuns(status, scriptId, offset, limit);
+    }
+
+    /** Filtered listing; see {@link #countRuns(String, Boolean, String)} for filter semantics. */
+    public List<RunInfo> listRuns(String status, Boolean immediate, String search, int offset, int limit) {
+        return runRegistry.listRuns(status, null, immediate, search, offset, limit);
     }
 
     public RunInfo getRun(String runId) {

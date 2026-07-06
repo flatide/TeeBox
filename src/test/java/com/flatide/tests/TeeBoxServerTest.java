@@ -261,6 +261,72 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void runsListShouldFilterByInstantAndSearch() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            // One normal script, one instant (immediate=true) script.
+            client.registerScript("normal_calc", "v1", "return {\"n\": 1}\n",
+                "normal", Arrays.asList("test"), true);
+            client.registerScript("instant_ping", "v1", "return {\"pong\": true}\n",
+                "instant", Arrays.asList("test"), true);
+            Map<String, Object> settings = new LinkedHashMap<String, Object>();
+            settings.put("maxConcurrentRuns", Double.valueOf(0));
+            settings.put("immediate", Boolean.TRUE);
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/instant_ping/settings", "PUT", settings, null, 200);
+
+            Map<String, Object> payload = new LinkedHashMap<String, Object>();
+            payload.put("props", new LinkedHashMap<String, Object>());
+            String normalRun = (String) postJson(testServer.baseUrl + "/api/client/scripts/normal_calc/runs", payload, 202).get("runId");
+            String instantRun = (String) postJson(testServer.baseUrl + "/api/client/scripts/instant_ping/runs", payload, 202).get("runId");
+            waitForRunStatus(testServer.baseUrl, normalRun, "COMPLETED", 8000L);
+            waitForRunStatus(testServer.baseUrl, instantRun, "COMPLETED", 8000L);
+
+            // Admin API: no param = all (backward compatible); instant=exclude / instant=only filter.
+            List<Map<String, Object>> all = getJsonList(testServer.baseUrl + "/api/admin/runs", 200);
+            Assert.assertEquals(2, all.size());
+            List<Map<String, Object>> excl = getJsonList(testServer.baseUrl + "/api/admin/runs?instant=exclude", 200);
+            Assert.assertEquals(1, excl.size());
+            Assert.assertEquals(normalRun, excl.get(0).get("runId"));
+            Assert.assertEquals(Boolean.FALSE, excl.get(0).get("immediate"));
+            List<Map<String, Object>> only = getJsonList(testServer.baseUrl + "/api/admin/runs?instant=only", 200);
+            Assert.assertEquals(1, only.size());
+            Assert.assertEquals(instantRun, only.get(0).get("runId"));
+            Assert.assertEquals(Boolean.TRUE, only.get(0).get("immediate"));
+
+            // Search: scriptId substring is case-insensitive; a full runId matches exactly one run.
+            List<Map<String, Object>> byScript = getJsonList(testServer.baseUrl + "/api/admin/runs?q=NORMAL_", 200);
+            Assert.assertEquals(1, byScript.size());
+            Assert.assertEquals(normalRun, byScript.get(0).get("runId"));
+            List<Map<String, Object>> byRunId = getJsonList(testServer.baseUrl + "/api/admin/runs?q=" + instantRun, 200);
+            Assert.assertEquals(1, byRunId.size());
+            Assert.assertEquals(instantRun, byRunId.get(0).get("runId"));
+            // Filters combine: searching the instant script while excluding instant runs finds nothing.
+            List<Map<String, Object>> none = getJsonList(testServer.baseUrl + "/api/admin/runs?instant=exclude&q=instant_ping", 200);
+            Assert.assertEquals(0, none.size());
+
+            // The UI fragment (the Runs page's data path) honors the same params, and instant rows carry a badge.
+            String fragExcl = getHtml(testServer.baseUrl + "/admin/fragments/all-runs?instant=exclude", 200);
+            Assert.assertTrue(fragExcl.contains(normalRun));
+            Assert.assertFalse(fragExcl.contains(instantRun));
+            String fragOnly = getHtml(testServer.baseUrl + "/admin/fragments/all-runs?instant=only", 200);
+            Assert.assertTrue(fragOnly.contains(instantRun));
+            Assert.assertFalse(fragOnly.contains(normalRun));
+            Assert.assertTrue("instant badge on the row", fragOnly.contains(">instant</span>"));
+
+            // The Runs page default view excludes instant runs ("Include instant" checkbox, unchecked).
+            String page = getHtml(testServer.baseUrl + "/admin/runs", 200);
+            Assert.assertTrue(page.contains("Include instant"));
+            Assert.assertFalse("checkbox must default to unchecked",
+                page.contains("id='instant-filter' checked"));
+            Assert.assertTrue(page.contains(normalRun));
+            Assert.assertFalse("default view hides instant runs", page.contains(instantRun));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void clientRunAndWaitShouldReturnResultSynchronously() throws Exception {
         TestServer testServer = createServer();
         try {

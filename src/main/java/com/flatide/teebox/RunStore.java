@@ -124,13 +124,19 @@ public class RunStore {
     }
 
     public synchronized int count(String status) {
+        return count(status, null, null);
+    }
+
+    /**
+     * Count index entries matching the filters. {@code immediate}: null = all, TRUE = instant runs
+     * only, FALSE = exclude instant runs. {@code search}: case-insensitive substring match on the
+     * runId OR the scriptId. All filters are index-only — no run file is loaded.
+     */
+    public synchronized int count(String status, Boolean immediate, String search) {
         List<RunIndexEntry> entries = loadIndexEntries();
-        if (status == null) {
-            return entries.size();
-        }
         int count = 0;
         for (RunIndexEntry entry : entries) {
-            if (status.equalsIgnoreCase(entry.status)) {
+            if (matches(entry, status, null, immediate, search)) {
                 count++;
             }
         }
@@ -146,15 +152,18 @@ public class RunStore {
     }
 
     public synchronized List<RunInfo> query(String status, String scriptId, int offset, int limit) {
+        return query(status, scriptId, null, null, offset, limit);
+    }
+
+    /** Filtered query; {@code immediate}/{@code search} as in {@link #count(String, Boolean, String)}. */
+    public synchronized List<RunInfo> query(String status, String scriptId, Boolean immediate, String search,
+                                            int offset, int limit) {
         List<RunIndexEntry> entries = loadIndexEntries();
         List<RunInfo> runs = new ArrayList<RunInfo>();
         int safeOffset = offset < 0 ? 0 : offset;
         int matched = 0;
         for (RunIndexEntry entry : entries) {
-            if (status != null && !status.equalsIgnoreCase(entry.status)) {
-                continue;
-            }
-            if (scriptId != null && !scriptId.equals(entry.scriptId)) {
+            if (!matches(entry, status, scriptId, immediate, search)) {
                 continue;
             }
             if (matched++ < safeOffset) {
@@ -169,6 +178,28 @@ public class RunStore {
             }
         }
         return runs;
+    }
+
+    private static boolean matches(RunIndexEntry entry, String status, String scriptId,
+                                   Boolean immediate, String search) {
+        if (status != null && !status.equalsIgnoreCase(entry.status)) {
+            return false;
+        }
+        if (scriptId != null && !scriptId.equals(entry.scriptId)) {
+            return false;
+        }
+        if (immediate != null && entry.immediate != immediate.booleanValue()) {
+            return false;
+        }
+        if (search != null) {
+            String needle = search.toLowerCase(java.util.Locale.ROOT);
+            boolean inRunId = entry.runId != null && entry.runId.toLowerCase(java.util.Locale.ROOT).contains(needle);
+            boolean inScriptId = entry.scriptId != null && entry.scriptId.toLowerCase(java.util.Locale.ROOT).contains(needle);
+            if (!inRunId && !inScriptId) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public synchronized void delete(String runId) {
@@ -324,6 +355,9 @@ public class RunStore {
         String runId;
         String status;
         boolean archived;
+        // Legacy index entries (pre-instant-filter) lack this field and read back as false —
+        // old runs are treated as non-instant, which is the common case.
+        boolean immediate;
         long createdAt;
         Long endedAt;
         String scriptPath;
@@ -334,6 +368,7 @@ public class RunStore {
             entry.runId = run.runId;
             entry.status = run.status != null ? run.status.name() : null;
             entry.archived = run.archived;
+            entry.immediate = run.immediate;
             entry.createdAt = run.createdAt;
             entry.endedAt = run.endedAt;
             entry.scriptPath = run.scriptPath;

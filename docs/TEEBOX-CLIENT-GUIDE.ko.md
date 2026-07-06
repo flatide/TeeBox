@@ -713,6 +713,7 @@ try {
 | `submitRun(scriptId, props)` | `Map`(`runId`) | 활성 버전 실행 제출(비동기, 202) |
 | `submitRun(scriptId, version, props)` | `Map`(`runId`) | 버전 지정 제출 |
 | `submitRun(scriptId, version, props, callbackUrl)` | `Map`(`runId`) | 제출 + run 종료 webhook 을 `callbackUrl` 로 POST 요청(서버에 webhook 활성화 + host allowlist 필요, 아니면 HTTP 400). §7.2 참고 |
+| `submitRun(scriptId, version, props, callbackUrl, userId)` | `Map`(`runId`) | **제출자 id**(`userId`, null 허용)까지 받는 전체 형태. `X-TeeBox-User` 헤더로 전송되며 TeeBox 가 run 에 기록 — admin Runs 화면에 표시되고 run 상태/요약 응답에 `submittedBy` 로 반환됩니다. 표시/감사용이며 인증이 아닙니다. `runAndWait(..., timeoutMs, userId)` / `runAndStream(..., timeoutMs, userId)` 오버로드도 제출 시 함께 전달 |
 | `getRun(runId)` | `Map` | 전체 요약(`published`·`resultSummary` 포함) |
 | `getRunStatus(runId)` | `Map` | 상태/타임스탬프만(가벼운 폴링용) |
 | `getRunResult(runId)` | `Map` | 결과(`resultData` + 봉투 `result`). 스트림 결과면 redact된 디스크립터 |

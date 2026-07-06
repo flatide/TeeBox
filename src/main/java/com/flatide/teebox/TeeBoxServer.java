@@ -249,6 +249,9 @@ public class TeeBoxServer {
                     request.props = parsePropsJson(form.get("propsJson"));
                     request.maxIterations = parseInt(form.get("maxIterations"), 1000);
                     request.warnLoops = "on".equals(form.get("warnLoops")) || "true".equals(form.get("warnLoops"));
+                    // Admin-UI submits record the logged-in operator as the submitter (null when the UI
+                    // is open / no roster) — same field the API fills from the X-TeeBox-User header.
+                    request.userId = session != null ? session.username : null;
                     RunInfo run = runManager.submit(request);
                     redirect(exchange, "/admin/runs/" + urlPath(run.runId));
                     return;
@@ -544,18 +547,22 @@ public class TeeBoxServer {
             html = pageRenderer.renderNavCountsFragment();
         } else if (fragment.startsWith("all-runs")) {
             String status = null;
+            Boolean immediate = null;
+            String search = null;
             int page = 1;
             int pageSize = AdminPageRenderer.DEFAULT_RUNS_PAGE_SIZE;
             String rawQuery = exchange.getRequestURI().getRawQuery();
             if (rawQuery != null) {
                 Map<String, String> query = parseQuery(exchange);
                 status = trimToNull(query.get("status"));
+                immediate = parseInstantFilter(query.get("instant"));
+                search = trimToNull(query.get("q"));
                 page = parseInt(query.get("page"), 1);
             }
             if (page < 1) page = 1;
             int offset = (page - 1) * pageSize;
-            int totalCount = runManager.countRuns(status);
-            List<RunInfo> runs = runManager.listRuns(status, offset, pageSize);
+            int totalCount = runManager.countRuns(status, immediate, search);
+            List<RunInfo> runs = runManager.listRuns(status, immediate, search, offset, pageSize);
             html = pageRenderer.renderRunsTableWithPagination(runs, page, pageSize, totalCount);
         } else if (fragment.startsWith("run-detail/")) {
             String runId = fragment.substring("run-detail/".length());
@@ -814,9 +821,13 @@ public class TeeBoxServer {
         if ("GET".equals(method) && "/api/admin/runs".equals(path)) {
             Map<String, String> query = parseQuery(exchange);
             String status = trimToNull(query.get("status"));
+            // Same filters as the admin-UI Runs page: instant=exclude|only, q=<runId/scriptId substring>.
+            Boolean immediate = parseInstantFilter(query.get("instant"));
+            String search = trimToNull(query.get("q"));
             int offset = parseInt(query.get("offset"), 0);
             int limit = parseInt(query.get("limit"), -1);
-            writeJson(exchange, HttpURLConnection.HTTP_OK, runManager.listRuns(status, offset, limit));
+            writeJson(exchange, HttpURLConnection.HTTP_OK,
+                runManager.listRuns(status, immediate, search, offset, limit));
             return;
         }
         if ("GET".equals(method) && path.startsWith("/api/admin/runs/")) {
@@ -1001,6 +1012,10 @@ public class TeeBoxServer {
         writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Not found"));
     }
 
+    /** HTTP header carrying the submitter identity on API run submits (optional; null = anonymous). */
+    static final String USER_HEADER = "X-TeeBox-User";
+    private static final int USER_ID_MAX_LENGTH = 128;
+
     private RunRequest parseScriptRunRequest(HttpExchange exchange, String scriptId) throws IOException {
         Map<String, Object> raw = parseJsonBody(exchange);
         RunRequest request = new RunRequest();
@@ -1009,7 +1024,20 @@ public class TeeBoxServer {
         request.version = version instanceof String ? ((String) version).trim() : null;
         parseRunOptions(raw, request);
         request.callback = parseCallback(raw.get("callback"));
+        request.userId = sanitizeUserId(exchange.getRequestHeaders().getFirst(USER_HEADER));
         return request;
+    }
+
+    /** Trim, drop empty, strip control characters, and cap length — the id is display/audit-only. */
+    private static String sanitizeUserId(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String cleaned = raw.replaceAll("[\\p{Cntrl}]", "").trim();
+        if (cleaned.isEmpty()) {
+            return null;
+        }
+        return cleaned.length() > USER_ID_MAX_LENGTH ? cleaned.substring(0, USER_ID_MAX_LENGTH) : cleaned;
     }
 
     /**
@@ -1287,6 +1315,7 @@ public class TeeBoxServer {
         status.put("scriptId", run.scriptId);
         status.put("version", run.version);
         status.put("status", run.status != null ? run.status.name() : null);
+        status.put("submittedBy", run.submittedBy);
         status.put("createdAt", Long.valueOf(run.createdAt));
         status.put("startedAt", run.startedAt);
         status.put("endedAt", run.endedAt);
@@ -1305,6 +1334,7 @@ public class TeeBoxServer {
         result.put("scriptId", run.scriptId);
         result.put("version", run.version);
         result.put("status", run.status != null ? run.status.name() : null);
+        result.put("submittedBy", run.submittedBy);
         result.put("hasExplicitReturn", Boolean.valueOf(run.hasExplicitReturn));
         // A stream-result descriptor carries an internal server path; expose only a redacted hint
         // ({stream, contentType, size}). Clients fetch the bytes via GET .../result-stream.
@@ -1505,6 +1535,7 @@ public class TeeBoxServer {
         summary.put("scriptId", run.scriptId);
         summary.put("version", run.version);
         summary.put("status", run.status != null ? run.status.name() : null);
+        summary.put("submittedBy", run.submittedBy);
         summary.put("createdAt", Long.valueOf(run.createdAt));
         summary.put("startedAt", run.startedAt);
         summary.put("endedAt", run.endedAt);
@@ -1660,6 +1691,18 @@ public class TeeBoxServer {
     private String urlParam(String value) {
         if (value == null) return "";
         return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Parse the {@code instant} run filter: {@code exclude} → FALSE (hide instant runs — the Runs UI
+     * default), {@code only} → TRUE (instant runs only), anything else/absent → null (all runs).
+     */
+    private static Boolean parseInstantFilter(String value) {
+        if (value == null) return null;
+        String v = value.trim();
+        if ("exclude".equalsIgnoreCase(v)) return Boolean.FALSE;
+        if ("only".equalsIgnoreCase(v)) return Boolean.TRUE;
+        return null;
     }
 
     private static class ScriptPublishRequest {

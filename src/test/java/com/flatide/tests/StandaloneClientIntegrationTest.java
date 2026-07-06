@@ -65,6 +65,35 @@ public class StandaloneClientIntegrationTest {
     }
 
     @Test
+    public void userIdIsSentAsHeaderAndRecordedOnTheRun() throws Exception {
+        TestServer server = startServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+            client.registerScript("audit_me", "return {\"done\": true}\n", true);
+
+            // submitRun with a userId: the client sends X-TeeBox-User; the server records it and
+            // returns it as submittedBy in run status/summaries.
+            Map<String, Object> submitted = client.submitRun("audit_me", null,
+                new LinkedHashMap<String, Object>(), null, "journey.kim");
+            String runId = String.valueOf(submitted.get("runId"));
+            Assert.assertEquals("journey.kim", submitted.get("submittedBy"));
+            Map<String, Object> status = client.waitForRunTerminal(runId, 30000L);
+            Assert.assertEquals("journey.kim", status.get("submittedBy"));
+
+            // userId is nullable: without it the run is anonymous (submittedBy null/absent).
+            Map<String, Object> anon = client.submitRun("audit_me", new LinkedHashMap<String, Object>());
+            Assert.assertNull("null userId => anonymous run", anon.get("submittedBy"));
+
+            // runAndWait overload threads the userId through its submit.
+            Map<String, Object> result = client.runAndWait("audit_me", null,
+                new LinkedHashMap<String, Object>(), 30000L, "batch-svc");
+            Assert.assertEquals("COMPLETED", String.valueOf(result.get("status")));
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
     public void submitAndPollTerminalThroughDeployableClient() throws Exception {
         TestServer server = startServer();
         try {

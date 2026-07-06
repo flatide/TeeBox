@@ -64,8 +64,13 @@ public class RunRegistry {
     }
 
     public int countRuns(String status) {
+        return countRuns(status, null, null);
+    }
+
+    /** Filtered count; {@code immediate}/{@code search} as in {@code RunStore.count}. */
+    public int countRuns(String status, Boolean immediate, String search) {
         flushDirty();
-        return runStore.count(status);
+        return runStore.count(status, immediate, search);
     }
 
     public List<RunInfo> listRuns(String status, int offset, int limit) {
@@ -73,8 +78,14 @@ public class RunRegistry {
     }
 
     public List<RunInfo> listRuns(String status, String scriptId, int offset, int limit) {
+        return listRuns(status, scriptId, null, null, offset, limit);
+    }
+
+    /** Filtered listing; {@code immediate}/{@code search} as in {@code RunStore.query}. */
+    public List<RunInfo> listRuns(String status, String scriptId, Boolean immediate, String search,
+                                  int offset, int limit) {
         flushDirty();
-        List<RunInfo> loaded = runStore.query(status, scriptId, offset, limit);
+        List<RunInfo> loaded = runStore.query(status, scriptId, immediate, search, offset, limit);
         List<RunInfo> copy = new ArrayList<RunInfo>();
         for (RunInfo run : loaded) {
             RunInfo current = runs.get(run.runId);

@@ -13,4 +13,7 @@ public class RunRequest {
     public boolean warnLoops = false;
     /** Optional run-terminal webhook callback target (null = none). */
     public WebhookTarget callback;
+    /** Optional submitter identity (null = anonymous): the X-TeeBox-User header on API submits, or the
+     *  admin-UI session username. Recorded on the run as {@code RunInfo.submittedBy} for display. */
+    public String userId;
 }

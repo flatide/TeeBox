@@ -248,7 +248,14 @@ public class AdminPageRenderer {
                 sb.append(" <span class='dim'>[archived]</span>");
             }
             sb.append("</td>");
-            sb.append("<td class='mono'>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? " <span class='dim'>@" + escape(run.version) + "</span>" : "").append("</td>");
+            sb.append("<td class='mono'>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? " <span class='dim'>@" + escape(run.version) + "</span>" : "");
+            if (run.immediate) {
+                sb.append(" <span class='tag' title='Instant run (immediate script — bypasses the global queue)'>instant</span>");
+            }
+            if (run.submittedBy != null && run.submittedBy.length() > 0) {
+                sb.append(" <span class='dim' title='Submitted by'>by ").append(escape(run.submittedBy)).append("</span>");
+            }
+            sb.append("</td>");
             List<TaskInfo> tasks = runManager.listTasksForRun(run.runId);
             sb.append("<td>").append(renderRunStatusWithTaskWarnings(run, tasks)).append("</td>");
             sb.append("<td class='dim'>").append(escape(formatTime(run.createdAt))).append("</td>");
@@ -328,8 +335,10 @@ public class AdminPageRenderer {
 
     public String renderRunsPage() {
         int pageSize = DEFAULT_RUNS_PAGE_SIZE;
-        int totalCount = runManager.countRuns(null);
-        List<RunInfo> runs = runManager.listRuns(null, 0, pageSize);
+        // Default view excludes instant runs (immediate scripts tend to be high-frequency and would
+        // drown the list) — matches the Instant select's initial "exclude" value below.
+        int totalCount = runManager.countRuns(null, Boolean.FALSE, null);
+        List<RunInfo> runs = runManager.listRuns(null, Boolean.FALSE, null, 0, pageSize);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Runs - TeeBox Admin"));
         sb.append(renderTopNav("runs"));
@@ -349,7 +358,14 @@ public class AdminPageRenderer {
         sb.append("<option value='COMPLETED'>COMPLETED</option>");
         sb.append("<option value='FAILED'>FAILED</option>");
         sb.append("<option value='SERVER_RESTARTED'>SERVER_RESTARTED</option>");
-        sb.append("</select></div>");
+        sb.append("</select>");
+        // Unchecked (default) = hide instant runs; checked = include them. (The fragment/API still
+        // accept instant=only for API consumers — the UI just doesn't surface it.)
+        sb.append("<label class='checkbox-label' style='padding-bottom:0;font-size:13px;color:#64748b;'>");
+        sb.append("<input type='checkbox' id='instant-filter' onchange='filterRuns()'/> Include instant</label>");
+        sb.append("<input type='text' id='runs-search' placeholder='Search script name / run ID' ");
+        sb.append("oninput='searchRuns()' style='flex:1;min-width:180px;padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;'/>");
+        sb.append("</div>");
         sb.append("<div id='runs-table-content'>");
         sb.append(renderRunsTableWithPagination(runs, 1, pageSize, totalCount));
         sb.append("</div>");
@@ -358,6 +374,7 @@ public class AdminPageRenderer {
         sb.append("<script>");
         sb.append("(function(){");
         sb.append("var currentPage=1;");
+        sb.append("var searchTimer=null;");
         sb.append("function fetchFragment(url,targetId){");
         sb.append("var xhr=new XMLHttpRequest();");
         sb.append("xhr.open('GET',url,true);");
@@ -369,12 +386,21 @@ public class AdminPageRenderer {
         sb.append("window.goToPage=function(p){currentPage=p;refreshRunsPage();};");
         sb.append("window.refreshRunsPage=function(){");
         sb.append("var status=document.getElementById('status-filter').value;");
+        sb.append("var includeInstant=document.getElementById('instant-filter').checked;");
+        sb.append("var q=document.getElementById('runs-search').value.trim();");
         sb.append("var url='/admin/fragments/all-runs?page='+currentPage;");
         sb.append("if(status)url+='&status='+encodeURIComponent(status);");
+        sb.append("if(!includeInstant)url+='&instant=exclude';");
+        sb.append("if(q)url+='&q='+encodeURIComponent(q);");
         sb.append("fetchFragment(url,'runs-table-content');");
         sb.append("fetchFragment('/admin/fragments/nav-counts','nav-counts');");
         sb.append("};");
         sb.append("window.filterRuns=function(){currentPage=1;refreshRunsPage();};");
+        // Debounce typing so each keystroke doesn't fire a request; 300ms after the last key.
+        sb.append("window.searchRuns=function(){");
+        sb.append("if(searchTimer)clearTimeout(searchTimer);");
+        sb.append("searchTimer=setTimeout(function(){currentPage=1;refreshRunsPage();},300);");
+        sb.append("};");
         sb.append("window.refreshPage=window.refreshRunsPage;");
         sb.append("})();");
         sb.append("</script>");
@@ -514,6 +540,13 @@ public class AdminPageRenderer {
         sb.append("<div class='detail-grid'>");
         sb.append("<div class='detail-item'><div class='detail-label'>Script</div><div class='detail-value'><code>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? "@" + escape(run.version) : "").append("</code></div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(renderRunStatusWithTaskWarnings(run, tasks)).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Submitted By</div><div class='detail-value'>");
+        if (run.submittedBy != null && run.submittedBy.length() > 0) {
+            sb.append("<code>").append(escape(run.submittedBy)).append("</code>");
+        } else {
+            sb.append("<span class='dim'>&mdash;</span>");
+        }
+        sb.append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Archived</div><div class='detail-value'>").append(run.archived ? statusBadge("YES") : statusBadge("NO")).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Created</div><div class='detail-value dim'>").append(escape(formatTime(run.createdAt))).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Started</div><div class='detail-value dim'>").append(escape(formatTime(run.startedAt))).append("</div></div>");

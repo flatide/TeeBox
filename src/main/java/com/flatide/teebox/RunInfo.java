@@ -16,6 +16,12 @@ public class RunInfo {
     public String scriptAbsolutePath;
     public RunStatus status;
     public boolean archived;
+    /** True when the run's script had immediate=true at submit time (an "instant run" — bypasses the
+     *  global queue). Recorded per run so the Runs UI/API can filter; legacy runs read back as false. */
+    public boolean immediate;
+    /** Who submitted the run (null = anonymous): the caller-supplied X-TeeBox-User header on API
+     *  submits, or the admin-UI session username. Display/audit only — not an auth identity. */
+    public String submittedBy;
     public long createdAt;
     public Long startedAt;
     public Long endedAt;
@@ -42,6 +48,8 @@ public class RunInfo {
         copy.scriptAbsolutePath = scriptAbsolutePath;
         copy.status = status;
         copy.archived = archived;
+        copy.immediate = immediate;
+        copy.submittedBy = submittedBy;
         copy.createdAt = createdAt;
         copy.startedAt = startedAt;
         copy.endedAt = endedAt;

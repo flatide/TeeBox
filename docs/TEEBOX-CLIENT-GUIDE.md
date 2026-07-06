@@ -714,6 +714,7 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `submitRun(scriptId, props)` | `Map`(`runId`) | Submit active version for execution (async, 202) |
 | `submitRun(scriptId, version, props)` | `Map`(`runId`) | Submit with a specified version |
 | `submitRun(scriptId, version, props, callbackUrl)` | `Map`(`runId`) | Submit and request a run-terminal webhook POST to `callbackUrl` (server must have webhooks enabled + host allowlisted, else HTTP 400). See §7.2 |
+| `submitRun(scriptId, version, props, callbackUrl, userId)` | `Map`(`runId`) | Full form with an optional **submitter id** (`userId`, nullable). Sent as the `X-TeeBox-User` header; TeeBox records it on the run and shows it in the admin Runs pages / returns it as `submittedBy` in run status/summaries. Display/audit only — not authentication. `runAndWait(..., timeoutMs, userId)` / `runAndStream(..., timeoutMs, userId)` overloads thread it through their submit |
 | `getRun(runId)` | `Map` | Full summary (includes `published`·`resultSummary`) |
 | `getRunStatus(runId)` | `Map` | Status/timestamps only (for lightweight polling) |
 | `getRunResult(runId)` | `Map` | Result (`resultData` + the `result` envelope). A redacted descriptor for a stream result |
