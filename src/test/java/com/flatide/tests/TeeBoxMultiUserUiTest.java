@@ -137,6 +137,18 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("editor JS inlined (verbatim highlighter)", html.contains("function highlightSyntax"));
             Assert.assertTrue("builtin panel data inlined", html.contains("BUILTIN_DOCS"));
 
+            // The highlighter + panel must track the language's builtin catalog: the spec v0.10.0
+            // Results builtins (FAIL/UNWRAP/OK/ERR/IS_RESULT) and the TeeBox host builtins
+            // (STREAM_FILE/THUMBNAIL) are both highlighted and documented in the panel.
+            Assert.assertTrue("Results builtins in the highlighter regex",
+                    html.contains("FAIL|UNWRAP|OK|ERR|IS_RESULT"));
+            Assert.assertTrue("TeeBox host builtins in the highlighter regex",
+                    html.contains("STREAM_FILE|THUMBNAIL"));
+            Assert.assertTrue("Results category in the panel docs", html.contains("cat: 'Results'"));
+            Assert.assertTrue("UNWRAP documented in the panel", html.contains("name: 'UNWRAP'"));
+            Assert.assertTrue("TeeBox Host category in the panel docs", html.contains("cat: 'TeeBox Host'"));
+            Assert.assertTrue("STREAM_FILE documented in the panel", html.contains("name: 'STREAM_FILE'"));
+
             // The Active Version Source card is now the single edit + add-version surface: the separate
             // "Add New Version" card is gone, and it carries both a "Save" (overwrite active) and a
             // "Save as new version" button that overrides the form action to the register endpoint.

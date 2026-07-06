@@ -1,7 +1,12 @@
 /* ProperTee code editor for the TeeBox admin UI.
  *
  * Ported from the ProperTee playground (propertee-js/docs/index.html). The syntax highlighter
- * (highlightSyntax/escapeHtml) and the builtin catalog (RESULT_NOTE/BUILTIN_DOCS) are copied VERBATIM.
+ * (highlightSyntax/escapeHtml) and the builtin catalog (RESULT_NOTE/BUILTIN_DOCS) are copied VERBATIM
+ * (last synced: spec v0.10.0 Results builtins — FAIL/UNWRAP/OK/ERR/IS_RESULT). When the language gains
+ * builtins, re-diff against the playground and sync; playground-only annotations ("in-memory FS",
+ * mocked SHELL/HTTP notes) are intentionally NOT carried over. TeeBox-only host builtins
+ * (STREAM_FILE/THUMBNAIL) are kept on separate, clearly-marked lines/categories so the verbatim parts
+ * stay diffable.
  * Only the wiring is new: it progressively upgrades any <textarea data-pt-editor> into a highlighted
  * editor (transparent textarea over a <pre> syntax overlay + line gutter), works for multiple editors
  * on a page, and optionally attaches a builtin-function reference panel (data-pt-panel). Run/debug and
@@ -16,7 +21,10 @@
     }
 
     function highlightSyntax(code) {
-        var builtins = 'PRINT|SUM|MAX|MIN|ABS|FLOOR|CEIL|ROUND|LEN|TO_NUMBER|TO_STRING|TYPE_OF|SLEEP|PUSH|POP|CONCAT|SLICE|CHARS|SPLIT|JOIN|SUBSTRING|UPPERCASE|LOWERCASE|TRIM|CONTAINS|STARTS_WITH|ENDS_WITH|MATCHES|REGEX_FIND|REPLACE|HAS_KEY|KEYS|VALUES|ENTRIES|MERGE|REMOVE_KEY|SORT|SORT_DESC|SORT_BY|SORT_BY_DESC|REVERSE|RANDOM|MILTIME|DATE|TIME|JSON_PARSE|JSON_FORMAT|ENV|FILE_EXISTS|FILE_INFO|READ_LINES|WRITE_FILE|WRITE_LINES|APPEND_FILE|MKDIR|LIST_DIR|DELETE_FILE|HTTP_GET|HTTP_POST|HTTP|SHELL|SHELL_CTX';
+        var builtins = 'PRINT|SUM|MAX|MIN|ABS|FLOOR|CEIL|ROUND|LEN|TO_NUMBER|TO_STRING|TYPE_OF|SLEEP|PUSH|POP|CONCAT|SLICE|CHARS|SPLIT|JOIN|SUBSTRING|UPPERCASE|LOWERCASE|TRIM|CONTAINS|STARTS_WITH|ENDS_WITH|MATCHES|REGEX_FIND|REPLACE|HAS_KEY|KEYS|VALUES|ENTRIES|MERGE|REMOVE_KEY|SORT|SORT_DESC|SORT_BY|SORT_BY_DESC|REVERSE|RANDOM|MILTIME|DATE|TIME|JSON_PARSE|JSON_FORMAT|ENV|FILE_EXISTS|FILE_INFO|READ_LINES|WRITE_FILE|WRITE_LINES|APPEND_FILE|MKDIR|LIST_DIR|DELETE_FILE|HTTP_GET|HTTP_POST|HTTP|SHELL|SHELL_CTX|FAIL|UNWRAP|OK|ERR|IS_RESULT';
+        // TeeBox host builtins (registered by ScriptExecutor) — NOT part of the playground list above;
+        // keep them on this separate line so the verbatim line stays diffable against the playground.
+        builtins += '|STREAM_FILE|THUMBNAIL';
         var keywords = 'if|then|elseif|else|end|loop|in|do|infinite|break|continue|return|debug|function|thread|multi|monitor|and|or|not';
         var pattern = new RegExp(
             '(\\/\\*[\\s\\S]*?\\*\\/)'                         // block comments
@@ -115,6 +123,13 @@
             { name: 'JSON_PARSE', sig: 'JSON_PARSE(s)', desc: 'Parse a JSON string.', returns: RESULT_NOTE + ' .value = the parsed value (JSON null is preserved as null — spec v0.8.0).', fails: 'Returns a Result with .ok=false and .value = an error message if s is not a string or is invalid JSON. Does NOT stop the script.', sample: 'res = JSON_PARSE("{\\"a\\": 1}")\nPRINT(res.ok, res.value.a)' },
             { name: 'JSON_FORMAT', sig: 'JSON_FORMAT(v)', desc: 'Serialize any value to JSON.', returns: 'A JSON string.', fails: 'Does not fail (accepts any value).', sample: 'PRINT(JSON_FORMAT({"a": [1, 2]}))' },
         ]},
+        { cat: 'Results', fns: [
+            { name: 'FAIL', sig: 'FAIL(message)', desc: 'Raise a runtime error at the call site — the explicit escalation for errors a script decides are fatal (spec v0.10.0).', returns: 'Never returns.', fails: 'Always — that is its purpose. The script stops exactly as with any runtime error; inside a multi thread, only that thread fails.', sample: 'res = JSON_PARSE("{bad")\nif not res.ok then\n    FAIL("config parse failed: " + res.value)\nend' },
+            { name: 'UNWRAP', sig: 'UNWRAP(res, [message])', desc: 'The value of an ok genuine Result; an error Result escalates like FAIL with TO_STRING(res.value), prefixed "message: " when given.', returns: 'res.value when res.ok is true.', fails: 'Runtime error when res.ok is false, or when res is not a genuine Result (script literals are not — build them with OK/ERR).', sample: 'cfg = UNWRAP(JSON_PARSE("{\\"a\\": 1}"), "config")\nPRINT(cfg.a)' },
+            { name: 'OK', sig: 'OK([value])', desc: 'Construct a genuine Result {status: "done", ok: true, value}.', returns: 'A genuine Result. Missing value → {}.', fails: 'Does not fail.', sample: 'r = OK(42)\nPRINT(r.ok, UNWRAP(r))' },
+            { name: 'ERR', sig: 'ERR([value])', desc: 'Construct a genuine error Result {status: "error", ok: false, value}. value may be any type (structured errors allowed).', returns: 'A genuine Result. Missing value → {}.', fails: 'Does not fail (UNWRAP on it does).', sample: 'r = ERR("boom")\nPRINT(r.ok, r.value)' },
+            { name: 'IS_RESULT', sig: 'IS_RESULT(x)', desc: 'Observe the genuine-Result origin — true only for runtime- or OK/ERR-created Results (a hand-built {status, ok, value} literal is false).', returns: 'A boolean.', fails: 'Does not fail (accepts any value).', sample: 'PRINT(IS_RESULT(OK(1)))\nPRINT(IS_RESULT({"ok": true}))' },
+        ]},
         { cat: 'Time', fns: [
             { name: 'SLEEP', sig: 'SLEEP(ms)', desc: 'Pause the current thread for ms milliseconds.', returns: 'The empty object {}.', fails: 'Runtime error if ms is not a number.', sample: 'PRINT("before")\nSLEEP(300)\nPRINT("after")' },
             { name: 'MILTIME', sig: 'MILTIME()', desc: 'Current epoch time.', returns: 'A number (epoch milliseconds).', fails: 'Does not fail.', sample: 'PRINT(MILTIME())' },
@@ -143,6 +158,12 @@
             { name: 'HTTP_GET', sig: 'HTTP_GET(url, [options])', desc: 'HTTP GET. options = {headers, timeout}.', returns: RESULT_NOTE + ' .value = {status, body, headers}. .ok is true only for a 2xx status.', fails: 'A 4xx/5xx keeps the full .value with .ok=false. A transport failure (bad URL/DNS/connect/timeout) gives .ok=false with .value = {status:0, body:<message>, headers:{}}.', sample: 'res = HTTP_GET("http://api/data")\nPRINT(res.ok, res.value.status)\nPRINT(res.value.body)' },
             { name: 'HTTP_POST', sig: 'HTTP_POST(url, body, [options])', desc: 'HTTP POST. A string body is sent as-is; an object/array body is serialized to JSON. options = {headers, timeout}.', returns: RESULT_NOTE + ' .value = {status, body, headers}, .ok = 2xx.', fails: 'Non-2xx -> .ok=false (value retained). Transport failure -> .ok=false, .value.status=0.', sample: 'data = {"test": "ok"}\nopts = {"headers": {"Content-Type": "application/json"}}\nres = HTTP_POST("http://api/submit", data, opts)\nPRINT(res.ok, res.value.body)' },
             { name: 'HTTP', sig: 'HTTP(method, url, [options])', desc: 'General request for any method (PUT/DELETE/PATCH/...). options = {headers, timeout, body}.', returns: RESULT_NOTE + ' .value = {status, body, headers}, .ok = 2xx.', fails: 'Same as HTTP_GET: non-2xx -> .ok=false; transport failure -> .value.status=0.', sample: 'opts = {"headers": {"X-Token": "abc"}}\nres = HTTP("GET", "http://api/me", opts)\nPRINT(res.value.status)' },
+        ]},
+        // TeeBox-only host builtins (registered by ScriptExecutor; not part of the ProperTee language,
+        // so this category does not exist in the playground catalog above).
+        { cat: 'TeeBox Host', fns: [
+            { name: 'STREAM_FILE', sig: 'STREAM_FILE(path, [contentType])', desc: 'Return a large file as the run result without loading it into memory: yields a small stream descriptor; clients fetch the bytes via GET .../runs/{id}/result-stream. Use as the script\'s return value.', returns: 'A raw stream descriptor object (not a Result) carrying {contentType, size}.', fails: 'Runtime error (stops the script) if the path is not an existing file inside the allowed stream roots (propertee.teebox.streamRoots, default = the TeeBox data dir).', sample: 'return STREAM_FILE("/data/report.pdf", "application/pdf")' },
+            { name: 'THUMBNAIL', sig: 'THUMBNAIL(srcPath, destPath, maxWidth, [maxHeight])', desc: 'Scale an image (anything ImageIO reads) to fit the bounds, preserving aspect ratio (never upscales), and write a PNG. Runs off the cooperative baton, so it never stalls concurrent multi workers.', returns: RESULT_NOTE + ' .value = {path, width, height}.', fails: 'Returns .ok=false for a missing/unreadable image, bad arguments, or a path outside the allowed stream roots (same policy as STREAM_FILE).', sample: 'res = THUMBNAIL("/data/in.png", "/data/thumb.png", 320)\nPRINT(res.ok, res.value.width)' },
         ]},
     ];
     var FN_INDEX = {};
