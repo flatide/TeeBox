@@ -240,7 +240,7 @@ public class AdminPageRenderer {
             return "<p class='empty'>No runs</p>";
         }
         StringBuilder sb = new StringBuilder();
-        sb.append("<div class='table-wrap'><table><thead><tr><th>Run ID</th><th>Script</th><th>Status</th><th>Created</th><th>Duration</th><th>Threads</th><th>Tasks</th></tr></thead><tbody>");
+        sb.append("<div class='table-wrap'><table><thead><tr><th>Run ID</th><th>Script</th><th>By</th><th>Status</th><th>Created</th><th>Duration</th><th>Threads</th><th>Tasks</th></tr></thead><tbody>");
         for (RunInfo run : runs) {
             sb.append("<tr>");
             sb.append("<td><a href='/admin/runs/").append(urlPath(run.runId)).append("' class='mono'>").append(escape(run.runId)).append("</a>");
@@ -252,8 +252,13 @@ public class AdminPageRenderer {
             if (run.immediate) {
                 sb.append(" <span class='tag' title='Instant run (immediate script — bypasses the global queue)'>instant</span>");
             }
+            sb.append("</td>");
+            // Submitter identity (X-TeeBox-User header on API submits / admin-UI session username).
+            sb.append("<td class='mono'>");
             if (run.submittedBy != null && run.submittedBy.length() > 0) {
-                sb.append(" <span class='dim' title='Submitted by'>by ").append(escape(run.submittedBy)).append("</span>");
+                sb.append(escape(run.submittedBy));
+            } else {
+                sb.append("<span class='dim'>&mdash;</span>");
             }
             sb.append("</td>");
             List<TaskInfo> tasks = runManager.listTasksForRun(run.runId);

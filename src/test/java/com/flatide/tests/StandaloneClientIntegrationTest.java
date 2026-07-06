@@ -88,8 +88,33 @@ public class StandaloneClientIntegrationTest {
             Map<String, Object> result = client.runAndWait("audit_me", null,
                 new LinkedHashMap<String, Object>(), 30000L, "batch-svc");
             Assert.assertEquals("COMPLETED", String.valueOf(result.get("status")));
+
+            // The admin Runs list shows the submitter in a dedicated "By" column (dash when anonymous).
+            String runsTable = readUrl(server.baseUrl + "/admin/fragments/all-runs");
+            Assert.assertTrue("runs table has a By column", runsTable.contains("<th>By</th>"));
+            Assert.assertTrue("submitter shown in the list", runsTable.contains("journey.kim"));
+            Assert.assertTrue("second submitter shown too", runsTable.contains("batch-svc"));
+            Assert.assertTrue("anonymous run shows a dash", runsTable.contains("&mdash;"));
         } finally {
             server.close();
+        }
+    }
+
+    private static String readUrl(String url) throws Exception {
+        java.net.HttpURLConnection conn =
+            (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+        InputStream in = conn.getInputStream();
+        try {
+            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+            byte[] chunk = new byte[4096];
+            int read;
+            while ((read = in.read(chunk)) >= 0) {
+                buffer.write(chunk, 0, read);
+            }
+            return buffer.toString("UTF-8");
+        } finally {
+            in.close();
+            conn.disconnect();
         }
     }
 
