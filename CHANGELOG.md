@@ -2,6 +2,18 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.11.1
+
+- **The Runs list gets a dedicated "By" column** showing each run's submitter (the 1.11.0
+  `X-TeeBox-User` / admin-session identity). 1.11.0 rendered it as a dim `by <user>` suffix inside the
+  Script column, which was easy to miss; it is now its own column between Script and Status (dash for
+  anonymous runs). The table fragment is shared, so the dashboard's runs table shows it too.
+- **Docs sweep for the 1.11.0 features.** Operations guides (en/ko) gain "Run Submitter Identity" and
+  "Runs List Filters" sections; API-EXAMPLES gains `X-TeeBox-User` and `instant`/`q` curl examples —
+  and corrects a stale example (`scriptId=` was never read by `GET /api/admin/runs`; use `q=` or the
+  client per-script runs endpoint); `swagger.yaml` documents the new header/params and the
+  `submittedBy`/`immediate` response fields.
+
 ## 1.11.0
 
 - **Runs page filters & search.** The admin `/admin/runs` list gains an **Include instant** checkbox —
