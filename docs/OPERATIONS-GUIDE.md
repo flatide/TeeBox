@@ -124,6 +124,11 @@ Where it appears:
 - Admin **run detail page** — the **Submitted By** field.
 - Run JSON — `submittedBy` in run status/summary/result responses.
 
+TeeBox also records the **caller IP** at submit time (`submittedFrom`; first `X-Forwarded-For` hop
+when present, else the socket peer — same resolution as the access log). It is shown on the run
+detail page (**From (IP)**) and in the admin run-detail JSON; it is **not** echoed in the
+client-facing run responses.
+
 This is **display/audit metadata only** — it is caller-supplied and not authenticated. Do not use it
 for authorization; API access is still governed by the Bearer tokens.
 

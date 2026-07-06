@@ -552,6 +552,13 @@ public class AdminPageRenderer {
             sb.append("<span class='dim'>&mdash;</span>");
         }
         sb.append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>From (IP)</div><div class='detail-value'>");
+        if (run.submittedFrom != null && run.submittedFrom.length() > 0) {
+            sb.append("<code>").append(escape(run.submittedFrom)).append("</code>");
+        } else {
+            sb.append("<span class='dim'>&mdash;</span>");
+        }
+        sb.append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Archived</div><div class='detail-value'>").append(run.archived ? statusBadge("YES") : statusBadge("NO")).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Created</div><div class='detail-value dim'>").append(escape(formatTime(run.createdAt))).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Started</div><div class='detail-value dim'>").append(escape(formatTime(run.startedAt))).append("</div></div>");

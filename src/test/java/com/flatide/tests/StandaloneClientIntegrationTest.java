@@ -95,6 +95,16 @@ public class StandaloneClientIntegrationTest {
             Assert.assertTrue("submitter shown in the list", runsTable.contains("journey.kim"));
             Assert.assertTrue("second submitter shown too", runsTable.contains("batch-svc"));
             Assert.assertTrue("anonymous run shows a dash", runsTable.contains("&mdash;"));
+
+            // The caller IP is recorded at submit time and shown on the run detail page ("From (IP)").
+            // Local test traffic arrives from the loopback address.
+            String detailPage = readUrl(server.baseUrl + "/admin/runs/" + runId);
+            Assert.assertTrue("detail page has a From (IP) field", detailPage.contains("From (IP)"));
+            Assert.assertTrue("caller IP recorded and displayed", detailPage.contains("127.0.0.1"));
+            // The admin run-detail JSON (full RunInfo) carries it as submittedFrom.
+            String adminJson = readUrl(server.baseUrl + "/api/admin/runs/" + runId);
+            Assert.assertTrue("admin JSON carries submittedFrom", adminJson.contains("\"submittedFrom\""));
+            Assert.assertTrue("admin JSON has the IP", adminJson.contains("127.0.0.1"));
         } finally {
             server.close();
         }

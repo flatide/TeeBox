@@ -107,7 +107,7 @@ TeeBox has **two unrelated auth mechanisms**:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/client/scripts/{scriptId}/runs` | Submit a registered script. Optional **`X-TeeBox-User` header** = submitter id (nullable; sanitized, ≤128 chars) — recorded as `RunInfo.submittedBy`, shown on the admin Runs pages, and returned as `submittedBy` in run status/summary/result responses. Admin-UI submits record the session username instead. Display/audit only, not auth |
+| POST | `/api/client/scripts/{scriptId}/runs` | Submit a registered script. Optional **`X-TeeBox-User` header** = submitter id (nullable; sanitized, ≤128 chars) — recorded as `RunInfo.submittedBy`, shown on the admin Runs pages, and returned as `submittedBy` in run status/summary/result responses. Admin-UI submits record the session username instead. The **caller IP** is also recorded (`RunInfo.submittedFrom`, XFF-aware like the access log) — run detail page "From (IP)" + admin run-detail JSON only, never client-facing responses. Display/audit only, not auth |
 | GET | `/api/client/scripts/{scriptId}/runs` | List runs for a script |
 | GET | `/api/client/runs` | List runs (status/offset/limit) |
 | GET | `/api/client/runs/{runId}` | Run summary |

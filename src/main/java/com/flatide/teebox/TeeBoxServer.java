@@ -252,6 +252,7 @@ public class TeeBoxServer {
                     // Admin-UI submits record the logged-in operator as the submitter (null when the UI
                     // is open / no roster) — same field the API fills from the X-TeeBox-User header.
                     request.userId = session != null ? session.username : null;
+                    request.clientAddress = submitClientAddress(exchange);
                     RunInfo run = runManager.submit(request);
                     redirect(exchange, "/admin/runs/" + urlPath(run.runId));
                     return;
@@ -1025,7 +1026,14 @@ public class TeeBoxServer {
         parseRunOptions(raw, request);
         request.callback = parseCallback(raw.get("callback"));
         request.userId = sanitizeUserId(exchange.getRequestHeaders().getFirst(USER_HEADER));
+        request.clientAddress = submitClientAddress(exchange);
         return request;
+    }
+
+    /** Caller IP for run audit — same XFF-aware resolution as the access log; null when unknown. */
+    private static String submitClientAddress(HttpExchange exchange) {
+        String address = clientAddress(exchange);
+        return "-".equals(address) ? null : address;
     }
 
     /** Trim, drop empty, strip control characters, and cap length — the id is display/audit-only. */

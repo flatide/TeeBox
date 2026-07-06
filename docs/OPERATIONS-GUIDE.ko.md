@@ -123,6 +123,10 @@ admin UI에서 제출한 run은 로그인한 운영자의 username이 같은 필
 - admin **run 상세 페이지** — **Submitted By** 필드
 - run JSON — 상태/요약/결과 응답의 `submittedBy`
 
+TeeBox는 제출 시점의 **호출자 IP**도 기록합니다 (`submittedFrom`; `X-Forwarded-For` 가 있으면 첫 홉,
+없으면 소켓 피어 — access log와 동일한 해석). run 상세 페이지(**From (IP)**)와 admin run 상세 JSON에
+표시되며, **client-facing run 응답에는 노출되지 않습니다**.
+
 이 값은 **표시/감사용 메타데이터**입니다 — 호출자가 넣는 값이며 인증되지 않습니다.
 인가 판단에 사용하지 마세요. API 접근 제어는 여전히 Bearer 토큰이 담당합니다.
 
