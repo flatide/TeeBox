@@ -2,6 +2,26 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.11.0
+
+- **Runs page filters & search.** The admin `/admin/runs` list gains an **Include instant** checkbox —
+  **default unchecked, so runs of `immediate=true` scripts ("instant runs") are hidden** (they tend to be
+  high-frequency and would drown the list; check to include them) — and a debounced **search box**
+  matching a case-insensitive substring of the script name or run ID. Both are server-side (with the
+  Status filter and pagination) via the `all-runs` fragment; instant rows carry an `instant` tag. To
+  support this, **whether a run is instant is now recorded per run at submit time**
+  (`RunInfo.immediate`, also in the run index so filtering never loads run files); legacy runs read back
+  as non-instant. `GET /api/admin/runs` gains the same `instant=exclude|only` and `q` parameters
+  (absent = all, backward compatible).
+- **Runs now record who submitted them.** Run-submitting `TeeBoxClient` methods take an optional
+  trailing `userId` (nullable): `submitRun(scriptId, version, props, callbackUrl, userId)`,
+  `runAndWait(..., timeoutMs, userId)`, `runAndStream(..., timeoutMs, userId)` — sent as the
+  **`X-TeeBox-User`** request header (no header when null). TeeBox sanitizes it (≤128 chars,
+  display/audit only — **not** authentication) and records it as `submittedBy`: shown on the run detail
+  page (**Submitted By**) and as `by <user>` in the Runs table, and returned in run status/summary/result
+  JSON. Admin-UI submits record the logged-in operator's username in the same field. Existing client
+  signatures are unchanged (still Java 7 bytecode); client guides (en/ko) updated.
+
 ## 1.10.2
 
 - **Fix — the admin code editor now highlights and documents the spec v0.10.0 Results builtins.** The
