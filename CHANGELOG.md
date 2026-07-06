@@ -2,6 +2,19 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.10.2
+
+- **Fix — the admin code editor now highlights and documents the spec v0.10.0 Results builtins.** The
+  editor was a verbatim playground snapshot from before the spec batch, so `FAIL` / `UNWRAP` / `OK` /
+  `ERR` / `IS_RESULT` rendered unhighlighted and were missing from the builtin reference panel. The
+  highlighter regex and the panel catalog are re-synced from the playground (a new **Results** category,
+  verbatim; the existing 59 entries were confirmed unchanged).
+- **The TeeBox host builtins `STREAM_FILE` and `THUMBNAIL` are now highlighted too**, with their own
+  **TeeBox Host** panel category (signature, return/failure notes, samples) — they are TeeBox-registered
+  builtins, so they don't exist in the playground catalog and are kept clearly separated from the
+  verbatim-synced parts. An injection-test guard now pins the catalog so future spec batches can't
+  silently fall behind.
+
 ## 1.10.1
 
 - **Fix — run results now survive a server restart byte-faithfully** (the disk half of 1.10.0's
