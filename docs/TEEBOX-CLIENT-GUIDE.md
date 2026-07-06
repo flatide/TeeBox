@@ -424,9 +424,92 @@ String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING
   "version": "1",
   "status": "COMPLETED",
   "hasExplicitReturn": true,
-  "resultData": { "ok": true, "sum": 42 }   // the actual structured result (sum is Double 42.0)
+  "resultData": { "ok": true, "sum": 42 },  // the actual structured result (sum is Double 42.0 in the client Map)
+  "result": {                                // 1.9.0+: the run-result envelope — see the next section
+    "status": "done", "ok": true,
+    "value": { "ok": true, "sum": 42 }
+  }
 }
 ```
+
+#### The run-result envelope — `getRunEnvelope(runId)`, example per case
+
+The `result` field of the `getRunResult` response (1.9.0+) is **the whole run viewed as one ProperTee
+Result** — the same `{status, ok, value}` shape as a `multi` collection entry (the run is "thread #0"),
+so client code has exactly two branches no matter how the run ended:
+
+```java
+Map<String, Object> env = teebox.getRunEnvelope(runId);   // = getRunResult(runId).get("result")
+if (Boolean.TRUE.equals(env.get("ok"))) {
+    use(env.get("value"));      // the value the script returned
+} else {
+    handle(env.get("value"));   // an error message string, or {} while still running
+}
+```
+
+The `result` value per case (live-verified with the demos `demo/teebox/06_run_envelope.tee` /
+`07_null_roundtrip.tee`):
+
+**1) `COMPLETED` — a returned value (plain success)**
+
+```jsonc
+{ "status": "done", "ok": true,
+  "value": { "job": "envelope-demo", "shell_ok": true, "answer": 42 } }
+```
+
+**2) `COMPLETED` — the script returned an `ERR(...)` Result as data**
+
+```jsonc
+{ "status": "done", "ok": true,                    // the RUN succeeded, so ok:true
+  "value": { "status": "error", "ok": false,       // the script's own Result = structured error "data"
+             "value": { "reason": "upstream said no", "code": 503 } } }
+```
+
+> TeeBox never inspects the value's shape — a script that deliberately returns a Result simply nests
+> inside `value` (double-wrapping is by design). The inner `ok:false` can never be mistaken for the
+> run's failure.
+
+**3) `FAILED` — `FAIL(...)` or a runtime error**
+
+```jsonc
+{ "status": "error", "ok": false,
+  "value": "Runtime Error at line 37:4: upstream unreachable: giving up" }   // 1.9.1+: with line:col
+```
+
+**4) Not yet terminal (`QUEUED`/`PENDING`/`RUNNING`)**
+
+```jsonc
+{ "status": "running", "ok": false, "value": {} }
+```
+
+**5) `SERVER_RESTARTED` — the server restarted mid-run, result lost**
+
+```jsonc
+{ "status": "error", "ok": false, "value": "server restarted" }
+```
+
+**6) A value-less run — no `return` and no `result` global**
+
+```jsonc
+{ "status": "done", "ok": true, "value": {} }   // {} = ProperTee's "no value" (absence)
+```
+
+**7) A value carrying first-class `null` (1.10.0/1.10.1)**
+
+```jsonc
+{ "status": "done", "ok": true,
+  "value": { "coupon": null, "n": 1 } }   // null is neither collapsed to {} nor a dropped key,
+                                          // and stays byte-identical across a server restart
+```
+
+> In the client Map a JSON `null` shows up as a Java `null` with the key kept — `containsKey("coupon")`
+> is `true`, `get("coupon")` is `null` — distinct from `{}` (absence, an empty Map).
+
+**8) A `STREAM_FILE` result** — `value` carries the redacted descriptor
+(`{stream:true, contentType, size}`); fetch the actual bytes with `streamRunResult`.
+
+> The envelope rides only on the `getRunResult` response (an additive field; existing fields
+> unchanged). The admin `RunInfo` surface and the webhook payload deliberately do not carry it.
 
 #### `getRunTasksSummary(runId)` response example
 
@@ -633,7 +716,8 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `submitRun(scriptId, version, props, callbackUrl)` | `Map`(`runId`) | Submit and request a run-terminal webhook POST to `callbackUrl` (server must have webhooks enabled + host allowlisted, else HTTP 400). See §7.2 |
 | `getRun(runId)` | `Map` | Full summary (includes `published`·`resultSummary`) |
 | `getRunStatus(runId)` | `Map` | Status/timestamps only (for lightweight polling) |
-| `getRunResult(runId)` | `Map` | Result (`resultData`). A redacted descriptor for a stream result |
+| `getRunResult(runId)` | `Map` | Result (`resultData` + the `result` envelope). A redacted descriptor for a stream result |
+| `getRunEnvelope(runId)` | `Map` | The run-result envelope — always the one `{status, ok, value}` shape (per-case examples in §7.3). Same as `getRunResult(runId).get("result")` |
 | `getRunTasksSummary(runId)` | `Map` | Task counts by status |
 | `listScriptRuns(scriptId)` | `List<Object>` | Run list for the script |
 | `getRunStdout(runId)` `[, maxTaskLines]` | `Map` | Captured stdout: script `PRINT` (`lines`/`lineCount`) **+ merged `SHELL` task output** (`taskLines`/`taskLineCount`, `taskLinesTruncated`, `taskCount`, `tasks`). Queryable during RUNNING too. Optional `maxTaskLines` caps each task's tail (`<= 0` = no cap; default 200) |

@@ -424,9 +424,91 @@ String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING
   "version": "1",
   "status": "COMPLETED",
   "hasExplicitReturn": true,
-  "resultData": { "ok": true, "sum": 42 }   // 실제 구조화 결과 (sum 은 Double 42.0)
+  "resultData": { "ok": true, "sum": 42 },  // 실제 구조화 결과 (클라이언트 Map 에서 sum 은 Double 42.0)
+  "result": {                                // 1.9.0+: run 결과 봉투(envelope) — 바로 아래 절 참고
+    "status": "done", "ok": true,
+    "value": { "ok": true, "sum": 42 }
+  }
 }
 ```
+
+#### 실행 결과 봉투(envelope) — `getRunEnvelope(runId)` 케이스별 예시
+
+`getRunResult` 응답의 `result` 필드(1.9.0+)는 **run 전체를 ProperTee Result 하나로 본 뷰**입니다 —
+`multi` 수집 항목과 같은 `{status, ok, value}` 한 가지 모양(run = "thread #0")이라, 성공/실패/실행 중
+어떤 결말이든 클라이언트 분기는 항상 둘뿐입니다:
+
+```java
+Map<String, Object> env = teebox.getRunEnvelope(runId);   // = getRunResult(runId).get("result")
+if (Boolean.TRUE.equals(env.get("ok"))) {
+    use(env.get("value"));      // 스크립트가 반환한 값
+} else {
+    handle(env.get("value"));   // 에러 메시지 문자열, 또는 실행 중이면 {}
+}
+```
+
+케이스별 `result` 값 (데모 `demo/teebox/06_run_envelope.tee` / `07_null_roundtrip.tee` 로 라이브 검증):
+
+**1) `COMPLETED` — 값 반환 (일반 성공)**
+
+```jsonc
+{ "status": "done", "ok": true,
+  "value": { "job": "envelope-demo", "shell_ok": true, "answer": 42 } }
+```
+
+**2) `COMPLETED` — 스크립트가 `ERR(...)` Result 를 데이터로 반환**
+
+```jsonc
+{ "status": "done", "ok": true,                    // run 자체는 성공했으므로 ok:true
+  "value": { "status": "error", "ok": false,       // 스크립트가 만든 내부 Result = 구조화된 에러 "데이터"
+             "value": { "reason": "upstream said no", "code": 503 } } }
+```
+
+> TeeBox 는 값의 모양을 검사하지 않습니다 — 스크립트가 의도적으로 Result 를 반환하면 `value` 안에
+> 그대로 중첩됩니다(이중 포장이 정상). 내부 `ok:false` 가 run 의 실패로 오인될 일은 없습니다.
+
+**3) `FAILED` — `FAIL(...)` 또는 런타임 에러**
+
+```jsonc
+{ "status": "error", "ok": false,
+  "value": "Runtime Error at line 37:4: upstream unreachable: giving up" }   // 1.9.1+: line:col 포함
+```
+
+**4) 아직 종료 전 (`QUEUED`/`PENDING`/`RUNNING`)**
+
+```jsonc
+{ "status": "running", "ok": false, "value": {} }
+```
+
+**5) `SERVER_RESTARTED` — 실행 중 서버가 재시작되어 결과 유실**
+
+```jsonc
+{ "status": "error", "ok": false, "value": "server restarted" }
+```
+
+**6) 값 없는 run — `return` 도 `result` 전역도 없음**
+
+```jsonc
+{ "status": "done", "ok": true, "value": {} }   // {} = ProperTee 의 "값 없음"(absence)
+```
+
+**7) 값에 first-class `null` 포함 (1.10.0/1.10.1)**
+
+```jsonc
+{ "status": "done", "ok": true,
+  "value": { "coupon": null, "n": 1 } }   // null 은 {} 로 뭉개지거나 키가 사라지지 않고 그대로,
+                                          // 서버 재시작 후에도 byte-identical
+```
+
+> 클라이언트 Map 에서는 JSON `null` 이 Java `null` 로 나타납니다 — 키는 유지되므로
+> `containsKey("coupon")` 은 `true`, `get("coupon")` 은 `null` 입니다. `{}`(absence, 빈 Map)와
+> 구분됩니다.
+
+**8) `STREAM_FILE` 결과** — `value` 에는 redact 된 디스크립터(`{stream:true, contentType, size}`)가
+실립니다. 실제 바이트는 `streamRunResult` 로 받으세요.
+
+> 봉투는 `getRunResult` 응답에만 실립니다(추가 필드, 기존 필드 무변경). 관리자 `RunInfo` 표면과
+> webhook 페이로드에는 의도적으로 싣지 않습니다.
 
 #### `getRunTasksSummary(runId)` 응답 예시
 
@@ -633,7 +715,8 @@ try {
 | `submitRun(scriptId, version, props, callbackUrl)` | `Map`(`runId`) | 제출 + run 종료 webhook 을 `callbackUrl` 로 POST 요청(서버에 webhook 활성화 + host allowlist 필요, 아니면 HTTP 400). §7.2 참고 |
 | `getRun(runId)` | `Map` | 전체 요약(`published`·`resultSummary` 포함) |
 | `getRunStatus(runId)` | `Map` | 상태/타임스탬프만(가벼운 폴링용) |
-| `getRunResult(runId)` | `Map` | 결과(`resultData`). 스트림 결과면 redact된 디스크립터 |
+| `getRunResult(runId)` | `Map` | 결과(`resultData` + 봉투 `result`). 스트림 결과면 redact된 디스크립터 |
+| `getRunEnvelope(runId)` | `Map` | run 결과 봉투 — 항상 `{status, ok, value}` 한 모양(§7.3 케이스별 예시). `getRunResult(runId).get("result")` 와 동일 |
 | `getRunTasksSummary(runId)` | `Map` | 태스크 상태별 개수 |
 | `listScriptRuns(scriptId)` | `List<Object>` | 해당 스크립트의 실행 목록 |
 | `getRunStdout(runId)` `[, maxTaskLines]` | `Map` | 캡처된 stdout: 스크립트 `PRINT`(`lines`/`lineCount`) **+ 병합된 `SHELL` 태스크 출력**(`taskLines`/`taskLineCount`, `taskLinesTruncated`, `taskCount`, `tasks`). RUNNING 중에도 조회. 선택 `maxTaskLines` 로 각 태스크 tail 캡(`<= 0` = 캡 없음; 기본 200) |
