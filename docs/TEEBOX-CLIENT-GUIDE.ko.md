@@ -291,7 +291,15 @@ teebox.submitRun("calc_sum", "1", props);
 
 // run 종료 webhook 콜백과 함께 제출(폴링 대신)
 teebox.submitRun("nightly_export", null, props, "https://app.internal/teebox/callback");
+
+// 제출자 id 와 함께 제출 — run 에 기록되어 운영자에게 표시됨
+teebox.submitRun("nightly_export", null, props, null, "journey.kim");
+// 폴링/스트리밍 헬퍼도 마지막 인자로 받음
+teebox.runAndWait("calc_sum", null, props, 30000L, "journey.kim");
+teebox.runAndStream("export_pdf", null, props, out, 60000L, "batch-svc");
 ```
+
+> **제출자 id(선택)**: 5-인자 `submitRun(scriptId, version, props, callbackUrl, userId)`(그리고 `runAndWait(..., timeoutMs, userId)` / `runAndStream(..., timeoutMs, userId)` 오버로드)는 **`userId`** 를 붙입니다 — **`X-TeeBox-User`** 요청 헤더로 전송되고 TeeBox 가 run 에 `submittedBy` 로 기록합니다. admin **Runs 목록**("By" 컬럼)과 **run 상세 페이지**("Submitted By")에서 운영자에게 표시되고, run 상태/요약/결과 응답에 `submittedBy` 로 반환됩니다. `userId` 는 **null 허용**(`null` = 익명, 헤더 미전송)이며, **표시/감사용 메타데이터일 뿐 인증이 아닙니다**(API 접근 제어는 여전히 토큰이 담당; 서버가 값을 정제하고 128자로 제한). 서버는 호출자 IP(`submittedFrom`, 상세 페이지에 운영자에게 표시)도 별도로 기록하며 이는 클라이언트가 보내지 않습니다. 제출자 id 만 쓰고 webhook 은 원치 않으면 `callbackUrl = null` 로 넘기세요.
 
 > **Webhook 콜백(선택)**: 4-인자 `submitRun(scriptId, version, props, callbackUrl)` 은 **run 종료 시 TeeBox 가 `callbackUrl` 로 JSON 요약을 POST** 하도록 요청합니다 — 2xx 받을 때까지 내구적으로 재시도하므로 폴링이 필요 없고, 수신 서버가 잠깐 다운돼도 복구 후 받습니다. 서버에 webhook 이 활성화되어 있고 URL host 가 allowlist 에 있어야 하며, 아니면 예외(HTTP 400)입니다. POST 본문은 `{event, runId, scriptId, version, status, endedAt, errorMessage, resultSummary, published}` 이고 `X-TeeBox-Delivery: <runId>` 헤더가 붙습니다 — 전달은 at-least-once 이므로 **수신자를 `runId` 기준 멱등**하게 만드세요. 서버 설정은 운영 가이드 "Run 종료 Webhook" 참고.
 
@@ -307,6 +315,7 @@ teebox.submitRun("nightly_export", null, props, "https://app.internal/teebox/cal
   "scriptId": "calc_sum",
   "version": "1",                // 실제로 선택된 버전(활성 버전)
   "status": "QUEUED",            // 또는 동시 실행 제한 시 PENDING — 아직 실행 전
+  "submittedBy": "journey.kim",  // 넘긴 userId (익명이면 null/부재)
   "createdAt": 1781670784465,
   "hasExplicitReturn": false
 }
@@ -372,6 +381,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // 외부 SHELL
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",            // QUEUED/PENDING/RUNNING/COMPLETED/FAILED/SERVER_RESTARTED
+  "submittedBy": "journey.kim",     // 제출 시 넘긴 userId (익명이면 null/부재)
   "createdAt": 1781670784465,       // 제출 시각
   "startedAt": 1781670784470,       // 실행 시작(시작 전이면 없음)
   "endedAt": 1781670784481,         // 종료(종료 전이면 없음)
@@ -393,6 +403,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // 외부 SHELL
   "scriptId": "slow",
   "version": "1",
   "status": "RUNNING",
+  "submittedBy": "journey.kim",
   "createdAt": 1781701628141,
   "startedAt": 1781701628142,
   "hasExplicitReturn": false
@@ -404,6 +415,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // 외부 SHELL
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",
+  "submittedBy": "journey.kim",
   "createdAt": 1781671746278,
   "startedAt": 1781671746282,
   "endedAt": 1781671746293,
@@ -728,8 +740,8 @@ try {
 | `getRunTaskStderrLines(runId)` `[, maxTaskLines]` | `List<String>` | 병합된 `SHELL` 태스크 stderr 줄 목록 |
 | `streamRunResult(runId, OutputStream)` | `long`(바이트) | `STREAM_FILE` 결과를 OutputStream으로 스트리밍(대용량용; 호출자가 stream을 닫음). 스트림 결과 아니면 `IOException`(409) |
 | `waitForRunTerminal(runId, timeoutMs)` | `Map`(상태) | 종료까지 클라이언트 측 폴링(50ms→1s 백오프). 초과 시 `IOException` |
-| `runAndWait(scriptId, version, props, timeoutMs)` | `Map`(결과) | 제출→대기→결과. 비-`COMPLETED`/타임아웃 시 `IOException` |
-| `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` | `long`(바이트) | `STREAM_FILE` 스크립트 전용: 제출→대기→스트림 한 번에. submit 이후 실패는 `RunStreamException`(`getRunId()`로 runId 회수) |
+| `runAndWait(scriptId, version, props, timeoutMs)` `[, userId]` | `Map`(결과) | 제출→대기→결과. 비-`COMPLETED`/타임아웃 시 `IOException`. 마지막 `userId`(null 허용) = `X-TeeBox-User` 제출자 id |
+| `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` `[, userId]` | `long`(바이트) | `STREAM_FILE` 스크립트 전용: 제출→대기→스트림 한 번에. submit 이후 실패는 `RunStreamException`(`getRunId()`로 runId 회수). 마지막 `userId`(null 허용) = `X-TeeBox-User` 제출자 id |
 | `waitForPublished(runId, key, timeoutMs)` | `Object` | `published[key]` 가 나타날 때까지 폴링해 그 값 반환(§8) |
 
 ### JSON 유틸 (선택)

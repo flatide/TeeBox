@@ -291,7 +291,15 @@ teebox.submitRun("calc_sum", "1", props);
 
 // With a run-terminal webhook callback (instead of polling)
 teebox.submitRun("nightly_export", null, props, "https://app.internal/teebox/callback");
+
+// With a submitter id — recorded on the run and shown to operators
+teebox.submitRun("nightly_export", null, props, null, "journey.kim");
+// The polling/streaming helpers take it as a trailing argument too
+teebox.runAndWait("calc_sum", null, props, 30000L, "journey.kim");
+teebox.runAndStream("export_pdf", null, props, out, 60000L, "batch-svc");
 ```
+
+> **Submitter id (optional)**: the 5-arg `submitRun(scriptId, version, props, callbackUrl, userId)` (and the `runAndWait(..., timeoutMs, userId)` / `runAndStream(..., timeoutMs, userId)` overloads) attaches a **`userId`** — sent as the **`X-TeeBox-User`** request header, which TeeBox records on the run as `submittedBy`. It surfaces to operators on the admin **Runs list** (a "By" column) and the **run detail page** ("Submitted By"), and is returned as `submittedBy` in run status/summary/result responses. `userId` is **nullable** (`null` = anonymous, no header sent), and it is **display/audit metadata only — not authentication** (API access is still governed by your tokens; the server sanitizes the value and caps it at 128 chars). The server additionally records the caller's IP (`submittedFrom`, shown to operators on the run detail page); you don't send it. Pass `callbackUrl = null` if you want a submitter id but no webhook.
 
 > **Webhook callback (optional)**: the 4-arg `submitRun(scriptId, version, props, callbackUrl)` asks TeeBox to **POST a JSON summary to `callbackUrl` when the run finishes**, retrying durably until a 2xx — so you don't have to poll, and a briefly-down receiver still gets it after recovery. The server must have webhooks enabled and the URL host on its allowlist, otherwise this throws (HTTP 400). The POST body is `{event, runId, scriptId, version, status, endedAt, errorMessage, resultSummary, published}` with an `X-TeeBox-Delivery: <runId>` header; **make the receiver idempotent on `runId`** (delivery is at-least-once). See the operations guide "Run-Terminal Webhooks" for server setup.
 
@@ -307,6 +315,7 @@ teebox.submitRun("nightly_export", null, props, "https://app.internal/teebox/cal
   "scriptId": "calc_sum",
   "version": "1",                // the version actually selected (the active version)
   "status": "QUEUED",            // or PENDING when the concurrent-run limit is hit — not yet running
+  "submittedBy": "journey.kim",  // the userId you passed (null/absent when anonymous)
   "createdAt": 1781670784465,
   "hasExplicitReturn": false
 }
@@ -372,6 +381,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // external SHE
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",            // QUEUED/PENDING/RUNNING/COMPLETED/FAILED/SERVER_RESTARTED
+  "submittedBy": "journey.kim",     // the userId passed at submit (null/absent when anonymous)
   "createdAt": 1781670784465,       // submit time
   "startedAt": 1781670784470,       // execution start (absent before it starts)
   "endedAt": 1781670784481,         // termination (absent before it ends)
@@ -393,6 +403,7 @@ Almost the same as `getRun` but **without `resultSummary`** (status/timestamps f
   "scriptId": "slow",
   "version": "1",
   "status": "RUNNING",
+  "submittedBy": "journey.kim",
   "createdAt": 1781701628141,
   "startedAt": 1781701628142,
   "hasExplicitReturn": false
@@ -404,6 +415,7 @@ Almost the same as `getRun` but **without `resultSummary`** (status/timestamps f
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",
+  "submittedBy": "journey.kim",
   "createdAt": 1781671746278,
   "startedAt": 1781671746282,
   "endedAt": 1781671746293,
@@ -729,8 +741,8 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `getRunTaskStderrLines(runId)` `[, maxTaskLines]` | `List<String>` | merged `SHELL` task stderr lines |
 | `streamRunResult(runId, OutputStream)` | `long`(bytes) | Stream a `STREAM_FILE` result to an OutputStream (for large data; the caller closes the stream). `IOException`(409) if not a stream result |
 | `waitForRunTerminal(runId, timeoutMs)` | `Map`(status) | Client-side poll until termination (50ms→1s backoff). `IOException` on exceeding the timeout |
-| `runAndWait(scriptId, version, props, timeoutMs)` | `Map`(result) | Submit→wait→result. `IOException` on non-`COMPLETED`/timeout |
-| `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` | `long`(bytes) | `STREAM_FILE` scripts only: submit→wait→stream in one call. Failures after submit are `RunStreamException` (recover runId via `getRunId()`) |
+| `runAndWait(scriptId, version, props, timeoutMs)` `[, userId]` | `Map`(result) | Submit→wait→result. `IOException` on non-`COMPLETED`/timeout. Optional trailing `userId` (nullable) = the `X-TeeBox-User` submitter id |
+| `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` `[, userId]` | `long`(bytes) | `STREAM_FILE` scripts only: submit→wait→stream in one call. Failures after submit are `RunStreamException` (recover runId via `getRunId()`). Optional trailing `userId` (nullable) = the `X-TeeBox-User` submitter id |
 | `waitForPublished(runId, key, timeoutMs)` | `Object` | Poll until `published[key]` appears and return that value (§8) |
 
 ### JSON utilities (optional)
