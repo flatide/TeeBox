@@ -2,6 +2,22 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.12.0
+
+- **Adopts the spec v0.14.0 reference runtime** (`propertee2-java` 0.11.0, composite-built — the
+  last v1.0-gate item). No host code change; the observable effect is in **run output number
+  rendering**. `PRINT` / task-line output now renders numbers per **ECMA-262** (via the engine's
+  display formatter): divergent-band decimals print plain instead of leaking Java scientific
+  notation — `0.0001` (was `1.0E-4`), `15000000.5` (was `1.50000005E7`), `6000000000` (was
+  `6.0E9`). Everyday values (integers, small decimals, timestamps) are unchanged.
+  - The **result envelope / `resultData` JSON is unaffected** — it is serialized host-side via Gson
+    (with the engine `JsonParser` disk round-trip), not the engine's display formatter, so the
+    machine-facing result contract is byte-stable.
+  - Other v0.14.0 changes do not surface in TeeBox: **nominal number identity** is a no-op (the
+    reference already behaved this way), and **load-time rejection of blocked constructs** does not
+    apply because TeeBox configures no hidden keywords / ignored functions.
+- Full suite green (187) on the new engine.
+
 ## 1.11.2
 
 - **Runs now record the caller's IP address at submit time** (`submittedFrom`), for both API and
