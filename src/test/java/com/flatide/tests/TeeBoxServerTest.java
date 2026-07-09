@@ -327,6 +327,41 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void scriptsListShouldShowInstantTagForImmediateScripts() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("plain_calc", "v1", "return {\"n\": 1}\n",
+                "normal", Arrays.asList("test"), true);
+            client.registerScript("quick_ping", "v1", "return {\"pong\": true}\n",
+                "instant", Arrays.asList("test"), true);
+            Map<String, Object> settings = new LinkedHashMap<String, Object>();
+            settings.put("maxConcurrentRuns", Double.valueOf(0));
+            settings.put("immediate", Boolean.TRUE);
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/quick_ping/settings", "PUT", settings, null, 200);
+
+            // The Script ID cell carries the instant tag for immediate scripts only.
+            String page = getHtml(testServer.baseUrl + "/admin/scripts", 200);
+            String instantRow = tableRow(page, "quick_ping");
+            Assert.assertTrue("instant tag inside the Script ID cell",
+                instantRow.substring(0, instantRow.indexOf("</td>")).contains(">instant</span>"));
+            String normalRow = tableRow(page, "plain_calc");
+            Assert.assertFalse("no instant tag on a non-immediate script", normalRow.contains(">instant</span>"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    /** The scripts-table row (up to its closing tag) whose script link contains the given id. */
+    private static String tableRow(String page, String scriptId) {
+        int start = page.indexOf("scripts/" + scriptId);
+        Assert.assertTrue("row for " + scriptId + " present", start >= 0);
+        int end = page.indexOf("</tr>", start);
+        Assert.assertTrue(end > start);
+        return page.substring(start, end);
+    }
+
+    @Test
     public void clientRunAndWaitShouldReturnResultSynchronously() throws Exception {
         TestServer testServer = createServer();
         try {

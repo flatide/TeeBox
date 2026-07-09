@@ -805,7 +805,13 @@ public class AdminPageRenderer {
             sb.append("</tr></thead><tbody>");
             for (ScriptInfo script : scripts) {
                 sb.append("<tr>");
-                sb.append("<td><a href='/admin/scripts/").append(urlPath(script.scriptId)).append("' class='mono'>").append(escape(script.scriptId)).append("</a></td>");
+                sb.append("<td><a href='/admin/scripts/").append(urlPath(script.scriptId)).append("' class='mono'>").append(escape(script.scriptId)).append("</a>");
+                // immediate is a script-level setting, so the tag sits on the script id (shown even
+                // when no version is active yet — the setting applies as soon as one is).
+                if (script.immediate) {
+                    sb.append(" <span class='tag' title='Instant run (immediate script — bypasses the global queue)'>instant</span>");
+                }
+                sb.append("</td>");
                 sb.append("<td class='dim'>").append(ownerLabel(script.owner)).append("</td>");
                 sb.append("<td>");
                 if (script.activeVersion != null && script.activeVersion.length() > 0) {
