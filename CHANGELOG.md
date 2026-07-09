@@ -2,6 +2,22 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.12.1
+
+- **Windows: run saves no longer fail on transient file locks.** On Windows, external scanners
+  (antivirus real-time protection, the search indexer) briefly hold freshly written files, and the
+  run-file save's tmp → final rename over a held file fails with a sharing violation — surfacing as
+  `Failed to save run ...: being used by another process` and failing the run (seen in the field
+  under repeated instant runs; POSIX renames over open files, so macOS/Linux never showed it). The
+  store now retries the rename with a short backoff (5 attempts, 20/40/80/160 ms) before giving up,
+  covering both the per-run file and `index.json`; a retry that succeeds logs a WARN. If the error
+  persists on a Windows host, check that only one TeeBox instance points at the `dataDir`, and
+  consider excluding it from real-time antivirus scanning.
+- **Scripts list shows which scripts are instant.** The admin Scripts list tags the Script ID with
+  the same `instant` badge the Runs list uses when the script is `immediate=true` (shown whether or
+  not a version is active yet — the setting applies as soon as one is). Previously you had to open
+  each script's settings to see it.
+
 ## 1.12.0
 
 - **Adopts the spec v0.15.0 reference runtime** (`propertee2-java` 0.12.0, composite-built — the
