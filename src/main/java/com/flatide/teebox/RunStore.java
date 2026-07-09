@@ -333,7 +333,40 @@ public class RunStore {
         }
     }
 
+    // On Windows an external scanner (antivirus real-time protection, the search indexer) briefly
+    // holds freshly written files, and replacing a held file fails with a sharing violation
+    // ("the process cannot access the file because it is being used by another process") — POSIX
+    // renames over open files, so this never shows elsewhere. The hold is transient (typically
+    // milliseconds), so retry with a short backoff before giving up: 5 attempts, 20/40/80/160 ms.
+    private static final int MOVE_ATTEMPTS = 5;
+    private static final long MOVE_RETRY_BASE_DELAY_MS = 20;
+
     private void moveAtomically(Path source, Path target) throws IOException {
+        long delayMs = MOVE_RETRY_BASE_DELAY_MS;
+        for (int attempt = 1; ; attempt++) {
+            try {
+                moveOnce(source, target);
+                if (attempt > 1) {
+                    TeeBoxLog.warn("RunStore", "Move of " + target.getFileName()
+                        + " succeeded after " + attempt + " attempts (file was transiently held)");
+                }
+                return;
+            } catch (IOException e) {
+                if (attempt >= MOVE_ATTEMPTS) {
+                    throw e;
+                }
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+                delayMs *= 2;
+            }
+        }
+    }
+
+    private void moveOnce(Path source, Path target) throws IOException {
         try {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (AtomicMoveNotSupportedException e) {

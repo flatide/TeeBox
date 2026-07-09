@@ -98,6 +98,36 @@ public class RunStoreTest {
         Assert.assertNull(reloaded.load("no_value").resultData);
     }
 
+    /**
+     * On Windows an external scanner (antivirus, search indexer) can transiently hold a just-written
+     * run file, failing the tmp -> final rename with a sharing violation ("Failed to save run ...:
+     * being used by another process"). The store must retry the move with backoff before giving up.
+     * A held target cannot be simulated on POSIX, so a move that always fails (nonexistent source)
+     * stands in: the retries are observed as elapsed backoff time, and the last failure propagates.
+     */
+    @Test
+    public void failingMoveIsRetriedWithBackoffBeforeGivingUp() throws Exception {
+        File dataDir = tempDir();
+        RunStore store = new RunStore(dataDir);
+        java.lang.reflect.Method move = RunStore.class.getDeclaredMethod(
+                "moveAtomically", java.nio.file.Path.class, java.nio.file.Path.class);
+        move.setAccessible(true);
+        File runsDir = new File(dataDir, "runs");
+        long start = System.nanoTime();
+        try {
+            move.invoke(store,
+                    new File(runsDir, "missing.json.tmp").toPath(),
+                    new File(runsDir, "missing.json").toPath());
+            Assert.fail("move of a nonexistent source must fail");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Assert.assertTrue("the last IOException propagates",
+                    e.getCause() instanceof java.io.IOException);
+        }
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+        Assert.assertTrue("backoff sleeps (20+40+80+160ms) ran before the final failure, got "
+                + elapsedMs + "ms", elapsedMs >= 290);
+    }
+
     /** Files written before the adapter existed carry {} where null was — they must still load. */
     @Test
     public void legacyFileWithCollapsedNullStillLoads() throws Exception {
