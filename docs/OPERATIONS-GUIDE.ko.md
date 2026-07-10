@@ -331,6 +331,32 @@ propertee.teebox.webhookUrlAllowlist=app.internal,app.internal:8443
    - 백그라운드 maintenance (60초마다)가 보존 기간 경과한 스크립트를 영구 제거
    - 스크립트 디렉터리와 모든 버전 삭제
 
+### 버전 삭제
+
+개별 버전은 hard delete 됩니다 — Versions 테이블의 비활성 행 **Delete** 버튼, 또는
+`DELETE /api/publisher/scripts/{id}/versions/{version}`:
+
+- **active 버전은 보호됨** — 먼저 다른 버전을 활성화해야 합니다 (버전 지정 없는 클라이언트
+  run의 대상이 사라지는 것 방지).
+- 스크립트 삭제와 달리 soft-delete/복원 창이 없습니다: 버전 메타데이터와 저장된 내용이 즉시
+  제거됩니다 (UI에서는 확인 대화상자를 거침).
+- 삭제된 버전을 지정한 run 제출은 거부되며, active 버전 실행에는 영향이 없습니다.
+
+### 스크립트 복제 (지원되는 "rename" 경로)
+
+TeeBox는 의도적으로 in-place rename을 제공하지 않습니다 — 호출 계약(클라이언트가 스크립트
+id로 제출)이 깨지고 실행 중 run과 경합하기 때문입니다. 이름을 바꾸려면 복제하세요:
+
+1. **복제** — 스크립트 상세 페이지 하단의 **Duplicate Script** 카드, 또는
+   `POST /api/publisher/scripts/{id}/duplicate` (`{"newScriptId": "..."}`). 모든 버전
+   (내용 + 설명/라벨/sha256/output rules), active 버전 선택, 실행 설정을 복사하며,
+   복제본은 즉시 실행 가능합니다. Admin UI에서는 복제한 사용자가 복제본의 owner가 됩니다.
+2. **호출자를 새 id로 전환.**
+3. **트래픽이 옮겨진 뒤 구 스크립트 삭제.** run 히스토리는 원본에 남습니다 — 과거 run은
+   옛 스크립트 id를 유지합니다.
+
+대상 id 충돌, 미존재 소스, soft-delete된 소스는 명시적 에러로 거부됩니다.
+
 ---
 
 ## 4. 프로세스 관리
@@ -348,6 +374,9 @@ TeeBox (Java)
 - Linux/macOS에서는 `UnixTaskRunner`가 `/bin/sh` 기반으로 task를 실행
 - `setsid`가 있으면 별도 process group 격리를 시도
 - Windows는 실제 외부 실행 대신 simulated task runner 사용
+- task 엔진 하나를 **모든 동시 run이 공유**하며 수명은 서버가 소유합니다: run이 끝나도 엔진을
+  닫지 않으므로(run마다 non-closing view 제공), 무관한 run의 종료가 다른 run의 진행 중
+  `SHELL()` task에 영향을 주지 않습니다.
 
 ### Task Kill
 

@@ -314,6 +314,33 @@ Scripts use soft-delete with a retention period:
    - Background maintenance (every 60s) permanently removes scripts past retention
    - Deletes the script directory and all versions
 
+### Version Deletion
+
+Individual versions can be hard-deleted — the **Delete** button on inactive rows of the Versions
+table, or `DELETE /api/publisher/scripts/{id}/versions/{version}`:
+
+- The **active version is protected** — set another version active first (a client run with no
+  pinned version must never lose its target).
+- Unlike script deletion there is no soft-delete/restore window: the version's metadata and stored
+  content are removed immediately (the UI asks for confirmation).
+- A run pinned to a deleted version is refused at submit; the active version keeps running.
+
+### Script Duplication (the supported "rename" path)
+
+TeeBox deliberately has no in-place rename — it would break the caller contract (clients submit by
+script id) and race in-flight runs. To rename, duplicate instead:
+
+1. **Duplicate** — the **Duplicate Script** card at the bottom of the script detail page, or
+   `POST /api/publisher/scripts/{id}/duplicate` with `{"newScriptId": "..."}`. Copies every version
+   (content + description/labels/sha256/output rules), the active-version choice, and the execution
+   settings; the copy is immediately runnable. In the admin UI the duplicating user becomes the
+   copy's owner.
+2. **Point callers at the new id.**
+3. **Delete the old script** once traffic has moved. Run history stays with the source — historical
+   runs keep the old script id.
+
+Target-id collisions, unknown sources, and soft-deleted sources are rejected with explicit errors.
+
 ---
 
 ## 4. Process Management
@@ -331,6 +358,9 @@ TeeBox (Java)
 - On Linux/macOS, `UnixTaskRunner` executes tasks through `/bin/sh`.
 - When `setsid` is available, a separate process group is used for isolation.
 - On Windows, a simulated task runner is used instead of real external execution.
+- One task engine is shared by **all concurrent runs** and its lifecycle belongs to the server: a
+  finishing run never closes it (each run gets a non-closing view), so other runs' in-flight
+  `SHELL()` tasks are unaffected by unrelated runs completing.
 
 ### Task Kill
 

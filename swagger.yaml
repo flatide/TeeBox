@@ -657,6 +657,71 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
+  /api/publisher/scripts/{scriptId}/versions/{version}:
+    delete:
+      tags: [Publisher]
+      summary: Delete one script version (hard delete)
+      description: >-
+        Removes the version's metadata entry and its stored content. The active version is
+        protected — activate another version first. Unlike script delete there is no
+        soft-delete/restore window.
+      operationId: publisherDeleteVersion
+      security:
+        - PublisherToken: []
+      parameters:
+        - $ref: '#/components/parameters/ScriptId'
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Version deleted; updated script info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInfo'
+        '400':
+          description: Active version, unknown version, or unknown script
+        '404':
+          description: Malformed path
+
+  /api/publisher/scripts/{scriptId}/duplicate:
+    post:
+      tags: [Publisher]
+      summary: Duplicate a script to a new id
+      description: >-
+        Copies every version (content and metadata), the active-version choice, and the execution
+        settings to a new script id. The copy is immediately runnable. This is the supported
+        "rename" path — duplicate, point callers at the new id, then delete the old script; run
+        history stays with the source.
+      operationId: publisherDuplicateScript
+      security:
+        - PublisherToken: []
+      parameters:
+        - $ref: '#/components/parameters/ScriptId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newScriptId]
+              properties:
+                newScriptId:
+                  type: string
+                  description: Target script id ([A-Za-z0-9._-])
+      responses:
+        '201':
+          description: Script duplicated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInfo'
+        '400':
+          description: Target id already exists, source unknown, or source is soft-deleted
+
   /api/publisher/scripts/{scriptId}/activate:
     post:
       tags: [Publisher]

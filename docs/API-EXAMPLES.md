@@ -96,7 +96,30 @@ curl -X POST $HOST/api/publisher/scripts/hello/activate \
   -d '{"version": "v1"}'
 ```
 
-### 1.7 실행 설정 변경
+### 1.7 특정 버전 삭제 (hard delete)
+
+active 버전은 보호됨 — 먼저 다른 버전을 활성화해야 함. 스크립트 삭제와 달리 복원 창이 없음.
+
+```bash
+curl -X DELETE $HOST/api/publisher/scripts/hello/versions/v1
+# → 200 + 갱신된 ScriptInfo
+# active 버전이면: 400 {"error": "Cannot delete the active version: hello@v1 (set another version active first)"}
+```
+
+### 1.8 스크립트 복제 (duplicate — 지원되는 "rename" 경로)
+
+모든 버전(내용+메타데이터), active 버전 선택, 실행 설정을 새 id로 복사. 복제본은 즉시 실행 가능.
+이름 변경 절차: 복제 → 호출자를 새 id로 전환 → 구 스크립트 삭제 (run 히스토리는 원본에 남음).
+
+```bash
+curl -X POST $HOST/api/publisher/scripts/hello/duplicate \
+  -H 'Content-Type: application/json' \
+  -d '{"newScriptId": "hello_v2"}'
+# → 201 + 새 ScriptInfo
+# 대상 id가 이미 있으면: 400 {"error": "Script already exists: hello_v2"}
+```
+
+### 1.9 실행 설정 변경
 
 ```bash
 curl -X PUT $HOST/api/publisher/scripts/hello/settings \
@@ -107,13 +130,13 @@ curl -X PUT $HOST/api/publisher/scripts/hello/settings \
   }'
 ```
 
-### 1.8 스크립트 삭제 (soft-delete)
+### 1.10 스크립트 삭제 (soft-delete)
 
 ```bash
 curl -X DELETE $HOST/api/publisher/scripts/hello
 ```
 
-### 1.9 삭제 복원
+### 1.11 삭제 복원
 
 ```bash
 curl -X POST $HOST/api/publisher/scripts/hello/restore
