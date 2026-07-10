@@ -1008,6 +1008,10 @@ public class AdminPageRenderer {
                         sb.append(" <form method='post' action='/admin/scripts/activate/").append(urlPath(scriptId)).append("' style='display:inline'>");
                         sb.append("<input type='hidden' name='version' value='").append(escape(version.version)).append("'/>");
                         sb.append("<button type='submit' class='btn btn-sm'>Set active</button></form>");
+                        // The active version is protected server-side, so only inactive rows offer Delete.
+                        sb.append(" <form method='post' action='/admin/scripts/delete-version/").append(urlPath(scriptId)).append("' style='display:inline' onsubmit='return confirm(\"Delete version ").append(escape(scriptId).replace("'", "\\'")).append("@").append(escape(version.version).replace("'", "\\'")).append("? This cannot be undone.\")'>");
+                        sb.append("<input type='hidden' name='version' value='").append(escape(version.version)).append("'/>");
+                        sb.append("<button type='submit' class='btn-danger btn-sm'>Delete</button></form>");
                     }
                     sb.append("</td>");
                 }

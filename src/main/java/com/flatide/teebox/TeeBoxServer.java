@@ -334,6 +334,25 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
                     return;
                 }
+                if ("POST".equals(method) && path.startsWith("/admin/scripts/delete-version/")) {
+                    String scriptId = path.substring("/admin/scripts/delete-version/".length());
+                    if (scriptId.length() == 0) {
+                        throw new IllegalArgumentException("Script ID is required");
+                    }
+                    if (!canModifyScript(session, scriptId)) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    Map<String, String> form = parseForm(exchange);
+                    String version = form.get("version");
+                    if (version == null || version.trim().length() == 0) {
+                        throw new IllegalArgumentException("Version is required");
+                    }
+                    runManager.deleteScriptVersion(scriptId, version.trim());
+                    // Back to the plain detail page — the deleted version may have been the selected one.
+                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
+                    return;
+                }
                 if ("POST".equals(method) && "/admin/shutdown".equals(path)) {
                     if (!isAdmin(session)) {
                         forbidden(exchange);
@@ -995,6 +1014,22 @@ public class TeeBoxServer {
             } else {
                 writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Script not found or not deleted"));
             }
+            return;
+        }
+        // DELETE /api/publisher/scripts/{scriptId}/versions/{version} — hard-deletes one version
+        // (400 for the active version; set another active first). Must precede the whole-script
+        // DELETE below, whose no-slash guard would 404 this path.
+        if ("DELETE".equals(method) && path.startsWith("/api/publisher/scripts/") && path.contains("/versions/")) {
+            String rest = path.substring("/api/publisher/scripts/".length());
+            int split = rest.indexOf("/versions/");
+            String scriptId = rest.substring(0, split);
+            String version = rest.substring(split + "/versions/".length());
+            if (scriptId.length() == 0 || version.length() == 0 || version.contains("/")) {
+                writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Not found"));
+                return;
+            }
+            ScriptInfo info = runManager.deleteScriptVersion(scriptId, version);
+            writeJson(exchange, HttpURLConnection.HTTP_OK, info);
             return;
         }
         // DELETE /api/publisher/scripts/{scriptId}

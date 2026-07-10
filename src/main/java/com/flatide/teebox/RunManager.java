@@ -290,6 +290,10 @@ public class RunManager {
         return scriptRegistry.restoreScript(scriptId);
     }
 
+    public ScriptInfo deleteScriptVersion(String scriptId, String version) {
+        return scriptRegistry.deleteVersion(scriptId, version);
+    }
+
     /** Register an additional maintenance task to run on every maintenance cycle. */
     public void addMaintenanceTask(Runnable task) {
         if (task != null) {

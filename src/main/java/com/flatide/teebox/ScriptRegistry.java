@@ -245,6 +245,36 @@ public class ScriptRegistry {
         return info.copy();
     }
 
+    /**
+     * Hard-delete one version: its metadata entry and its {@code .tee} file. The active version is
+     * protected — a client run of {@code scriptId} with no explicit version must never lose its
+     * target out from under it; set another version active (or delete the whole script) first.
+     * Unlike script delete there is no soft-delete/restore window: version curation is an explicit,
+     * confirmed operator action and the remaining versions are untouched.
+     */
+    public synchronized ScriptInfo deleteVersion(String scriptId, String version) {
+        ScriptInfo info = requireScript(scriptId);
+        validateName("version", version);
+        ScriptVersionInfo versionInfo = findVersion(info, version);
+        if (versionInfo == null) {
+            throw new IllegalArgumentException("Unknown script version: " + scriptId + "@" + version);
+        }
+        if (version.equals(info.activeVersion)) {
+            throw new IllegalArgumentException("Cannot delete the active version: " + scriptId + "@" + version
+                    + " (set another version active first)");
+        }
+        info.versions.remove(versionInfo);
+        File scriptFile = scriptVersionFile(scriptId, version);
+        if (scriptFile.isFile() && !scriptFile.delete()) {
+            // Metadata is authoritative; an orphaned file is harmless and a re-registered
+            // same-name version overwrites it.
+            TeeBoxLog.warn("ScriptRegistry", "Could not delete version file: " + scriptFile.getAbsolutePath());
+        }
+        info.updatedAt = System.currentTimeMillis();
+        saveScript(info);
+        return info.copy();
+    }
+
     public synchronized ResolvedScript resolve(String scriptId, String version) {
         ScriptInfo info = requireScript(scriptId);
         if (info.deletedAt > 0) {

@@ -352,6 +352,69 @@ public class TeeBoxServerTest {
         }
     }
 
+    @Test
+    public void scriptVersionCanBeDeletedButNotTheActiveOne() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("ver_del", "v1", "return {\"n\": 1}\n", "one", Arrays.asList("test"), true);
+            client.registerScript("ver_del", "v2", "return {\"n\": 2}\n", "two", Arrays.asList("test"), false);
+
+            // The active version is protected (explicit 400, not a silent no-op), and unknown
+            // versions error rather than 200-with-nothing-deleted.
+            Map<String, Object> active = deleteJson(testServer.baseUrl + "/api/publisher/scripts/ver_del/versions/v1", 400);
+            Assert.assertTrue(String.valueOf(active.get("error")).contains("Cannot delete the active version"));
+            Map<String, Object> unknown = deleteJson(testServer.baseUrl + "/api/publisher/scripts/ver_del/versions/nope", 400);
+            Assert.assertTrue(String.valueOf(unknown.get("error")).contains("Unknown script version"));
+
+            // Deleting an inactive version drops it from the metadata; the active version survives.
+            Map<String, Object> info = deleteJson(testServer.baseUrl + "/api/publisher/scripts/ver_del/versions/v2", 200);
+            List<?> versions = (List<?>) info.get("versions");
+            Assert.assertEquals(1, versions.size());
+            Assert.assertEquals("v1", ((Map<?, ?>) versions.get(0)).get("version"));
+            Assert.assertEquals("v1", info.get("activeVersion"));
+
+            // A submit pinned to the deleted version is refused; the active version still runs.
+            Map<String, Object> payload = new LinkedHashMap<String, Object>();
+            payload.put("props", new LinkedHashMap<String, Object>());
+            payload.put("version", "v2");
+            assertStatus(testServer.baseUrl + "/api/client/scripts/ver_del/runs", "POST", payload, null, 400);
+            Map<String, Object> result = client.runAndWait("ver_del", null, new LinkedHashMap<String, Object>(), 8000L);
+            Assert.assertEquals(1.0, resultValue(result, "n"), 0.0);
+
+            // Admin UI: only inactive rows offer Delete (the active row must not), and posting the
+            // form removes the version.
+            client.registerScript("ver_del", "v3", "return {\"n\": 3}\n", "three", Arrays.asList("test"), false);
+            String page = getHtml(testServer.baseUrl + "/admin/scripts/ver_del", 200);
+            String marker = "/admin/scripts/delete-version/ver_del";
+            Assert.assertTrue("inactive row offers Delete", page.contains(marker));
+            Assert.assertEquals("exactly one Delete form (not on the active row)",
+                    page.indexOf(marker), page.lastIndexOf(marker));
+            Assert.assertEquals(302, postForm(testServer.baseUrl + "/admin/scripts/delete-version/ver_del", "version=v3", null));
+            String after = getHtml(testServer.baseUrl + "/admin/scripts/ver_del", 200);
+            Assert.assertTrue("back to one version", after.contains("Versions (1)"));
+            Assert.assertFalse("no Delete form remains", after.contains(marker));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    private Map<String, Object> deleteJson(String url, int expectedStatus) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestMethod("DELETE");
+        int status = conn.getResponseCode();
+        Assert.assertEquals(expectedStatus, status);
+        InputStream input = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
+        try {
+            return gson.fromJson(readAll(input), mapType);
+        } finally {
+            if (input != null) {
+                input.close();
+            }
+            conn.disconnect();
+        }
+    }
+
     /** The scripts-table row (up to its closing tag) whose script link contains the given id. */
     private static String tableRow(String page, String scriptId) {
         int start = page.indexOf("scripts/" + scriptId);
