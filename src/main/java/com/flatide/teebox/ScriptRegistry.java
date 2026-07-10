@@ -275,6 +275,47 @@ public class ScriptRegistry {
         return info.copy();
     }
 
+    /**
+     * Copy a script wholesale to a new id: every version's metadata and {@code .tee} content, the
+     * active-version choice, and the execution settings (concurrency limit, immediate). This is the
+     * supported "rename" path — duplicate, point callers at the new id, then delete the old script
+     * once traffic has moved. The source keeps serving (and keeps its run history) untouched, so
+     * none of the rename hazards apply (no directory move, no in-flight-run races, no broken
+     * caller contract). Run history does not follow the copy.
+     */
+    public synchronized ScriptInfo duplicateScript(String sourceId, String newId, String owner) {
+        ScriptInfo source = requireScript(sourceId);
+        if (source.deletedAt > 0) {
+            throw new IllegalArgumentException("Script is deleted: " + sourceId);
+        }
+        validateName("scriptId", newId);
+        if (loadScript(newId) != null) {
+            throw new IllegalArgumentException("Script already exists: " + newId);
+        }
+        // Version files first, script.json last: an interrupted copy leaves no meta file, so the
+        // target id stays invisible to loadScript (and reusable) rather than half-registered.
+        File versionsDir = new File(scriptDir(newId), "versions");
+        if (!versionsDir.exists() && !versionsDir.mkdirs()) {
+            throw new IllegalStateException("Failed to create versions directory: " + versionsDir.getAbsolutePath());
+        }
+        for (ScriptVersionInfo version : source.versions) {
+            String content = readVersionContent(sourceId, version.version);
+            if (content == null) {
+                throw new IllegalArgumentException("Script content missing for " + sourceId + "@" + version.version);
+            }
+            writeFile(new File(versionsDir, version.version + ".tee"), content);
+        }
+        long now = System.currentTimeMillis();
+        ScriptInfo copy = source.copy();
+        copy.scriptId = newId;
+        copy.createdAt = now;
+        copy.updatedAt = now;
+        copy.deletedAt = 0;
+        copy.owner = (owner != null && owner.trim().length() > 0) ? owner.trim() : null;
+        saveScript(copy);
+        return copy.copy();
+    }
+
     public synchronized ResolvedScript resolve(String scriptId, String version) {
         ScriptInfo info = requireScript(scriptId);
         if (info.deletedAt > 0) {

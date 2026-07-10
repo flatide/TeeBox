@@ -399,6 +399,59 @@ public class TeeBoxServerTest {
         }
     }
 
+    @Test
+    public void scriptCanBeDuplicatedWithAllVersionsAndSettings() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("dup_src", "v1", "return {\"n\": 1}\n", "one", Arrays.asList("test"), true);
+            client.registerScript("dup_src", "v2", "return {\"n\": 2}\n", "two", Arrays.asList("test"), false);
+            Map<String, Object> settings = new LinkedHashMap<String, Object>();
+            settings.put("maxConcurrentRuns", Double.valueOf(3));
+            settings.put("immediate", Boolean.TRUE);
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/dup_src/settings", "PUT", settings, null, 200);
+
+            // The copy carries every version, the active-version choice, and the settings.
+            Map<String, Object> payload = new LinkedHashMap<String, Object>();
+            payload.put("newScriptId", "dup_copy");
+            Map<String, Object> copy = postJson(testServer.baseUrl + "/api/publisher/scripts/dup_src/duplicate", payload, 201);
+            Assert.assertEquals("dup_copy", copy.get("scriptId"));
+            Assert.assertEquals("v1", copy.get("activeVersion"));
+            Assert.assertEquals(2, ((List<?>) copy.get("versions")).size());
+            Assert.assertEquals(3.0, ((Number) copy.get("maxConcurrentRuns")).doubleValue(), 0.0);
+            Assert.assertEquals(Boolean.TRUE, copy.get("immediate"));
+
+            // The copy is immediately runnable: the active version by default, the inactive one by pin.
+            Map<String, Object> active = client.runAndWait("dup_copy", null, new LinkedHashMap<String, Object>(), 8000L);
+            Assert.assertEquals(1.0, resultValue(active, "n"), 0.0);
+            Map<String, Object> pinned = client.runAndWait("dup_copy", "v2", new LinkedHashMap<String, Object>(), 8000L);
+            Assert.assertEquals(2.0, resultValue(pinned, "n"), 0.0);
+
+            // Target collision and unknown source are explicit errors.
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/dup_src/duplicate", "POST", payload, null, 400);
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/no_such/duplicate", "POST", payload, null, 400);
+
+            // The copy is independent of the source: deleting a version in one leaves the other intact.
+            deleteJson(testServer.baseUrl + "/api/publisher/scripts/dup_copy/versions/v2", 200);
+            Map<String, Object> src = getJsonMap(testServer.baseUrl + "/api/publisher/scripts/dup_src", 200);
+            Assert.assertEquals(2, ((List<?>) src.get("versions")).size());
+
+            // Admin UI: the detail page offers the Duplicate card; posting creates the copy.
+            String page = getHtml(testServer.baseUrl + "/admin/scripts/dup_copy", 200);
+            Assert.assertTrue("detail page offers Duplicate", page.contains("/admin/scripts/duplicate/dup_copy"));
+            Assert.assertEquals(302, postForm(testServer.baseUrl + "/admin/scripts/duplicate/dup_copy", "newScriptId=dup_ui", null));
+            String uiCopy = getHtml(testServer.baseUrl + "/admin/scripts/dup_ui", 200);
+            Assert.assertTrue("UI copy carries the remaining version", uiCopy.contains("Versions (1)"));
+
+            // A soft-deleted source cannot be duplicated (restore it first).
+            deleteJson(testServer.baseUrl + "/api/publisher/scripts/dup_src", 200);
+            payload.put("newScriptId", "dup_after_delete");
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/dup_src/duplicate", "POST", payload, null, 400);
+        } finally {
+            testServer.close();
+        }
+    }
+
     private Map<String, Object> deleteJson(String url, int expectedStatus) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setRequestMethod("DELETE");

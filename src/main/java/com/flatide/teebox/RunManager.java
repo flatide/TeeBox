@@ -294,6 +294,10 @@ public class RunManager {
         return scriptRegistry.deleteVersion(scriptId, version);
     }
 
+    public ScriptInfo duplicateScript(String sourceId, String newId, String owner) {
+        return scriptRegistry.duplicateScript(sourceId, newId, owner);
+    }
+
     /** Register an additional maintenance task to run on every maintenance cycle. */
     public void addMaintenanceTask(Runnable task) {
         if (task != null) {

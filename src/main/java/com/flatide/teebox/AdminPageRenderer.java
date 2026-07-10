@@ -1114,6 +1114,19 @@ public class AdminPageRenderer {
         sb.append("</div></form></div>");
         } // end canModify check for Run Script
 
+        // Duplicate = the supported "rename": copy everything to a new id, move callers over, then
+        // delete this script. Kept at the bottom — administrative, not part of the edit/run loop.
+        if (canModify(script) && script.deletedAt == 0) {
+            sb.append("<div class='card'>");
+            sb.append("<h2>Duplicate Script</h2>");
+            sb.append("<p class='dim' style='font-size:12px;margin:4px 0 10px;'>Copies every version, the active version, and the execution settings to a new script id. ");
+            sb.append("Run history stays with this script. To rename a script: duplicate it, point callers at the new id, then delete this one.</p>");
+            sb.append("<form method='post' action='/admin/scripts/duplicate/").append(urlPath(scriptId)).append("' class='form-row-inline' style='align-items:center;'>");
+            sb.append("<input type='text' name='newScriptId' placeholder='new_script_id' required pattern='[A-Za-z0-9._-]+' title='Letters, digits, dot, underscore, hyphen' style='max-width:260px;'/>");
+            sb.append("<button type='submit' class='btn btn-sm'>Duplicate</button>");
+            sb.append("</form></div>");
+        }
+
         sb.append(editorScript());
         sb.append(pageEnd());
         return sb.toString();

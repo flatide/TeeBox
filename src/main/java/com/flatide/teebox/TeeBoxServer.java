@@ -353,6 +353,27 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
                     return;
                 }
+                if ("POST".equals(method) && path.startsWith("/admin/scripts/duplicate/")) {
+                    String scriptId = path.substring("/admin/scripts/duplicate/".length());
+                    if (scriptId.length() == 0) {
+                        throw new IllegalArgumentException("Script ID is required");
+                    }
+                    // Duplicating copies the source's content, so it takes the same right as
+                    // reading/editing it; the duplicator becomes the copy's owner.
+                    if (!canModifyScript(session, scriptId)) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    Map<String, String> form = parseForm(exchange);
+                    String newScriptId = form.get("newScriptId");
+                    if (newScriptId == null || newScriptId.trim().length() == 0) {
+                        throw new IllegalArgumentException("New script ID is required");
+                    }
+                    String owner = session != null ? session.username : null;
+                    ScriptInfo copy = runManager.duplicateScript(scriptId, newScriptId.trim(), owner);
+                    redirect(exchange, "/admin/scripts/" + urlPath(copy.scriptId));
+                    return;
+                }
                 if ("POST".equals(method) && "/admin/shutdown".equals(path)) {
                     if (!isAdmin(session)) {
                         forbidden(exchange);
@@ -957,7 +978,7 @@ public class TeeBoxServer {
         }
         if ("GET".equals(method) && path.startsWith("/api/publisher/scripts/")) {
             String scriptId = path.substring("/api/publisher/scripts/".length());
-            if (scriptId.endsWith("/activate") || scriptId.endsWith("/versions")) {
+            if (scriptId.endsWith("/activate") || scriptId.endsWith("/versions") || scriptId.endsWith("/duplicate")) {
                 writeJson(exchange, HttpURLConnection.HTTP_BAD_METHOD, errorMap("Use POST"));
                 return;
             }
@@ -991,6 +1012,20 @@ public class TeeBoxServer {
             }
             ScriptInfo info = runManager.activateScriptVersion(scriptId, ((String) version).trim());
             writeJson(exchange, HttpURLConnection.HTTP_OK, info);
+            return;
+        }
+        // POST /api/publisher/scripts/{scriptId}/duplicate — copy all versions, the active-version
+        // choice, and execution settings to a new id (the supported "rename" path; run history
+        // stays with the source). 400 if the target id exists or the source is deleted.
+        if ("POST".equals(method) && path.startsWith("/api/publisher/scripts/") && path.endsWith("/duplicate")) {
+            String scriptId = path.substring("/api/publisher/scripts/".length(), path.length() - "/duplicate".length());
+            Map<String, Object> raw = parseJsonBody(exchange);
+            Object newId = raw.get("newScriptId");
+            if (!(newId instanceof String) || ((String) newId).trim().length() == 0) {
+                throw new IllegalArgumentException("newScriptId is required");
+            }
+            ScriptInfo info = runManager.duplicateScript(scriptId, ((String) newId).trim(), null);
+            writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
         // PUT /api/publisher/scripts/{scriptId}/settings
