@@ -282,7 +282,9 @@ public class TeeBoxServer {
                     // brand-new script — a content-less register against an existing script is an error.
                     if (content == null || content.trim().length() == 0) {
                         if (runManager.getScript(scriptId.trim()) != null) {
-                            throw new IllegalArgumentException("Script content is required");
+                            // The register modal is metadata-only, so the operator's mistake here is
+                            // the duplicate id — say that, not "content is required".
+                            throw new IllegalArgumentException("Script already exists: " + scriptId.trim());
                         }
                         String shellOwner = session != null ? session.username : null;
                         runManager.createScript(scriptId.trim(), shellOwner);

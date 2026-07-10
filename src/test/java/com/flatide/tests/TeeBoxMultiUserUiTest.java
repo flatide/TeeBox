@@ -262,9 +262,14 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("shell can save-as-new-version", shell.contains("Save as new version"));
             Assert.assertFalse("shell has nothing to overwrite (no Save button)", shell.contains("Overwrite version"));
 
-            // Content-less register against an EXISTING script is an error (not another shell).
-            Assert.assertEquals("re-register with no content is rejected", 400,
-                    postForm(base, "/admin/scripts/register", "scriptId=shell_script", alice));
+            // Content-less register against an EXISTING script is an error (not another shell),
+            // and the error names the real mistake — the duplicate id, not missing content.
+            String[] reRegister = postFormWithBody(base, "/admin/scripts/register", "scriptId=shell_script", alice);
+            Assert.assertEquals("re-register with no content is rejected", "400", reRegister[0]);
+            Assert.assertTrue("error says the script already exists",
+                    reRegister[1].contains("Script already exists: shell_script"));
+            Assert.assertFalse("error must not blame missing content",
+                    reRegister[1].contains("Script content is required"));
 
             // Add the code from the detail page. The first version must NOT auto-activate.
             assertRedirect("add first version", postForm(base, "/admin/scripts/register",
@@ -385,6 +390,37 @@ public class TeeBoxMultiUserUiTest {
             }
         }
         return null;
+    }
+
+    /** POST returning {status, responseBody} (reads the error stream on 4xx/5xx). */
+    private String[] postFormWithBody(String base, String path, String body, String cookie) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + path).openConnection();
+        conn.setInstanceFollowRedirects(false);
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        if (cookie != null) {
+            conn.setRequestProperty("Cookie", "teebox-session=" + cookie);
+        }
+        OutputStream out = conn.getOutputStream();
+        try {
+            out.write(body.getBytes("UTF-8"));
+        } finally {
+            out.close();
+        }
+        int code = conn.getResponseCode();
+        java.io.InputStream in = code < 400 ? conn.getInputStream() : conn.getErrorStream();
+        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+        if (in != null) {
+            byte[] chunk = new byte[4096];
+            int n;
+            while ((n = in.read(chunk)) != -1) {
+                buf.write(chunk, 0, n);
+            }
+            in.close();
+        }
+        conn.disconnect();
+        return new String[] {String.valueOf(code), buf.toString("UTF-8")};
     }
 
     private int postForm(String base, String path, String body, String cookie) throws IOException {
