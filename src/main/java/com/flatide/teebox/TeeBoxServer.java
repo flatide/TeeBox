@@ -261,6 +261,20 @@ public class TeeBoxServer {
                     writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderScriptsPage());
                     return;
                 }
+                if ("POST".equals(method) && "/admin/scripts/validate".equals(path)) {
+                    // Editor pre-check: parse the content with the exact parser the save paths use
+                    // and report errors as JSON instead of failing the save into an error page.
+                    // Stateless (nothing saved), so no ownership check — any logged-in user.
+                    Map<String, String> form = parseForm(exchange);
+                    List<String> errors = runManager.validateScriptContent(form.get("content"));
+                    Map<String, Object> result = new LinkedHashMap<String, Object>();
+                    result.put("ok", Boolean.valueOf(errors.isEmpty()));
+                    if (!errors.isEmpty()) {
+                        result.put("errors", errors);
+                    }
+                    writeJson(exchange, HttpURLConnection.HTTP_OK, result);
+                    return;
+                }
                 if ("POST".equals(method) && "/admin/scripts/register".equals(path)) {
                     Map<String, String> form = parseForm(exchange);
                     String scriptId = form.get("scriptId");

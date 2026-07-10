@@ -436,9 +436,24 @@ public class ScriptRegistry {
         }
     }
 
-    private void validateScript(String content) {
+    /**
+     * Parse-check content without saving anything. Returns the parser's error strings (empty =
+     * valid). Runs the exact parser the save paths reject with, so an editor pre-check can never
+     * disagree with the subsequent save.
+     */
+    public List<String> validateContent(String content) {
         List<String> errors = new ArrayList<String>();
-        if (ScriptParser.parse(content, errors) == null) {
+        if (content == null || content.trim().length() == 0) {
+            errors.add("content is required");
+            return errors;
+        }
+        ScriptParser.parse(content, errors);
+        return errors;
+    }
+
+    private void validateScript(String content) {
+        List<String> errors = validateContent(content);
+        if (!errors.isEmpty()) {
             StringBuilder sb = new StringBuilder();
             for (int i = 0; i < errors.size(); i++) {
                 if (i > 0) {

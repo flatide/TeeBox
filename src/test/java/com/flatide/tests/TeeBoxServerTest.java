@@ -468,6 +468,78 @@ public class TeeBoxServerTest {
         }
     }
 
+    @Test
+    public void editorSyntaxPreCheckValidatesWithoutSaving() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // Valid content parses clean.
+            Map<String, Object> ok = postFormJson(testServer.baseUrl + "/admin/scripts/validate",
+                    "content=" + java.net.URLEncoder.encode("return {\"n\": 1}\n", "UTF-8"));
+            Assert.assertEquals(Boolean.TRUE, ok.get("ok"));
+            Assert.assertFalse(ok.containsKey("errors"));
+
+            // A parse error reports the parser's positioned message (same parser the save rejects with).
+            Map<String, Object> bad = postFormJson(testServer.baseUrl + "/admin/scripts/validate",
+                    "content=" + java.net.URLEncoder.encode("if x then\n", "UTF-8"));
+            Assert.assertEquals(Boolean.FALSE, bad.get("ok"));
+            String badErrors = String.valueOf(bad.get("errors"));
+            Assert.assertTrue("positioned parser error: " + badErrors, badErrors.contains("Line "));
+
+            // Empty content reports the save paths' "content is required".
+            Map<String, Object> empty = postFormJson(testServer.baseUrl + "/admin/scripts/validate", "content=");
+            Assert.assertEquals(Boolean.FALSE, empty.get("ok"));
+            Assert.assertTrue(String.valueOf(empty.get("errors")).contains("content is required"));
+
+            // Builtin typos: an ALL-CAPS call outside the known set is a guaranteed call-time
+            // failure (all-uppercase names cannot be script functions — spec v0.12.0), so the
+            // pre-check reports it with a suggestion. Dead branches are scanned too.
+            Map<String, Object> typo = postFormJson(testServer.baseUrl + "/admin/scripts/validate",
+                    "content=" + java.net.URLEncoder.encode("if false then\n    PRIN(\"x\")\nend\n", "UTF-8"));
+            Assert.assertEquals(Boolean.FALSE, typo.get("ok"));
+            String typoErrors = String.valueOf(typo.get("errors"));
+            Assert.assertTrue(typoErrors, typoErrors.contains("Line 2:4 - unknown function 'PRIN'"));
+            Assert.assertTrue(typoErrors, typoErrors.contains("did you mean 'PRINT'?"));
+
+            // No false positives: catalog + interpreter-dispatched + TeeBox host builtins are all
+            // known, and lowercase calls (possible script functions, even forward references) are
+            // not checked.
+            Map<String, Object> knowns = postFormJson(testServer.baseUrl + "/admin/scripts/validate",
+                    "content=" + java.net.URLEncoder.encode(
+                        "x = helper()\nPRINT(CONTAINS([1], 1))\nd = STREAM_FILE(\"a\")\nfunction helper() do\n    return 1\nend\n", "UTF-8"));
+            Assert.assertEquals(String.valueOf(knowns.get("errors")), Boolean.TRUE, knowns.get("ok"));
+
+            // Nothing was saved by any of the checks.
+            Assert.assertEquals(0, getJsonList(testServer.baseUrl + "/api/publisher/scripts", 200).size());
+
+            // The editor page wires the pre-check: Check-syntax button, result area, submit hook.
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("syn_check", "v1", "return {\"n\": 1}\n", "s", Arrays.asList("t"), true);
+            String page = getHtml(testServer.baseUrl + "/admin/scripts/syn_check?version=v1", 200);
+            Assert.assertTrue(page.contains("id='check-syntax-btn'"));
+            Assert.assertTrue(page.contains("id='syntax-result'"));
+            Assert.assertTrue(page.contains("function ptCheckSyntax"));
+            Assert.assertTrue("save is intercepted for the pre-check",
+                    page.contains("form.addEventListener('submit'"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    private Map<String, Object> postFormJson(String url, String formBody) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        OutputStream out = conn.getOutputStream();
+        try {
+            out.write(formBody.getBytes("UTF-8"));
+        } finally {
+            out.close();
+        }
+        Assert.assertEquals(200, conn.getResponseCode());
+        return readJsonMap(conn);
+    }
+
     /** The scripts-table row (up to its closing tag) whose script link contains the given id. */
     private static String tableRow(String page, String scriptId) {
         int start = page.indexOf("scripts/" + scriptId);

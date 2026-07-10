@@ -298,6 +298,16 @@ public class RunManager {
         return scriptRegistry.duplicateScript(sourceId, newId, owner);
     }
 
+    /**
+     * Editor pre-check: parse errors plus the unknown-builtin lint (ALL-CAPS calls that no builtin,
+     * host function, or interpreter-dispatched name matches — guaranteed call-time failures). The
+     * save paths themselves validate syntax only, so a lint hit blocks the UI save but never makes
+     * the API reject scripts it previously accepted.
+     */
+    public List<String> validateScriptContent(String content) {
+        return ScriptLint.check(content, scriptExecutor.knownFunctionNames());
+    }
+
     /** Register an additional maintenance task to run on every maintenance cycle. */
     public void addMaintenanceTask(Runnable task) {
         if (task != null) {

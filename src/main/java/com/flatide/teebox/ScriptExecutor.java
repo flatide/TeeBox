@@ -34,6 +34,22 @@ public class ScriptExecutor {
         this.streamSupport = streamSupport;
     }
 
+    /**
+     * Every function name a TeeBox run can call: the engine set (interpreter dispatch + catalog)
+     * plus the TeeBox host builtins registered in {@link #execute} — keep the registrations there
+     * and the names here in step. Drives the editor's unknown-builtin lint (see ScriptLint), so
+     * the lint and the runtime can never disagree about what exists.
+     */
+    public java.util.Set<String> knownFunctionNames() {
+        BuiltinFunctions builtins = new BuiltinFunctions(null, null, null, null, platformProvider);
+        java.util.Set<String> names = new java.util.TreeSet<String>(builtins.knownFunctionNames());
+        if (streamSupport != null) {
+            names.add("STREAM_FILE");
+            names.add("THUMBNAIL");
+        }
+        return names;
+    }
+
     public ExecutionResult execute(File scriptFile,
                                    Map<String, Object> properties,
                                    int maxIterations,

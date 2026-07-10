@@ -1058,7 +1058,7 @@ public class AdminPageRenderer {
                 // to /admin/scripts/register (no version => auto next #). Only the clicked submit button
                 // contributes its name/value, so the two never collide. A shell has no version to
                 // overwrite, so it shows only "Save as new version".
-                sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid'>");
+                sb.append("<form method='post' action='/admin/scripts/update-source' class='form-grid' id='version-source-form'>");
                 sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
                 sb.append("<textarea name='content' rows='24' class='pt-editor-fallback' data-pt-editor data-pt-panel placeholder='return {\"ok\": true}'>").append(escape(content)).append("</textarea>");
                 OutputPublishRule activeRule = hasSelected ? findOutputRuleForVersion(script, selectedVersion) : null;
@@ -1077,12 +1077,18 @@ public class AdminPageRenderer {
                 sb.append("<div class='form-row-inline' style='align-items:center;'>");
                 sb.append("<input type='text' name='description' placeholder='Description (used when saving as a new version)' style='flex:1;min-width:200px;'/>");
                 sb.append("<label class='checkbox-label' title='Applies only to \"Save as new version\"'><input type='checkbox' name='activate'/> Set new version active</label>");
+                // Outlined (not gray) so it reads as an enabled secondary action, not a disabled button.
+                sb.append("<button type='button' id='check-syntax-btn' style='background:#fff;color:#2563eb;border:1px solid #2563eb;' onclick='ptCheckSyntax()' title='Check the editor content with the server parser without saving'>Check syntax</button>");
                 if (hasSelected) {
                     sb.append("<button type='submit' name='version' value='").append(escape(selectedVersion)).append("' title='Overwrite version ").append(escape(selectedVersion)).append(" in place'>Save</button>");
                 }
                 sb.append("<button type='submit' formaction='/admin/scripts/register' style='background:#334155;' title='Register the editor content as a new version (auto next #)'>Save as new version</button>");
                 sb.append("</div>");
+                // Syntax pre-check result. Saving also runs the check first and is blocked while
+                // the parser reports errors (the server-side save validation stays as the backstop).
+                sb.append("<pre id='syntax-result' style='display:none'></pre>");
                 sb.append("</form>");
+                sb.append(syntaxCheckScript());
             }
             sb.append("</div>");
         }
@@ -1418,6 +1424,8 @@ public class AdminPageRenderer {
         sb.append(".detail-item{} .detail-item .detail-label{font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;} ");
         sb.append(".detail-item .detail-value{font-size:14px;margin-top:2px;} ");
         sb.append(".callout{margin:0 0 12px 0;padding:12px 14px;border-radius:6px;background:#f8fafc;border:1px solid #e2e8f0;font-size:13px;} ");
+        sb.append(".syntax-ok{margin:8px 0 0;padding:10px 12px;border-radius:6px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-size:13px;white-space:pre-wrap;} ");
+        sb.append(".syntax-err{margin:8px 0 0;padding:10px 12px;border-radius:6px;background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;} ");
         sb.append(".callout-warn{background:#fff7ed;border-color:#fdba74;color:#9a3412;} ");
         sb.append(".nav{display:flex;gap:12px;align-items:center;margin-bottom:16px;font-size:13px;} ");
         sb.append(".nav-sep{color:#cbd5e1;} ");
@@ -1462,6 +1470,51 @@ public class AdminPageRenderer {
      *  editor CSS is small and lives in {@code pageStart} for all pages. */
     private String editorScript() {
         return "<script>" + EDITOR_JS + "</script>";
+    }
+
+    /**
+     * Syntax pre-check wiring for the version-source editor: the Check-syntax button posts the
+     * editor content to /admin/scripts/validate (the same parser the save rejects with) and renders
+     * the result under the form; Save/Save-as-new first run the same check and are blocked while it
+     * reports errors. If the pre-check itself is unreachable, saving proceeds — the server-side
+     * validation on the save paths remains the backstop, so this can only add friction, never let
+     * a bad script through.
+     */
+    private String syntaxCheckScript() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<script>");
+        sb.append("function ptCheckSyntax(done){");
+        sb.append("var form=document.getElementById('version-source-form');");
+        sb.append("var ta=form.querySelector(\"textarea[name='content']\");");
+        sb.append("var box=document.getElementById('syntax-result');");
+        sb.append("fetch('/admin/scripts/validate',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'content='+encodeURIComponent(ta.value)})");
+        sb.append(".then(function(r){return r.json();})");
+        sb.append(".then(function(d){");
+        sb.append("box.style.display='block';");
+        sb.append("if(d.ok){box.className='syntax-ok';box.textContent='No syntax errors.';}");
+        sb.append("else{box.className='syntax-err';box.textContent=(d.errors||['Unknown error']).join('\\n').trim();}");
+        sb.append("if(done)done(d.ok===true);");
+        sb.append("})");
+        sb.append(".catch(function(){box.style.display='none';if(done)done(true);});");
+        sb.append("}");
+        sb.append("(function(){");
+        sb.append("var form=document.getElementById('version-source-form');");
+        sb.append("if(!form)return;");
+        sb.append("form.addEventListener('submit',function(ev){");
+        // No ev.submitter (old browser) => skip the pre-check; the server still validates on save.
+        sb.append("if(ev.submitter===undefined)return;");
+        sb.append("if(form.dataset.syntaxOk==='1'){form.dataset.syntaxOk='';return;}");
+        sb.append("ev.preventDefault();");
+        sb.append("var submitter=ev.submitter;");
+        sb.append("ptCheckSyntax(function(ok){");
+        sb.append("if(!ok)return;");
+        sb.append("form.dataset.syntaxOk='1';");
+        sb.append("if(submitter){submitter.click();}else{form.submit();}");
+        sb.append("});");
+        sb.append("});");
+        sb.append("})();");
+        sb.append("</script>");
+        return sb.toString();
     }
 
     private String pageEnd() {
