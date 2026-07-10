@@ -204,6 +204,12 @@ public class ScriptRegistry {
     }
 
     public synchronized ScriptInfo updateVersionContent(String scriptId, String version, String content, List<OutputPublishRule> outputRules) {
+        return updateVersionContent(scriptId, version, content, outputRules, null);
+    }
+
+    /** @param description tri-state like {@code outputRules}: null = keep, "" = clear, text = replace. */
+    public synchronized ScriptInfo updateVersionContent(String scriptId, String version, String content,
+                                                        List<OutputPublishRule> outputRules, String description) {
         if (content == null || content.trim().length() == 0) {
             throw new IllegalArgumentException("content is required");
         }
@@ -212,6 +218,9 @@ public class ScriptRegistry {
         ScriptVersionInfo vi = findVersion(info, version);
         if (vi == null) {
             throw new IllegalArgumentException("Unknown script version: " + scriptId + "@" + version);
+        }
+        if (description != null) {
+            vi.description = description.trim();
         }
         File scriptFile = new File(new File(scriptDir(scriptId), "versions"), version + ".tee");
         writeFile(scriptFile, content);

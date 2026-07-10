@@ -278,6 +278,12 @@ public class RunManager {
         return scriptRegistry.updateVersionContent(scriptId, version, content, outputRules);
     }
 
+    /** @param description tri-state: null = keep, "" = clear, text = replace. */
+    public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content,
+                                                 List<OutputPublishRule> outputRules, String description) {
+        return scriptRegistry.updateVersionContent(scriptId, version, content, outputRules, description);
+    }
+
     public ScriptInfo updateScriptSettings(String scriptId, int maxConcurrentRuns, boolean immediate) {
         return scriptRegistry.updateScriptSettings(scriptId, maxConcurrentRuns, immediate);
     }

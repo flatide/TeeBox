@@ -443,7 +443,10 @@ public class TeeBoxServer {
                     }
                     // Parse output rule from form
                     List<OutputPublishRule> outputRules = parseOutputRuleFromForm(form);
-                    runManager.updateScriptVersionContent(scriptId.trim(), version.trim(), content, outputRules);
+                    // The editor prefills the field with the version's current description, so the
+                    // posted value IS the desired state ("" clears). Absent field (non-UI post) = keep.
+                    String description = form.get("description");
+                    runManager.updateScriptVersionContent(scriptId.trim(), version.trim(), content, outputRules, description);
                     // Return to the version just edited (which may not be the active one), not the default.
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()) + "?version=" + urlParam(version.trim()));
                     return;

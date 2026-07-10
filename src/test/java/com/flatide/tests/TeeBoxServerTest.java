@@ -525,6 +525,35 @@ public class TeeBoxServerTest {
         }
     }
 
+    @Test
+    public void versionDescriptionIsEditableViaSaveInPlace() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("desc_edit", "v1", "return {\"n\": 1}\n", "first cut", Arrays.asList("t"), true);
+
+            // The editor prefills the field with the version's current description.
+            String page = getHtml(testServer.baseUrl + "/admin/scripts/desc_edit?version=v1", 200);
+            Assert.assertTrue("description prefilled",
+                    page.contains("name='description' value='first cut'"));
+
+            // Save-in-place updates the description (same content — a description-only edit works).
+            Assert.assertEquals(302, postForm(testServer.baseUrl + "/admin/scripts/update-source",
+                    "scriptId=desc_edit&version=v1&content=" + java.net.URLEncoder.encode("return {\"n\": 1}\n", "UTF-8")
+                        + "&description=" + java.net.URLEncoder.encode("second cut", "UTF-8"), null));
+            Map<String, Object> info = getJsonMap(testServer.baseUrl + "/api/publisher/scripts/desc_edit", 200);
+            Assert.assertEquals("second cut", ((Map<?, ?>) ((List<?>) info.get("versions")).get(0)).get("description"));
+
+            // An emptied field clears it; an absent field (non-UI caller) keeps it.
+            Assert.assertEquals(302, postForm(testServer.baseUrl + "/admin/scripts/update-source",
+                    "scriptId=desc_edit&version=v1&description=&content=" + java.net.URLEncoder.encode("return {\"n\": 1}\n", "UTF-8"), null));
+            info = getJsonMap(testServer.baseUrl + "/api/publisher/scripts/desc_edit", 200);
+            Assert.assertEquals("", ((Map<?, ?>) ((List<?>) info.get("versions")).get(0)).get("description"));
+        } finally {
+            testServer.close();
+        }
+    }
+
     private Map<String, Object> postFormJson(String url, String formBody) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setRequestMethod("POST");

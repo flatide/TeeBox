@@ -1075,7 +1075,19 @@ public class AdminPageRenderer {
                 sb.append("<option value='stderr'").append(activeRule != null && "stderr".equals(activeRule.stream) ? " selected" : "").append(">stderr</option>");
                 sb.append("</select></div></div></div></details>");
                 sb.append("<div class='form-row-inline' style='align-items:center;'>");
-                sb.append("<input type='text' name='description' placeholder='Description (used when saving as a new version)' style='flex:1;min-width:200px;'/>");
+                // Prefilled with the selected version's description so plain Save updates it in
+                // place (clearing the field clears the description); Save-as-new records whatever
+                // is in the field for the new version — visible to the operator before clicking.
+                String currentDescription = "";
+                if (hasSelected) {
+                    for (ScriptVersionInfo vi : script.versions) {
+                        if (selectedVersion.equals(vi.version)) {
+                            currentDescription = vi.description != null ? vi.description : "";
+                            break;
+                        }
+                    }
+                }
+                sb.append("<input type='text' name='description' value='").append(escape(currentDescription)).append("' placeholder='Description (saved with the version)' title='Saved by both Save (updates this version) and Save as new version' style='flex:1;min-width:200px;'/>");
                 sb.append("<label class='checkbox-label' title='Applies only to \"Save as new version\"'><input type='checkbox' name='activate'/> Set new version active</label>");
                 // Outlined (not gray) so it reads as an enabled secondary action, not a disabled button.
                 sb.append("<button type='button' id='check-syntax-btn' style='background:#fff;color:#2563eb;border:1px solid #2563eb;' onclick='ptCheckSyntax()' title='Check the editor content with the server parser without saving'>Check syntax</button>");
