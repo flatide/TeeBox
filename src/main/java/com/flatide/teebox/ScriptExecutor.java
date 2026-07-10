@@ -69,7 +69,11 @@ public class ScriptExecutor {
                 }
             };
 
-            BuiltinFunctions builtins = new BuiltinFunctions(stdout, stderr, runId, taskRunner, platformProvider);
+            // The runner is owned by RunManager and shared by every concurrent run. BuiltinFunctions
+            // closes its runner when this interpreter finishes, so expose a non-closing per-run view;
+            // otherwise one short script clears the task map used by every long-running SHELL().
+            TaskRunner runTaskRunner = taskRunner != null ? new NonClosingTaskRunner(taskRunner) : null;
+            BuiltinFunctions builtins = new BuiltinFunctions(stdout, stderr, runId, runTaskRunner, platformProvider);
             if (streamSupport != null) {
                 // Host builtin: STREAM_FILE(path, [contentType]) returns a small stream descriptor
                 // (raw object, no Result wrapper) that TeeBox streams directly. Lets a script return a
