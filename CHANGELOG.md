@@ -2,6 +2,29 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.13.0
+
+- **Editor: syntax check before saving.** Saving a script with a syntax error used to bounce to the
+  error page. The version-source editor now has an outlined **Check syntax** button, and **Save /
+  Save as new version run the same check first** — while it reports problems the save is blocked and
+  the errors appear under the form (positioned parser messages). Backed by a stateless
+  `POST /admin/scripts/validate` that runs the exact parser the save paths reject with, so the
+  pre-check can never disagree with the save; if the endpoint is unreachable the save proceeds and
+  the server-side validation stays the backstop.
+- **Editor: built-in function typo detection.** The same check flags calls like `SHEL(...)` /
+  `JSON_PRASE(...)`: all-uppercase names are reserved for built-ins/host functions (spec v0.12.0),
+  so an ALL-CAPS call outside the runtime's known set is a guaranteed call-time failure — zero
+  false positives. Reports position and the nearest name (`Line 1:4 - unknown function 'SHEL' (did
+  you mean 'SHELL'?)`); lowercase calls are never flagged (possible script functions, including
+  forward references); dead branches are scanned. The known-name set is enumerated from the runtime
+  (new engine host API `BuiltinFunctions.knownFunctionNames`, propertee2-java composite HEAD) plus
+  TeeBox's `STREAM_FILE`/`THUMBNAIL`, so engine catalog additions flow in automatically. The
+  publisher API's save behavior is unchanged (syntax-only) — the lint blocks only the UI save.
+- **Editor: per-version description editing.** The description field prefills with the selected
+  version's current description, and plain **Save** writes it back with the content — a
+  description-only edit is just Save without touching the code; clearing the field clears it.
+  Previously a description could only be set when registering a new version.
+
 ## 1.12.2
 
 - **Critical: a completing run no longer breaks other runs' `SHELL()` tasks.** All concurrent runs
