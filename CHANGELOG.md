@@ -2,6 +2,35 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.12.2
+
+- **Critical: a completing run no longer breaks other runs' `SHELL()` tasks.** All concurrent runs
+  share one task engine, but each run's interpreter closed its task runner when it finished — so any
+  short script completing cleared the shared in-memory task map, and every other run's in-flight
+  `SHELL()` failed with `Unknown task: <id>` (typically surfacing as a positioned error at the
+  script's `UNWRAP`, failing the run) while the detached process kept running and the task kept
+  showing RUNNING with live output in the UI. Seen in the field on a 2h+ SHELL run. Each run now gets
+  a non-closing view of the shared engine (`NonClosingTaskRunner`); the real engine shutdown happens
+  only at TeeBox server shutdown. This also cures the latent Windows form (the simulated runner's
+  completion scheduler was being shut down by the first run to finish, wedging all later tasks).
+  Runs already failed by this cause are not recoverable — check the still-running task's output and
+  side effects, kill it or let it finish, then re-run on the fixed version.
+- **Delete a specific script version.** Inactive versions get a confirmed **Delete** button in the
+  Versions table (`POST /admin/scripts/delete-version/{id}`), and the publisher API gains
+  `DELETE /api/publisher/scripts/{id}/versions/{version}` (returns the updated script). The active
+  version is protected — set another version active first. Hard delete, no restore window; a run
+  pinned to a deleted version is refused at submit.
+- **Duplicate a script to a new id** — the supported "rename" path: duplicate, point callers at the
+  new id, then delete the old script (run history stays with the source). Copies every version
+  (content + description/labels/sha256/output rules), the active-version choice, and execution
+  settings; the copy is immediately runnable. Admin UI: a **Duplicate Script** card on the script
+  detail page (the duplicating user becomes the copy's owner); publisher API:
+  `POST /api/publisher/scripts/{id}/duplicate` with `{"newScriptId": "..."}` → 201. Target-id
+  collision, unknown or soft-deleted source are explicit errors.
+- **Registering an existing script id now says so.** The metadata-only Register modal returned
+  "Script content is required" when the id already existed; it now reports
+  `Script already exists: <id>`.
+
 ## 1.12.1
 
 - **Windows: run saves no longer fail on transient file locks.** On Windows, external scanners
