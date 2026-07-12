@@ -2,6 +2,30 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Perf: run listing/counting is served from memory; the on-disk run index is gone.** Every runs
+  list/count (admin UI fragments, `/api/admin/runs`, `/api/client/runs`, per-script listings) used
+  to re-read and re-parse the whole `runs/index.json` and load a run file per returned row — and,
+  worse, every run state transition (submit → RUNNING → terminal → archive, plus each purge)
+  rewrote that entire index, an O(all retained runs) write serialized under the same lock the read
+  path needs. With the default 7-day retention this was the first scaling bottleneck at high run
+  volumes. The registry's in-memory map already holds every non-purged run, so queries (status /
+  instant / search filters, ordering, pagination — semantics unchanged) now run entirely in memory,
+  and `runs/index.json` is no longer written at all: startup recovery scans the run files directly,
+  a leftover index from an older version is deleted at startup (a rollback then rebuilds a fresh
+  one instead of trusting a stale copy that would hide newer runs), and purging N runs is now N
+  file deletes instead of N full index rewrites. Per-run files are still written on every state
+  transition (durability is unchanged), and list requests no longer flush dirty runs to disk on
+  the request thread. Filtering reads each run under its monitor (the same one state transitions
+  write under), so listings see the latest status. Startup recovery is hardened for the new
+  scan-everything model: a corrupt or foreign `.json` in `runs/` (invalid JSON, wrong shape, or a
+  `runId` that does not match its filename — the runId is reused as the write path, so a mismatch
+  could redirect recovery writes outside the runs directory or shadow another run) is skipped with
+  a warning instead of blocking startup, and if a leftover legacy index cannot be deleted (after
+  retries) the server refuses to start — silently keeping a stale index would make a later
+  rollback hide every run written since. Pinned by `RunRegistryListTest`.
+
 ## 1.13.0
 
 - **Editor: syntax check before saving.** Saving a script with a syntax error used to bounce to the

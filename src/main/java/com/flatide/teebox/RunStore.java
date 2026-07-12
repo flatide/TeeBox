@@ -15,10 +15,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 
+/**
+ * Per-run file persistence ({@code dataDir/runs/<runId>.json}). Listing, counting, and filtering
+ * are served by {@link RunRegistry} from its in-memory map — which holds every non-purged run —
+ * so there is no on-disk run index; startup recovery scans the directory instead.
+ */
 public class RunStore {
     private final File runsDir;
     // The engine's first-class null (JsonNull.NULL) must persist as JSON null, not reflect into {} —
@@ -27,24 +30,68 @@ public class RunStore {
             .setPrettyPrinting()
             .registerTypeAdapter(com.flatide.propertee2.value.JsonNull.class, new JsonNullGsonAdapter())
             .create();
-    private final File indexFile;
-    private final File indexTmpFile;
+
+    private static final String LEGACY_INDEX_FILE = "index.json";
 
     public RunStore(File dataDir) {
         this.runsDir = new File(dataDir, "runs");
         if (!runsDir.exists() && !runsDir.mkdirs()) {
             throw new IllegalStateException("Failed to create runs directory: " + runsDir.getAbsolutePath());
         }
-        this.indexFile = new File(runsDir, "index.json");
-        this.indexTmpFile = new File(runsDir, "index.json.tmp");
+        deleteLegacyIndexFiles();
+    }
+
+    // Pre-1.14 TeeBox kept a runs/index.json rewritten on every state transition (O(all retained
+    // runs) per write). Nothing reads it anymore; delete a leftover so a rollback to an older
+    // version rebuilds a fresh index from the run files instead of trusting a stale one that would
+    // hide (and never purge) runs written since. The delete must not fail silently: if the file
+    // survived while this version kept writing runs, that rollback hazard becomes real — so after
+    // retries, refuse to start (a file we cannot delete in runsDir means run writes are likely
+    // broken too).
+    private void deleteLegacyIndexFiles() {
+        File index = new File(runsDir, LEGACY_INDEX_FILE);
+        if (index.isFile()) {
+            deleteInsistently(index);
+            if (index.exists()) {
+                throw new IllegalStateException("Failed to delete legacy run index "
+                        + index.getAbsolutePath() + " — refusing to start: run listing no longer"
+                        + " maintains this file, and a stale copy would make a rolled-back (pre-1.14)"
+                        + " TeeBox hide runs written since. Remove the file manually.");
+            }
+            TeeBoxLog.info("RunStore", "Removed legacy run index (runs are listed from memory now): "
+                    + index.getAbsolutePath());
+        }
+        // A leftover index.json.tmp is harmless to a rollback (an old version overwrites it before
+        // renaming), so best-effort only.
+        File indexTmp = new File(runsDir, LEGACY_INDEX_FILE + ".tmp");
+        if (indexTmp.isFile()) {
+            indexTmp.delete();
+        }
+    }
+
+    // Same transient-hold reasoning as moveAtomically: an external scanner (antivirus, indexer)
+    // may briefly hold the file on Windows, so retry with backoff (20/40/80/160ms between the 5
+    // attempts, no sleep after the last) before giving up — the caller re-checks existence.
+    private void deleteInsistently(File file) {
+        long delayMs = MOVE_RETRY_BASE_DELAY_MS;
+        for (int attempt = 1; ; attempt++) {
+            if (file.delete() || !file.exists()) {
+                return;
+            }
+            if (attempt >= MOVE_ATTEMPTS) {
+                return;
+            }
+            try {
+                Thread.sleep(delayMs);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            delayMs *= 2;
+        }
     }
 
     public synchronized void save(RunInfo run) {
-        saveRunFile(run);
-        updateIndex(run);
-    }
-
-    public synchronized void saveRunFile(RunInfo run) {
         File target = fileFor(run.runId);
         File tmp = new File(runsDir, run.runId + ".json.tmp");
         Writer writer = null;
@@ -107,7 +154,12 @@ public class RunStore {
         } catch (RuntimeException malformed) {
             return null;   // a corrupt run file is skipped (callers already handle a null load)
         }
-        RunInfo run = gson.fromJson(tree, RunInfo.class);
+        RunInfo run;
+        try {
+            run = gson.fromJson(tree, RunInfo.class);
+        } catch (RuntimeException wrongShape) {
+            return null;   // valid JSON but not a RunInfo (e.g. "[]") — skipped like a corrupt file
+        }
         if (run == null || !tree.isJsonObject()) {
             return run;
         }
@@ -123,83 +175,40 @@ public class RunStore {
         return run;
     }
 
-    public synchronized int count(String status) {
-        return count(status, null, null);
-    }
-
     /**
-     * Count index entries matching the filters. {@code immediate}: null = all, TRUE = instant runs
-     * only, FALSE = exclude instant runs. {@code search}: case-insensitive substring match on the
-     * runId OR the scriptId. All filters are index-only — no run file is loaded.
+     * Load every persisted run by scanning the runs directory. One bad file must never block
+     * startup recovery: corrupt, foreign (parseable JSON that is not a run), or unreadable files
+     * are skipped with a warning. The JSON's {@code runId} must equal the filename: the runId is
+     * reused as the write path (see {@link #fileFor}), so a crafted file ({@code "runId":
+     * "../outside"}) could otherwise make startup recovery write outside the runs directory, and
+     * a duplicate runId in a second file could silently shadow the real run.
      */
-    public synchronized int count(String status, Boolean immediate, String search) {
-        List<RunIndexEntry> entries = loadIndexEntries();
-        int count = 0;
-        for (RunIndexEntry entry : entries) {
-            if (matches(entry, status, null, immediate, search)) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     public synchronized List<RunInfo> loadAll() {
-        return query(null, 0, -1);
-    }
-
-    public synchronized List<RunInfo> query(String status, int offset, int limit) {
-        return query(status, null, offset, limit);
-    }
-
-    public synchronized List<RunInfo> query(String status, String scriptId, int offset, int limit) {
-        return query(status, scriptId, null, null, offset, limit);
-    }
-
-    /** Filtered query; {@code immediate}/{@code search} as in {@link #count(String, Boolean, String)}. */
-    public synchronized List<RunInfo> query(String status, String scriptId, Boolean immediate, String search,
-                                            int offset, int limit) {
-        List<RunIndexEntry> entries = loadIndexEntries();
+        File[] files = runsDir.listFiles();
         List<RunInfo> runs = new ArrayList<RunInfo>();
-        int safeOffset = offset < 0 ? 0 : offset;
-        int matched = 0;
-        for (RunIndexEntry entry : entries) {
-            if (!matches(entry, status, scriptId, immediate, search)) {
+        if (files == null) {
+            return runs;
+        }
+        for (File file : files) {
+            if (!file.isFile() || !file.getName().endsWith(".json")
+                    || LEGACY_INDEX_FILE.equals(file.getName())) {
                 continue;
             }
-            if (matched++ < safeOffset) {
+            String fileRunId = stripSuffix(file.getName(), ".json");
+            RunInfo run = load(fileRunId);
+            if (run == null) {
+                TeeBoxLog.warn("RunStore", "Skipping run file that is not a parseable run: "
+                        + file.getAbsolutePath());
                 continue;
             }
-            if (limit > 0 && runs.size() >= limit) {
-                break;
+            if (!fileRunId.equals(run.runId)) {
+                TeeBoxLog.warn("RunStore", "Skipping run file whose runId '" + run.runId
+                        + "' does not match its filename: " + file.getAbsolutePath());
+                continue;
             }
-            RunInfo run = load(entry.runId);
-            if (run != null) {
-                runs.add(run);
-            }
+            runs.add(run);
         }
         return runs;
-    }
-
-    private static boolean matches(RunIndexEntry entry, String status, String scriptId,
-                                   Boolean immediate, String search) {
-        if (status != null && !status.equalsIgnoreCase(entry.status)) {
-            return false;
-        }
-        if (scriptId != null && !scriptId.equals(entry.scriptId)) {
-            return false;
-        }
-        if (immediate != null && entry.immediate != immediate.booleanValue()) {
-            return false;
-        }
-        if (search != null) {
-            String needle = search.toLowerCase(java.util.Locale.ROOT);
-            boolean inRunId = entry.runId != null && entry.runId.toLowerCase(java.util.Locale.ROOT).contains(needle);
-            boolean inScriptId = entry.scriptId != null && entry.scriptId.toLowerCase(java.util.Locale.ROOT).contains(needle);
-            if (!inRunId && !inScriptId) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public synchronized void delete(String runId) {
@@ -210,7 +219,6 @@ public class RunStore {
         if (file.exists() && !file.delete() && file.exists()) {
             throw new RuntimeException("Failed to delete run " + runId);
         }
-        removeIndex(runId);
     }
 
     private File fileFor(String runId) {
@@ -222,115 +230,6 @@ public class RunStore {
             return value.substring(0, value.length() - suffix.length());
         }
         return value;
-    }
-
-    private void updateIndex(RunInfo run) {
-        if (run == null || run.runId == null) {
-            return;
-        }
-        List<RunIndexEntry> entries = loadIndexEntries();
-        RunIndexEntry updated = RunIndexEntry.fromRun(run);
-        boolean replaced = false;
-        for (int i = 0; i < entries.size(); i++) {
-            if (entries.get(i).runId.equals(run.runId)) {
-                entries.set(i, updated);
-                replaced = true;
-                break;
-            }
-        }
-        if (!replaced) {
-            entries.add(updated);
-        }
-        sortIndexEntries(entries);
-        writeIndex(entries);
-    }
-
-    private void removeIndex(String runId) {
-        List<RunIndexEntry> entries = loadIndexEntries();
-        for (int i = entries.size() - 1; i >= 0; i--) {
-            if (entries.get(i).runId.equals(runId)) {
-                entries.remove(i);
-            }
-        }
-        writeIndex(entries);
-    }
-
-    private List<RunIndexEntry> loadIndexEntries() {
-        if (!indexFile.exists()) {
-            return rebuildIndex();
-        }
-        FileInputStream fis = null;
-        try {
-            fis = new FileInputStream(indexFile);
-            String json = readAll(fis);
-            RunIndexEntry[] parsed = gson.fromJson(json, RunIndexEntry[].class);
-            if (parsed == null) {
-                return rebuildIndex();
-            }
-            List<RunIndexEntry> entries = new ArrayList<RunIndexEntry>(Arrays.asList(parsed));
-            sortIndexEntries(entries);
-            return entries;
-        } catch (Exception e) {
-            return rebuildIndex();
-        } finally {
-            if (fis != null) {
-                try {
-                    fis.close();
-                } catch (IOException ignore) {
-                }
-            }
-        }
-    }
-
-    private List<RunIndexEntry> rebuildIndex() {
-        File[] files = runsDir.listFiles();
-        List<RunIndexEntry> entries = new ArrayList<RunIndexEntry>();
-        if (files != null) {
-            for (File file : files) {
-                if (!file.isFile() || !file.getName().endsWith(".json") || "index.json".equals(file.getName())) {
-                    continue;
-                }
-                RunInfo run = load(stripSuffix(file.getName(), ".json"));
-                if (run != null) {
-                    entries.add(RunIndexEntry.fromRun(run));
-                }
-            }
-        }
-        sortIndexEntries(entries);
-        writeIndex(entries);
-        return entries;
-    }
-
-    private void sortIndexEntries(List<RunIndexEntry> entries) {
-        java.util.Collections.sort(entries, new Comparator<RunIndexEntry>() {
-            @Override
-            public int compare(RunIndexEntry a, RunIndexEntry b) {
-                if (a.createdAt == b.createdAt) {
-                    return a.runId.compareTo(b.runId);
-                }
-                return a.createdAt < b.createdAt ? 1 : -1;
-            }
-        });
-    }
-
-    private void writeIndex(List<RunIndexEntry> entries) {
-        Writer writer = null;
-        try {
-            writer = new OutputStreamWriter(new FileOutputStream(indexTmpFile), "UTF-8");
-            gson.toJson(entries, writer);
-            writer.close();
-            writer = null;
-            moveAtomically(indexTmpFile.toPath(), indexFile.toPath());
-        } catch (IOException e) {
-            TeeBoxLog.error("RunStore", "Failed to write run index", e);
-        } finally {
-            if (writer != null) {
-                try {
-                    writer.close();
-                } catch (IOException ignore) {
-                }
-            }
-        }
     }
 
     // On Windows an external scanner (antivirus real-time protection, the search indexer) briefly
@@ -382,31 +281,5 @@ public class RunStore {
             sb.append(new String(buffer, 0, len, "UTF-8"));
         }
         return sb.toString();
-    }
-
-    private static class RunIndexEntry {
-        String runId;
-        String status;
-        boolean archived;
-        // Legacy index entries (pre-instant-filter) lack this field and read back as false —
-        // old runs are treated as non-instant, which is the common case.
-        boolean immediate;
-        long createdAt;
-        Long endedAt;
-        String scriptPath;
-        String scriptId;
-
-        static RunIndexEntry fromRun(RunInfo run) {
-            RunIndexEntry entry = new RunIndexEntry();
-            entry.runId = run.runId;
-            entry.status = run.status != null ? run.status.name() : null;
-            entry.archived = run.archived;
-            entry.immediate = run.immediate;
-            entry.createdAt = run.createdAt;
-            entry.endedAt = run.endedAt;
-            entry.scriptPath = run.scriptPath;
-            entry.scriptId = run.scriptId;
-            return entry;
-        }
     }
 }

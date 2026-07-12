@@ -40,7 +40,7 @@ public class RunRegistry {
 
     public void register(RunInfo run) {
         runs.put(run.runId, run);
-        saveRunWithIndex(run);
+        persistRun(run);
     }
 
     public RunInfo getRun(String runId) {
@@ -67,10 +67,17 @@ public class RunRegistry {
         return countRuns(status, null, null);
     }
 
-    /** Filtered count; {@code immediate}/{@code search} as in {@code RunStore.count}. */
+    /** Filtered count; {@code immediate}/{@code search} as in {@link #listRuns(String, String, Boolean, String, int, int)}. */
     public int countRuns(String status, Boolean immediate, String search) {
-        flushDirty();
-        return runStore.count(status, immediate, search);
+        int count = 0;
+        for (RunInfo run : runs.values()) {
+            synchronized (run) {
+                if (matches(run, status, null, immediate, search)) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 
     public List<RunInfo> listRuns(String status, int offset, int limit) {
@@ -81,17 +88,72 @@ public class RunRegistry {
         return listRuns(status, scriptId, null, null, offset, limit);
     }
 
-    /** Filtered listing; {@code immediate}/{@code search} as in {@code RunStore.query}. */
+    /**
+     * Filtered listing, newest first (createdAt desc, runId tiebreak), served entirely from the
+     * in-memory map — it holds every non-purged run (startup load + register), so no disk is
+     * touched. {@code status} matches case-insensitively; {@code immediate}: null = all, TRUE =
+     * instant runs only, FALSE = exclude instant runs; {@code search}: case-insensitive substring
+     * on the runId OR the scriptId; {@code limit <= 0} = unlimited. Only the returned page is
+     * deep-copied.
+     */
     public List<RunInfo> listRuns(String status, String scriptId, Boolean immediate, String search,
                                   int offset, int limit) {
-        flushDirty();
-        List<RunInfo> loaded = runStore.query(status, scriptId, immediate, search, offset, limit);
-        List<RunInfo> copy = new ArrayList<RunInfo>();
-        for (RunInfo run : loaded) {
-            RunInfo current = runs.get(run.runId);
-            copy.add(copyRun(current != null ? current : run));
+        List<RunInfo> matched = new ArrayList<RunInfo>();
+        for (RunInfo run : runs.values()) {
+            synchronized (run) {
+                if (matches(run, status, scriptId, immediate, search)) {
+                    matched.add(run);
+                }
+            }
         }
-        return copy;
+        sortNewestFirst(matched);
+        int safeOffset = offset < 0 ? 0 : offset;
+        List<RunInfo> page = new ArrayList<RunInfo>();
+        for (int i = safeOffset; i < matched.size(); i++) {
+            if (limit > 0 && page.size() >= limit) {
+                break;
+            }
+            page.add(copyRun(matched.get(i)));
+        }
+        return page;
+    }
+
+    // Callers must hold the run's monitor: status transitions are written under synchronized(run)
+    // (the mark* methods), so filtering needs the same monitor for visibility of the latest state.
+    // The sort runs outside it — createdAt/runId are immutable after register and safely published
+    // by the ConcurrentHashMap put.
+    private static boolean matches(RunInfo run, String status, String scriptId,
+                                   Boolean immediate, String search) {
+        if (status != null && (run.status == null || !status.equalsIgnoreCase(run.status.name()))) {
+            return false;
+        }
+        if (scriptId != null && !scriptId.equals(run.scriptId)) {
+            return false;
+        }
+        if (immediate != null && run.immediate != immediate.booleanValue()) {
+            return false;
+        }
+        if (search != null) {
+            String needle = search.toLowerCase(Locale.ROOT);
+            boolean inRunId = run.runId != null && run.runId.toLowerCase(Locale.ROOT).contains(needle);
+            boolean inScriptId = run.scriptId != null && run.scriptId.toLowerCase(Locale.ROOT).contains(needle);
+            if (!inRunId && !inScriptId) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static void sortNewestFirst(List<RunInfo> list) {
+        java.util.Collections.sort(list, new java.util.Comparator<RunInfo>() {
+            @Override
+            public int compare(RunInfo a, RunInfo b) {
+                if (a.createdAt == b.createdAt) {
+                    return a.runId.compareTo(b.runId);
+                }
+                return a.createdAt < b.createdAt ? 1 : -1;
+            }
+        });
     }
 
     /**
@@ -143,14 +205,14 @@ public class RunRegistry {
     public void markPending(RunInfo run) {
         synchronized (run) {
             run.status = RunStatus.PENDING;
-            saveRunWithIndex(run);
+            persistRun(run);
         }
     }
 
     public void markQueued(RunInfo run) {
         synchronized (run) {
             run.status = RunStatus.QUEUED;
-            saveRunWithIndex(run);
+            persistRun(run);
         }
     }
 
@@ -161,7 +223,7 @@ public class RunRegistry {
             if (run.endedAt != null) {
                 run.endedAt = null;
             }
-            saveRunWithIndex(run);
+            persistRun(run);
         }
     }
 
@@ -176,7 +238,7 @@ public class RunRegistry {
             run.resultSummary = StreamResultSupport.isStreamDescriptor(resultData)
                 ? StreamResultSupport.summaryFor(resultData)
                 : safeSummary(resultData);
-            saveRunWithIndex(run);
+            persistRun(run);
         }
     }
 
@@ -185,7 +247,7 @@ public class RunRegistry {
             run.status = RunStatus.FAILED;
             run.endedAt = Long.valueOf(System.currentTimeMillis());
             run.errorMessage = message != null ? message : "Unknown error";
-            saveRunWithIndex(run);
+            persistRun(run);
         }
     }
 
@@ -231,7 +293,7 @@ public class RunRegistry {
             RunInfo run = runs.get(runId);
             if (run != null) {
                 synchronized (run) {
-                    runStore.saveRunFile(run.copy());
+                    runStore.save(run.copy());
                 }
             }
         }
@@ -251,7 +313,7 @@ public class RunRegistry {
                 if (!run.archived) {
                     if (runRetentionMs >= 0 && ageMs >= runRetentionMs) {
                         archiveRunLocked(run);
-                        saveRunWithIndex(run);
+                        persistRun(run);
                     }
                     continue;
                 }
@@ -350,7 +412,7 @@ public class RunRegistry {
         }
     }
 
-    private void saveRunWithIndex(RunInfo run) {
+    private void persistRun(RunInfo run) {
         synchronized (dirtyLock) {
             dirtyRunIds.remove(run.runId);
         }
