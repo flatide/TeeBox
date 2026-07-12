@@ -7,7 +7,7 @@ import java.util.zip.GZIPInputStream
 import java.security.MessageDigest
 
 group = 'com.flatide'
-version = '1.13.0'
+version = '1.14.0'
 
 ext {
     // ProperTee v2 requires Java 25, so the bundled deploy runtime is OpenJDK 25 (was 21.0.2).

@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.14.0
 
 - **Perf: run listing/counting is served from memory; the on-disk run index is gone.** Every runs
   list/count (admin UI fragments, `/api/admin/runs`, `/api/client/runs`, per-script listings) used
