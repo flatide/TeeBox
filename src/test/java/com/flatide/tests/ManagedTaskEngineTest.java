@@ -2,9 +2,9 @@ package com.flatide.tests;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.flatide.task.Task;
-import com.flatide.task.TaskRequest;
-import com.flatide.task.TaskStatus;
+import com.flatide.propertee2.task.Task;
+import com.flatide.propertee2.task.TaskRequest;
+import com.flatide.propertee2.task.TaskStatus;
 import com.flatide.teebox.ManagedTaskEngine;
 import com.flatide.teebox.lifecycle.TaskLifecycle;
 import com.flatide.teebox.lifecycle.TaskTerminalState;

@@ -1,6 +1,6 @@
 package com.flatide.teebox;
 
-import com.flatide.task.TaskStatus;
+import com.flatide.propertee2.task.TaskStatus;
 import com.google.gson.JsonDeserializationContext;
 import com.google.gson.JsonDeserializer;
 import com.google.gson.JsonElement;

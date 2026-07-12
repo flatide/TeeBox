@@ -1,7 +1,7 @@
 package com.flatide.tests;
 
-import com.flatide.task.Task;
-import com.flatide.task.TaskStatus;
+import com.flatide.propertee2.task.Task;
+import com.flatide.propertee2.task.TaskStatus;
 import com.flatide.teebox.ManagedTaskEngine;
 import java.io.File;
 import java.nio.file.Files;

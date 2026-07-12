@@ -1,6 +1,6 @@
 package com.flatide.tests;
 
-import com.flatide.task.TaskInfo;
+import com.flatide.propertee2.task.TaskInfo;
 import com.flatide.teebox.RunInfo;
 import com.flatide.teebox.RunManager;
 import com.flatide.teebox.RunRequest;

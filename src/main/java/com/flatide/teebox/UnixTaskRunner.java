@@ -1,10 +1,10 @@
 package com.flatide.teebox;
 
-import com.flatide.task.Task;
-import com.flatide.task.TaskObservation;
-import com.flatide.task.TaskRequest;
-import com.flatide.task.TaskRunner;
-import com.flatide.task.TaskStatus;
+import com.flatide.propertee2.task.Task;
+import com.flatide.propertee2.task.TaskObservation;
+import com.flatide.propertee2.task.TaskRequest;
+import com.flatide.propertee2.task.TaskRunner;
+import com.flatide.propertee2.task.TaskStatus;
 
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;

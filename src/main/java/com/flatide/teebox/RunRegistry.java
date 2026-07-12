@@ -1,6 +1,6 @@
 package com.flatide.teebox;
 
-import com.flatide.runtime.TypeChecker;
+import com.flatide.propertee2.runtime.TypeChecker;
 
 import java.io.File;
 import java.util.ArrayList;

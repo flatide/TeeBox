@@ -1,10 +1,10 @@
 package com.flatide.teebox;
 
-import com.flatide.runtime.TypeChecker;
-import com.flatide.scheduler.ThreadContext;
-import com.flatide.task.Task;
-import com.flatide.task.TaskInfo;
-import com.flatide.task.TaskObservation;
+import com.flatide.propertee2.runtime.TypeChecker;
+import com.flatide.propertee2.scheduler.ThreadContext;
+import com.flatide.propertee2.task.Task;
+import com.flatide.propertee2.task.TaskInfo;
+import com.flatide.propertee2.task.TaskObservation;
 import com.flatide.teebox.lifecycle.TaskLifecycle;
 import com.flatide.teebox.webhook.WebhookDispatcher;
 import com.flatide.teebox.webhook.WebhookHttpClient;
@@ -602,9 +602,9 @@ public class RunManager {
             runRegistry.markStarted(run);
             // Wrap task engine to auto-register watchers on task creation
             final ManagedTaskEngine engine = managedTaskEngine;
-            com.flatide.task.TaskRunner taskRunner = (outputRules != null && !outputRules.isEmpty())
+            com.flatide.propertee2.task.TaskRunner taskRunner = (outputRules != null && !outputRules.isEmpty())
                 ? new OutputWatchingTaskRunner(engine, run.runId, outputRules, this)
-                : (com.flatide.task.TaskRunner) managedTaskEngine;
+                : (com.flatide.propertee2.task.TaskRunner) managedTaskEngine;
             ScriptExecutor.ExecutionResult result = scriptExecutor.execute(
                 scriptFile,
                 run.properties,

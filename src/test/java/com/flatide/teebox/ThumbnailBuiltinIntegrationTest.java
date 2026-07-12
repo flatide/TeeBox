@@ -3,9 +3,9 @@ package com.flatide.teebox;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import com.flatide.platform.DefaultPlatformProvider;
-import com.flatide.scheduler.ThreadContext;
-import com.flatide.task.UnsupportedTaskRunner;
+import com.flatide.propertee2.platform.DefaultPlatformProvider;
+import com.flatide.propertee2.scheduler.ThreadContext;
+import com.flatide.propertee2.task.UnsupportedTaskRunner;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.nio.file.Files;

@@ -1,6 +1,6 @@
 package com.flatide.teebox;
 
-import com.flatide.platform.DefaultPlatformProvider;
+import com.flatide.propertee2.platform.DefaultPlatformProvider;
 
 import java.io.File;
 

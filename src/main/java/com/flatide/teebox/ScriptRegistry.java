@@ -2,7 +2,7 @@ package com.flatide.teebox;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.flatide.core.ScriptParser;
+import com.flatide.propertee2.core.ScriptParser;
 
 import java.io.File;
 import java.io.FileInputStream;

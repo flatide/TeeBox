@@ -2,6 +2,14 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.15.0
+
+- **Adopts the propertee2 0.15.0 namespace** (`com.flatide.propertee2.*`). The engine moved its
+  v1-API compatibility packages from the bare `com.flatide.{core, interpreter, platform, runtime,
+  scheduler, task, parser}` to `com.flatide.propertee2.*`; this release is the matching import
+  sweep — 25 files, imports and fully-qualified references only, zero behavior change. Maven
+  coordinates are unchanged (`com.flatide:propertee-core`). 202 tests green.
+
 ## 1.14.0
 
 - **Perf: run listing/counting is served from memory; the on-disk run index is gone.** Every runs

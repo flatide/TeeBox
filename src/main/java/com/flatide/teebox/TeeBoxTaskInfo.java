@@ -1,6 +1,6 @@
 package com.flatide.teebox;
 
-import com.flatide.task.TaskInfo;
+import com.flatide.propertee2.task.TaskInfo;
 
 /**
  * Extended TaskInfo with lifecycle fields (phase, ownership, lossReason).

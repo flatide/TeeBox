@@ -1,15 +1,15 @@
 package com.flatide.teebox;
 
-import com.flatide.core.ScriptParser;
-import com.flatide.interpreter.BuiltinFunctions;
-import com.flatide.interpreter.ProperTeeInterpreter;
-import com.flatide.parser.ProperTeeParser;
-import com.flatide.platform.PlatformProvider;
-import com.flatide.runtime.TypeChecker;
-import com.flatide.scheduler.Scheduler;
-import com.flatide.scheduler.SchedulerListener;
-import com.flatide.scheduler.ThreadContext;
-import com.flatide.task.TaskRunner;
+import com.flatide.propertee2.core.ScriptParser;
+import com.flatide.propertee2.interpreter.BuiltinFunctions;
+import com.flatide.propertee2.interpreter.ProperTeeInterpreter;
+import com.flatide.propertee2.parser.ProperTeeParser;
+import com.flatide.propertee2.platform.PlatformProvider;
+import com.flatide.propertee2.runtime.TypeChecker;
+import com.flatide.propertee2.scheduler.Scheduler;
+import com.flatide.propertee2.scheduler.SchedulerListener;
+import com.flatide.propertee2.scheduler.ThreadContext;
+import com.flatide.propertee2.task.TaskRunner;
 
 import java.io.File;
 import java.io.FileInputStream;

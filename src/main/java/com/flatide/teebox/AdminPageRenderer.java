@@ -1,8 +1,8 @@
 package com.flatide.teebox;
 
 import com.google.gson.Gson;
-import com.flatide.task.TaskInfo;
-import com.flatide.task.TaskObservation;
+import com.flatide.propertee2.task.TaskInfo;
+import com.flatide.propertee2.task.TaskObservation;
 
 import java.util.ArrayList;
 import java.util.List;

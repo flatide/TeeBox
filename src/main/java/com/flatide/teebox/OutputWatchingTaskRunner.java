@@ -1,6 +1,6 @@
 package com.flatide.teebox;
 
-import com.flatide.task.*;
+import com.flatide.propertee2.task.*;
 
 import java.util.List;
 import java.util.Map;

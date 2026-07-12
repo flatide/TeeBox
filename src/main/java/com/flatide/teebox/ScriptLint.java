@@ -1,7 +1,7 @@
 package com.flatide.teebox;
 
-import com.flatide.core.ScriptParser;
-import com.flatide.parser.ProperTeeParser;
+import com.flatide.propertee2.core.ScriptParser;
+import com.flatide.propertee2.parser.ProperTeeParser;
 
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTree;

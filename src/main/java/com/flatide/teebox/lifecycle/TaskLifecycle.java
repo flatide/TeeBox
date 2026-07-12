@@ -2,8 +2,8 @@ package com.flatide.teebox.lifecycle;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.flatide.task.Task;
-import com.flatide.task.TaskStatus;
+import com.flatide.propertee2.task.Task;
+import com.flatide.propertee2.task.TaskStatus;
 
 /**
  * 3-axis lifecycle model for managed tasks.
