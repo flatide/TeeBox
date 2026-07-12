@@ -376,6 +376,12 @@ public class RunManager {
         return toInfoList(managedTaskEngine.queryTasks(runId, status, offset, limit));
     }
 
+    /** Task status strings per run, straight from the in-memory task index (no disk, no task
+     *  materialization) — for list rows that only need counts/killed/lost tallies. */
+    public java.util.Map<String, List<String>> getTaskStatusesByRun(java.util.Collection<String> runIds) {
+        return managedTaskEngine.taskStatusesByRun(runIds);
+    }
+
     public TaskInfo getTask(String taskId) {
         Task task = managedTaskEngine.getTask(taskId);
         if (task == null) return null;

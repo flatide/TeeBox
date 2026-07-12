@@ -25,6 +25,115 @@ public class ManagedTaskEngineTest {
     private static final boolean IS_WINDOWS =
             System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("win");
 
+    /**
+     * The task index lives in memory (1.14): no tasks/index.json is written, queries and the
+     * per-run status summary are served from the map, and a restart rebuilds the index from the
+     * task-dir scan init() already does.
+     */
+    @Test
+    public void tasksAreIndexedInMemoryWithoutAnOnDiskIndex() throws Exception {
+        Assume.assumeFalse("Skipped on Windows: requires Unix process control", IS_WINDOWS);
+        File baseDir = Files.createTempDirectory("managed-task-memindex").toFile();
+        ManagedTaskEngine engine = new ManagedTaskEngine(baseDir.getAbsolutePath(), "host-memindex");
+
+        TaskRequest request = new TaskRequest();
+        request.command = "echo hello";
+        request.runId = "run-memindex";
+        Task task = engine.execute(request);
+        engine.waitForCompletion(task.taskId, 10_000L);
+
+        Assert.assertFalse("no task index is written anymore",
+                new File(baseDir, "tasks/index.json").exists());
+        java.util.List<Task> listed = engine.queryTasks("run-memindex", null, 0, -1);
+        Assert.assertEquals(1, listed.size());
+        Assert.assertEquals(task.taskId, listed.get(0).taskId);
+
+        java.util.Map<String, java.util.List<String>> statuses =
+                engine.taskStatusesByRun(java.util.Arrays.asList("run-memindex", "no-such-run"));
+        Assert.assertEquals("statuses come from the index, one per task",
+                1, statuses.get("run-memindex").size());
+        Assert.assertNull("runs without tasks are absent", statuses.get("no-such-run"));
+
+        ManagedTaskEngine restarted = new ManagedTaskEngine(baseDir.getAbsolutePath(), "host-memindex");
+        restarted.init();   // index rebuilt from the recovery scan
+        Assert.assertEquals(1, restarted.queryTasks("run-memindex", null, 0, -1).size());
+
+        engine.shutdown();
+        restarted.shutdown();
+    }
+
+    /**
+     * A restart-restored task has no completion callback — once its process exits, only a refresh
+     * notices. The runs tables no longer materialize tasks (they read index entries), so the
+     * retention sweep must do that refresh itself: with no task query at all, the sweep alone has
+     * to take a restored task whose process died to a terminal status (observed here via the
+     * index-only taskStatusesByRun) and then age it into the archive.
+     */
+    @Test
+    public void sweepAloneFinalizesAndArchivesARestoredTaskWhoseProcessExited() throws Exception {
+        Assume.assumeFalse("Skipped on Windows: requires Unix process control", IS_WINDOWS);
+        File baseDir = Files.createTempDirectory("managed-task-sweep-finalize").toFile();
+        String hostId = "host-sweep-finalize";
+        File script = writeScript(baseDir, "sleep2.sh", "sleep 2");
+
+        ManagedTaskEngine engine1 = new ManagedTaskEngine(baseDir.getAbsolutePath(), hostId);
+        TaskRequest request = new TaskRequest();
+        request.command = script.getAbsolutePath();
+        request.runId = "run-sweep-finalize";
+        Task task = engine1.execute(request);
+        Assert.assertTrue("task starts alive", isProcessAlive(task.pid));
+
+        // Simulate a restart while the process is still running; retention 0 lets the sweep
+        // archive the task as soon as it is terminal.
+        System.setProperty("propertee.task.retentionMs", "0");
+        ManagedTaskEngine engine2;
+        try {
+            engine2 = new ManagedTaskEngine(baseDir.getAbsolutePath(), hostId);
+        } finally {
+            System.clearProperty("propertee.task.retentionMs");
+        }
+        engine2.init();
+
+        for (int i = 0; i < 100 && isProcessAlive(task.pid); i++) {
+            Thread.sleep(100L);
+        }
+        Assert.assertFalse("process must have exited on its own", isProcessAlive(task.pid));
+
+        // No queryTasks/getTask/observe between here and the asserts — the sweep is on its own.
+        engine2.archiveExpiredTasks();
+        java.util.Map<String, java.util.List<String>> statuses =
+                engine2.taskStatusesByRun(java.util.Arrays.asList("run-sweep-finalize"));
+        Assert.assertEquals("sweep refreshed the restored task to terminal",
+                "completed", statuses.get("run-sweep-finalize").get(0));
+
+        engine2.archiveExpiredTasks();   // next cycle: terminal + past retention → archived
+        File taskDir = engine2.getTaskDir(task.taskId);
+        Assert.assertTrue("sweep archived the finalized task",
+                new File(taskDir, "archive.json").exists());
+        Assert.assertFalse(new File(taskDir, "meta.json").exists());
+
+        engine1.shutdown();
+        engine2.shutdown();
+    }
+
+    /** A leftover pre-1.14 tasks/index.json is deleted at startup and its entries never trusted. */
+    @Test
+    public void staleLegacyTaskIndexIsDeletedAtStartupAndNeverTrusted() throws Exception {
+        File baseDir = Files.createTempDirectory("managed-task-legacyindex").toFile();
+        File tasksDir = new File(baseDir, "tasks");
+        Assert.assertTrue(tasksDir.mkdirs());
+        File legacy = new File(tasksDir, "index.json");
+        Files.write(legacy.toPath(),
+                "[{\"taskId\": \"ghost\", \"runId\": \"r\", \"status\": \"completed\"}]"
+                        .getBytes(StandardCharsets.UTF_8));
+
+        ManagedTaskEngine engine = new ManagedTaskEngine(baseDir.getAbsolutePath(), "host-legacy");
+        Assert.assertFalse("legacy task index is removed at startup", legacy.exists());
+        Assert.assertTrue("no ghost tasks from the stale index",
+                engine.queryTasks(null, null, 0, -1).isEmpty());
+        engine.shutdown();
+    }
+
     @Test
     public void killAfterRestartShouldTerminateProcess() throws Exception {
         Assume.assumeFalse("Skipped on Windows: requires Unix process control", IS_WINDOWS);

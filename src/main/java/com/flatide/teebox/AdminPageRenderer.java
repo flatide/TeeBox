@@ -239,6 +239,13 @@ public class AdminPageRenderer {
         if (runs.isEmpty()) {
             return "<p class='empty'>No runs</p>";
         }
+        // One task-index pass for every row's task count + killed/lost badges. Fetching each run's
+        // tasks per row cost a full index query per run — and a disk read per archived task.
+        List<String> runIds = new ArrayList<String>();
+        for (RunInfo run : runs) {
+            runIds.add(run.runId);
+        }
+        java.util.Map<String, List<String>> taskStatusesByRun = runManager.getTaskStatusesByRun(runIds);
         StringBuilder sb = new StringBuilder();
         sb.append("<div class='table-wrap'><table><thead><tr><th>Run ID</th><th>Script</th><th>By</th><th>Status</th><th>Created</th><th>Duration</th><th>Threads</th><th>Tasks</th></tr></thead><tbody>");
         for (RunInfo run : runs) {
@@ -261,12 +268,15 @@ public class AdminPageRenderer {
                 sb.append("<span class='dim'>&mdash;</span>");
             }
             sb.append("</td>");
-            List<TaskInfo> tasks = runManager.listTasksForRun(run.runId);
-            sb.append("<td>").append(renderRunStatusWithTaskWarnings(run, tasks)).append("</td>");
+            List<String> taskStatuses = taskStatusesByRun.get(run.runId);
+            if (taskStatuses == null) {
+                taskStatuses = java.util.Collections.emptyList();
+            }
+            sb.append("<td>").append(renderRunStatusWithTaskWarnings(run, taskStatuses)).append("</td>");
             sb.append("<td class='dim'>").append(escape(formatTime(run.createdAt))).append("</td>");
             sb.append("<td class='dim'>").append(formatDuration(run.startedAt, run.endedAt)).append("</td>");
             sb.append("<td class='center'>").append(run.threads != null ? run.threads.size() : 0).append("</td>");
-            sb.append("<td class='center'>").append(tasks.size()).append("</td>");
+            sb.append("<td class='center'>").append(taskStatuses.size()).append("</td>");
             sb.append("</tr>");
         }
         sb.append("</tbody></table></div>");
@@ -544,7 +554,11 @@ public class AdminPageRenderer {
         sb.append("</div>");
         sb.append("<div class='detail-grid'>");
         sb.append("<div class='detail-item'><div class='detail-label'>Script</div><div class='detail-value'><code>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? "@" + escape(run.version) : "").append("</code></div></div>");
-        sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(renderRunStatusWithTaskWarnings(run, tasks)).append("</div></div>");
+        List<String> taskStatuses = new ArrayList<String>();
+        for (TaskInfo task : tasks) {
+            taskStatuses.add(task.status);
+        }
+        sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(renderRunStatusWithTaskWarnings(run, taskStatuses)).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Submitted By</div><div class='detail-value'>");
         if (run.submittedBy != null && run.submittedBy.length() > 0) {
             sb.append("<code>").append(escape(run.submittedBy)).append("</code>");
@@ -1300,14 +1314,14 @@ public class AdminPageRenderer {
         return sb.toString();
     }
 
-    private String renderRunStatusWithTaskWarnings(RunInfo run, List<TaskInfo> tasks) {
+    private String renderRunStatusWithTaskWarnings(RunInfo run, List<String> taskStatuses) {
         StringBuilder sb = new StringBuilder();
         sb.append(statusBadge(run.status != null ? run.status.name() : "UNKNOWN"));
         int killed = 0;
         int lost = 0;
-        for (TaskInfo task : tasks) {
-            if ("killed".equals(task.status)) killed++;
-            else if ("lost".equals(task.status)) lost++;
+        for (String status : taskStatuses) {
+            if ("killed".equals(status)) killed++;
+            else if ("lost".equals(status)) lost++;
         }
         if (killed > 0) {
             sb.append(" <span class='badge badge-killed'>").append(killed).append(" killed</span>");

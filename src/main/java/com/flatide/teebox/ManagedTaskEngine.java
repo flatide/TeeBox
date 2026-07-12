@@ -23,10 +23,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -73,8 +69,14 @@ public class ManagedTaskEngine implements TaskRunner {
             .setPrettyPrinting()
             .create();
     private final Object indexLock = new Object();
-    private final File indexFile;
-    private final File indexTmpFile;
+    // In-memory task index (taskId → entry) — the only index since the on-disk tasks/index.json
+    // was dropped (1.14): that file was re-read and rewritten wholesale on every task save, an
+    // O(all retained tasks) write per state change. Built from a directory scan on first use
+    // (archived tasks live only on disk, so the runner's map alone cannot seed it; init() primes
+    // it from the scan it already does), then kept incrementally correct by saveMeta/archiveTask/
+    // deleteArchivedTask. Both fields are guarded by indexLock.
+    private final Map<String, TaskIndexEntry> indexEntries = new java.util.HashMap<>();
+    private boolean indexLoaded = false;
     private final long retentionMs;
     private final long archiveRetentionMs;
 
@@ -89,8 +91,7 @@ public class ManagedTaskEngine implements TaskRunner {
         if (!tasksDir.exists() && !tasksDir.mkdirs()) {
             throw new IllegalStateException("Failed to create tasks directory: " + tasksDir.getAbsolutePath());
         }
-        this.indexFile = new File(tasksDir, "index.json");
-        this.indexTmpFile = new File(tasksDir, "index.json.tmp");
+        deleteLegacyIndexFiles();
         this.retentionMs = parseDurationProperty("propertee.task.retentionMs", DEFAULT_RETENTION_MS);
         this.archiveRetentionMs = parseDurationProperty("propertee.task.archiveRetentionMs", DEFAULT_ARCHIVE_RETENTION_MS);
         this.runner = createRunner(baseDir);
@@ -602,7 +603,18 @@ public class ManagedTaskEngine implements TaskRunner {
     // ---- Additional methods (not in TaskRunner) ----
 
     public void init() {
-        for (Task task : loadAllTasks()) {
+        List<Task> all = loadAllTasks();
+        // Prime the in-memory index from the scan recovery is about to walk (one scan per start);
+        // the per-task saveMeta below then refreshes entries with the recovered state.
+        synchronized (indexLock) {
+            if (!indexLoaded) {
+                for (Task task : all) {
+                    indexEntries.put(task.taskId, TaskIndexEntry.fromTask(task, lifecycles.get(task.taskId)));
+                }
+                indexLoaded = true;
+            }
+        }
+        for (Task task : all) {
             if (!isTransientStatus(task.status)) {
                 // For terminal tasks loaded from disk, restore lifecycle
                 TaskLifecycle lc = lifecycles.get(task.taskId);
@@ -666,22 +678,68 @@ public class ManagedTaskEngine implements TaskRunner {
 
     public void archiveExpiredTasks() {
         long now = System.currentTimeMillis();
-        for (Task task : loadAllTasks()) {
-            if (task.alive || isTransientStatus(task.status)) {
-                continue;
-            }
-            long completedAt = task.endTime != null ? task.endTime.longValue() : task.startTime;
-            long ageMs = now - completedAt;
-            if (!task.archived) {
-                if (retentionMs >= 0 && ageMs >= retentionMs) {
-                    archiveTask(task);
+        // Candidates come from the in-memory index (entries carry status/times/archived), so this
+        // periodic sweep no longer re-reads every retained task's JSON from disk. Only actionable
+        // tasks are materialized, and their fresh state is re-checked before acting.
+        for (TaskIndexEntry entry : snapshotIndexEntries()) {
+            if (isTransientStatus(statusFromString(entry.status))) {
+                // A transient task this runner does not own is a restart-restored task, and nothing
+                // else notices its process exiting anymore (the runs tables stopped materializing
+                // tasks — taskStatusesByRun serves them from entries): without this refresh it
+                // would show "running" forever and never age into archive/purge. Tasks the runner
+                // owns are skipped (they finalize via waitForCompletion/getTask), so the disk cost
+                // is bounded by the number of restored still-active tasks.
+                if (runner.getTask(entry.taskId) == null) {
+                    refreshRestoredTask(entry.taskId);
                 }
                 continue;
             }
-            if (archiveRetentionMs >= 0 && ageMs >= archiveRetentionMs) {
-                deleteArchivedTask(task);
+            long completedAt = entry.endTime != null ? entry.endTime.longValue() : entry.startTime;
+            long ageMs = now - completedAt;
+            boolean archive = !entry.archived && retentionMs >= 0 && ageMs >= retentionMs;
+            boolean purge = entry.archived && archiveRetentionMs >= 0 && ageMs >= archiveRetentionMs;
+            if (!archive && !purge) {
+                continue;
+            }
+            Task task = getTask(entry.taskId);
+            if (task == null) {
+                // Ghost entry: the task dir vanished (or its JSON is unreadable). Drop it from the
+                // index — if the task is ever saved again, updateTaskIndex re-adds it.
+                removeTaskIndex(entry.taskId);
+                continue;
+            }
+            if (task.alive || isTransientStatus(task.status)) {
+                continue;
+            }
+            if (task.archived) {
+                if (purge) {
+                    deleteArchivedTask(task);
+                }
+            } else if (archive) {
+                archiveTask(task);
             }
         }
+    }
+
+    /**
+     * Reload a restored (runner-unowned) task from disk and re-derive its status from process
+     * liveness, persisting a change — which also refreshes its index entry. The index entry of a
+     * task whose directory vanished is dropped.
+     */
+    private void refreshRestoredTask(String taskId) {
+        Task task = getTaskFromDisk(taskId);
+        if (task == null) {
+            removeTaskIndex(taskId);
+            return;
+        }
+        withTaskLockVoid(taskId, () -> {
+            String before = deriveLegacyStatusForTask(task);
+            refreshDiskTask(task);
+            String after = deriveLegacyStatusForTask(task);
+            if (!equalsValue(before, after)) {
+                saveMeta(task);
+            }
+        });
     }
 
     public List<Task> queryTasks(String runId, String status, int offset, int limit) {
@@ -880,30 +938,15 @@ public class ManagedTaskEngine implements TaskRunner {
             return;
         }
         synchronized (indexLock) {
-            List<TaskIndexEntry> entries = loadTaskIndexEntriesLocked();
-            TaskIndexEntry updated = TaskIndexEntry.fromTask(task, lifecycles.get(task.taskId));
-            boolean replaced = false;
-            for (int i = 0; i < entries.size(); i++) {
-                if (equalsValue(entries.get(i).taskId, task.taskId)) {
-                    entries.set(i, updated);
-                    replaced = true;
-                    break;
-                }
-            }
-            if (!replaced) {
-                entries.add(updated);
-            }
-            sortTaskIndexEntries(entries);
-            writeTaskIndexLocked(entries);
+            ensureIndexLoadedLocked();
+            indexEntries.put(task.taskId, TaskIndexEntry.fromTask(task, lifecycles.get(task.taskId)));
         }
     }
 
     private List<TaskIndexEntry> queryTaskIndex(String runId, String status, int offset, int limit) {
+        List<TaskIndexEntry> entries = snapshotIndexEntries();
+        sortTaskIndexEntries(entries);
         List<TaskIndexEntry> filtered = new ArrayList<>();
-        List<TaskIndexEntry> entries;
-        synchronized (indexLock) {
-            entries = loadTaskIndexEntriesLocked();
-        }
         for (TaskIndexEntry entry : entries) {
             if (runId != null && !equalsValue(runId, entry.runId)) {
                 continue;
@@ -916,6 +959,49 @@ public class ManagedTaskEngine implements TaskRunner {
         return applyTaskPagination(filtered, offset, limit);
     }
 
+    /**
+     * Status strings of every task of each given run, served from the in-memory index alone — no
+     * task materialization, no disk. Runs with no tasks are absent from the map. Used by the admin
+     * runs tables, which only need per-run task counts and killed/lost tallies; materializing each
+     * run's tasks there cost a disk read per archived task per row.
+     */
+    public Map<String, List<String>> taskStatusesByRun(java.util.Collection<String> runIds) {
+        Set<String> wanted = new HashSet<>(runIds);
+        Map<String, List<String>> result = new java.util.HashMap<>();
+        for (TaskIndexEntry entry : snapshotIndexEntries()) {
+            if (entry.runId == null || !wanted.contains(entry.runId)) {
+                continue;
+            }
+            List<String> statuses = result.get(entry.runId);
+            if (statuses == null) {
+                statuses = new ArrayList<>();
+                result.put(entry.runId, statuses);
+            }
+            statuses.add(entry.status);
+        }
+        return result;
+    }
+
+    private List<TaskIndexEntry> snapshotIndexEntries() {
+        synchronized (indexLock) {
+            ensureIndexLoadedLocked();
+            return new ArrayList<>(indexEntries.values());
+        }
+    }
+
+    // First index access builds the map from a full directory scan; afterwards every index
+    // mutation is incremental. init() primes it from the scan recovery already walks, so a normal
+    // server start scans the tasks directory exactly once.
+    private void ensureIndexLoadedLocked() {
+        if (indexLoaded) {
+            return;
+        }
+        for (Task task : loadAllTasks()) {
+            indexEntries.put(task.taskId, TaskIndexEntry.fromTask(task, lifecycles.get(task.taskId)));
+        }
+        indexLoaded = true;
+    }
+
     private List<TaskIndexEntry> applyTaskPagination(List<TaskIndexEntry> entries, int offset, int limit) {
         int safeOffset = offset < 0 ? 0 : offset;
         if (safeOffset >= entries.size()) {
@@ -923,38 +1009,6 @@ public class ManagedTaskEngine implements TaskRunner {
         }
         int end = limit <= 0 ? entries.size() : Math.min(entries.size(), safeOffset + limit);
         return new ArrayList<>(entries.subList(safeOffset, end));
-    }
-
-    private List<TaskIndexEntry> loadTaskIndexEntriesLocked() {
-        if (!indexFile.exists()) {
-            return rebuildTaskIndexLocked();
-        }
-        FileInputStream fis = null;
-        try {
-            fis = new FileInputStream(indexFile);
-            String json = readStream(fis);
-            TaskIndexEntry[] parsed = gson.fromJson(json, TaskIndexEntry[].class);
-            if (parsed == null) {
-                return rebuildTaskIndexLocked();
-            }
-            List<TaskIndexEntry> entries = new ArrayList<>(Arrays.asList(parsed));
-            sortTaskIndexEntries(entries);
-            return entries;
-        } catch (Exception e) {
-            return rebuildTaskIndexLocked();
-        } finally {
-            closeQuietly(fis);
-        }
-    }
-
-    private List<TaskIndexEntry> rebuildTaskIndexLocked() {
-        List<TaskIndexEntry> entries = new ArrayList<>();
-        for (Task task : loadAllTasks()) {
-            entries.add(TaskIndexEntry.fromTask(task, lifecycles.get(task.taskId)));
-        }
-        sortTaskIndexEntries(entries);
-        writeTaskIndexLocked(entries);
-        return entries;
     }
 
     private void sortTaskIndexEntries(List<TaskIndexEntry> entries) {
@@ -971,41 +1025,59 @@ public class ManagedTaskEngine implements TaskRunner {
         });
     }
 
-    private void writeTaskIndexLocked(List<TaskIndexEntry> entries) {
-        Writer writer = null;
-        try {
-            writer = new OutputStreamWriter(new FileOutputStream(indexTmpFile), "UTF-8");
-            gson.toJson(entries, writer);
-            writer.close();
-            writer = null;
-            moveAtomically(indexTmpFile.toPath(), indexFile.toPath());
-        } catch (IOException e) {
-            TeeBoxLog.error("TaskEngine", "Failed to write task index", e);
-        } finally {
-            closeQuietly(writer);
-        }
-    }
-
     private void removeTaskIndex(String taskId) {
         if (taskId == null) {
             return;
         }
         synchronized (indexLock) {
-            List<TaskIndexEntry> entries = loadTaskIndexEntriesLocked();
-            for (int i = entries.size() - 1; i >= 0; i--) {
-                if (equalsValue(entries.get(i).taskId, taskId)) {
-                    entries.remove(i);
-                }
-            }
-            writeTaskIndexLocked(entries);
+            ensureIndexLoadedLocked();
+            indexEntries.remove(taskId);
         }
     }
 
-    private void moveAtomically(Path source, Path target) throws IOException {
-        try {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+    // Pre-1.14 TeeBox kept a tasks/index.json rewritten on every task save. Nothing reads it
+    // anymore; delete a leftover so a rollback to an older version rebuilds a fresh index from the
+    // task dirs instead of trusting a stale one that would hide (and never archive/purge) tasks
+    // written since. Same fail-fast contract as RunStore's legacy run index: if the file cannot be
+    // deleted after retries, refuse to start rather than arm that rollback hazard.
+    private void deleteLegacyIndexFiles() {
+        File legacyIndex = new File(tasksDir, "index.json");
+        if (legacyIndex.isFile()) {
+            deleteInsistently(legacyIndex);
+            if (legacyIndex.exists()) {
+                throw new IllegalStateException("Failed to delete legacy task index "
+                        + legacyIndex.getAbsolutePath() + " — refusing to start: task listing no"
+                        + " longer maintains this file, and a stale copy would make a rolled-back"
+                        + " (pre-1.14) TeeBox hide tasks written since. Remove the file manually.");
+            }
+            TeeBoxLog.info("TaskEngine", "Removed legacy task index (tasks are indexed in memory now): "
+                    + legacyIndex.getAbsolutePath());
+        }
+        File legacyTmp = new File(tasksDir, "index.json.tmp");
+        if (legacyTmp.isFile()) {
+            legacyTmp.delete();
+        }
+    }
+
+    // Same transient-hold reasoning as RunStore.deleteInsistently: an external scanner may briefly
+    // hold the file on Windows — retry with backoff (20/40/80/160ms between 5 attempts, no sleep
+    // after the last), then let the caller re-check existence.
+    private void deleteInsistently(File file) {
+        long delayMs = 20L;
+        for (int attempt = 1; ; attempt++) {
+            if (file.delete() || !file.exists()) {
+                return;
+            }
+            if (attempt >= 5) {
+                return;
+            }
+            try {
+                Thread.sleep(delayMs);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            delayMs *= 2;
         }
     }
 

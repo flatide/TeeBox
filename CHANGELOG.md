@@ -25,6 +25,29 @@ All notable changes to TeeBox are documented here.
   a warning instead of blocking startup, and if a leftover legacy index cannot be deleted (after
   retries) the server refuses to start — silently keeping a stale index would make a later
   rollback hide every run written since. Pinned by `RunRegistryListTest`.
+- **Perf: the task index moved in-memory too; `tasks/index.json` is gone.** Same pathology as the
+  run index: every task save re-read and rewrote the whole file, and every task listing re-parsed
+  it. The index now lives in memory — built once from the task-dir scan `init()` already does for
+  restart recovery, kept incremental by save/archive/delete — and the 60-second retention sweep
+  picks its candidates from the in-memory entries instead of re-reading every retained task's
+  JSON from disk each cycle (only actionable tasks are materialized, with a fresh re-check before
+  acting). The sweep now also refreshes restart-restored tasks the runner doesn't own: their
+  process exiting used to be noticed only when a task listing happened to materialize them, so
+  without it a restored task whose process died would show "running" forever and never age into
+  archive/purge — now the sweep alone takes it terminal and archives it. A leftover legacy
+  `tasks/index.json` is deleted at startup with the same refuse-to-start-if-undeletable rollback
+  guard as the run index. Pinned in `ManagedTaskEngineTest`.
+- **Perf: admin runs tables no longer fetch each row's tasks.** The dashboard and all-runs tables
+  ran a full task-index query per run row — and materialized every task, costing a disk read per
+  archived task — just to show the task count and killed/lost badges. One index pass now serves
+  all rows (`taskStatusesByRun`); the run detail page keeps the full task fetch (it renders the
+  task table anyway).
+- **Perf: dataDir size walk is TTL-cached (30s).** `GET /api/admin/system` and the dashboard
+  sysinfo fragment walked runs/tasks/script-registry (up to 3×10000 file stats) on every call —
+  every 5 seconds per viewer with auto-refresh on. Expiry admits exactly one walker
+  (double-checked lock), so concurrent viewers hitting an expired TTL reuse its result instead of
+  each re-walking. Sizes are informational and slow-moving; memory/uptime/disk-free readings stay
+  live.
 
 ## 1.13.0
 
