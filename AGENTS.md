@@ -19,7 +19,7 @@ For local manual testing, start the server against the demo scripts:
 ```
 
 ## Coding Style & Naming Conventions
-Target Java 17. Follow the existing style: 4-space indentation, braces on the same line, and descriptive PascalCase class names such as `RunManager` or `TeeBoxConfig`. Use `camelCase` for methods and fields, and keep package names under `com.flatide.teebox`. Prefer small, focused classes over adding unrelated logic to `TeeBoxServer`.
+Target Java 25 (the ProperTee v2 runtime baseline). Follow the existing style: 4-space indentation, braces on the same line, and descriptive PascalCase class names such as `RunManager` or `TeeBoxConfig`. Use `camelCase` for methods and fields, and keep package names under `com.flatide.teebox`. Prefer small, focused classes over adding unrelated logic to `TeeBoxServer`.
 
 ## Testing Guidelines
 Tests use JUnit 4 with `org.junit.Test` and `Assert`. Add tests in `src/test/java/com/flatide/tests` and name classes `*Test`. Match current method naming style such as `serverShouldRequireBearerTokenWhenConfigured`. Cover both API behavior and configuration edge cases when changing server routes, auth, persistence, or script execution flow. Run `./gradlew test` before opening a PR.
