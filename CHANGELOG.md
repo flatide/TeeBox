@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.15.1
 
 - **A run's result now survives archival.** Archiving (terminal age past `runRetentionMs`,
   default 24h) used to null `resultData`, leaving only the 300-char `resultSummary` — fetching a
