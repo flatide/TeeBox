@@ -1106,7 +1106,9 @@ public class AdminPageRenderer {
                 // Outlined (not gray) so it reads as an enabled secondary action, not a disabled button.
                 sb.append("<button type='button' id='check-syntax-btn' style='background:#fff;color:#2563eb;border:1px solid #2563eb;' onclick='ptCheckSyntax()' title='Check the editor content with the server parser without saving'>Check syntax</button>");
                 if (hasSelected) {
-                    sb.append("<button type='submit' name='version' value='").append(escape(selectedVersion)).append("' title='Overwrite version ").append(escape(selectedVersion)).append(" in place'>Save</button>");
+                    // The label names the overwrite target: whatever confusion exists about which
+                    // version the editor is on, the destructive button always says where it writes.
+                    sb.append("<button type='submit' name='version' value='").append(escape(selectedVersion)).append("' title='Overwrite version ").append(escape(selectedVersion)).append(" in place'>Save (").append(escape(selectedVersion)).append(")</button>");
                 }
                 sb.append("<button type='submit' formaction='/admin/scripts/register' style='background:#334155;' title='Register the editor content as a new version (auto next #)'>Save as new version</button>");
                 sb.append("</div>");

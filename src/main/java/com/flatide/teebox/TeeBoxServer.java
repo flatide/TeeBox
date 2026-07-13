@@ -309,8 +309,14 @@ public class TeeBoxServer {
                     String trimmedVersion = (version != null && version.trim().length() > 0) ? version.trim() : null;
                     List<OutputPublishRule> outputRules = parseOutputRuleFromForm(form);
                     String owner = session != null ? session.username : null;
-                    runManager.registerScriptVersion(scriptId.trim(), trimmedVersion, content, description, new ArrayList<String>(), activate, outputRules, owner);
-                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
+                    ScriptRegistry.RegisteredVersion registered = runManager.registerScriptVersionDetailed(
+                            scriptId.trim(), trimmedVersion, content, description, new ArrayList<String>(), activate, outputRules, owner);
+                    // Land on the version just saved. The page's no-?version= fallback is the ACTIVE
+                    // version, and a new version doesn't auto-activate — so "Save as new version" used
+                    // to bounce back to the OLD content in the editor, and the next in-place Save
+                    // (whose button targets the displayed version) silently overwrote the old version.
+                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim())
+                            + "?version=" + urlParam(registered.version));
                     return;
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/scripts/settings/")) {

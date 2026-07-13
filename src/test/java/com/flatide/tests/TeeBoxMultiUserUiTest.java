@@ -291,6 +291,56 @@ public class TeeBoxMultiUserUiTest {
         }
     }
 
+    /**
+     * The reported "version contents got swapped" bug: after "Save as new version" the redirect
+     * dropped {@code ?version=}, the detail page fell back to the ACTIVE (old) version — silently
+     * putting the OLD content back into the editor — and the next in-place Save (whose button
+     * targets the displayed version) overwrote the old version with content meant for the new one
+     * (destroying the old version's source). The redirect must land on the version just saved,
+     * and the editor/Save button must target it.
+     */
+    @Test
+    public void saveAsNewVersionLandsOnTheNewVersionNotTheOldActive() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-save-as-new").toFile();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "alice-pw");
+            Assert.assertNotNull(alice);
+
+            // v1 = A, active (one-shot register).
+            assertRedirect("register v1", postForm(base, "/admin/scripts/register",
+                    "scriptId=swap_bug&content=" + enc("return {\"which\": \"A\"}\n") + "&activate=on", alice));
+
+            // The user types B and clicks "Save as new version" (blank version => auto "2", NOT active).
+            String location = postFormLocation(base, "/admin/scripts/register",
+                    "scriptId=swap_bug&content=" + enc("return {\"which\": \"B\"}\n"), alice);
+            Assert.assertEquals("redirect lands on the version just saved",
+                    "/admin/scripts/swap_bug?version=2", location);
+
+            // The redirected page keeps editing the NEW version: its content, and a Save button
+            // that targets it — not the old active version.
+            String page = getBody(base, location, alice);
+            Assert.assertTrue("editor shows the new version", page.contains("Version Source (2)"));
+            Assert.assertTrue("editor holds the new content", page.contains("&quot;B&quot;"));
+            Assert.assertTrue("Save overwrites the new version",
+                    page.contains("title='Overwrite version 2 in place'"));
+            Assert.assertTrue("the Save button names its overwrite target",
+                    page.contains(">Save (2)</button>"));
+
+            // The follow-up edit therefore goes to v2; v1 keeps its original content.
+            assertRedirect("edit continues on v2", postForm(base, "/admin/scripts/update-source",
+                    "scriptId=swap_bug&version=2&content=" + enc("return {\"which\": \"B2\"}\n"), alice));
+            String v1 = getBody(base, "/api/publisher/scripts/swap_bug/content?version=1", null);
+            String v2 = getBody(base, "/api/publisher/scripts/swap_bug/content?version=2", null);
+            Assert.assertTrue("old version untouched: " + v1, v1.contains("\\\"A\\\""));
+            Assert.assertTrue("new version carries the edit: " + v2, v2.contains("\\\"B2\\\""));
+        } finally {
+            server.stop();
+        }
+    }
+
     // ---- helpers ----
 
     /** GET returning the response body (authed). */
@@ -421,6 +471,29 @@ public class TeeBoxMultiUserUiTest {
         }
         conn.disconnect();
         return new String[] {String.valueOf(code), buf.toString("UTF-8")};
+    }
+
+    /** POST asserting a 3xx response and returning its Location header. */
+    private String postFormLocation(String base, String path, String body, String cookie) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(base + path).openConnection();
+        conn.setInstanceFollowRedirects(false);
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        if (cookie != null) {
+            conn.setRequestProperty("Cookie", "teebox-session=" + cookie);
+        }
+        OutputStream out = conn.getOutputStream();
+        try {
+            out.write(body.getBytes("UTF-8"));
+        } finally {
+            out.close();
+        }
+        int code = conn.getResponseCode();
+        Assert.assertTrue("expected 3xx redirect, got " + code, code >= 300 && code < 400);
+        String location = conn.getHeaderField("Location");
+        conn.disconnect();
+        return location;
     }
 
     private int postForm(String base, String path, String body, String cookie) throws IOException {

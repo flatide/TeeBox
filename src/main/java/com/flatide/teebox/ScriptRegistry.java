@@ -116,6 +116,35 @@ public class ScriptRegistry {
                                                    boolean activate,
                                                    List<OutputPublishRule> outputRules,
                                                    String owner) {
+        return registerVersionDetailed(scriptId, version, content, description, labels, activate, outputRules, owner).script;
+    }
+
+    /** A registered version: the updated script plus the version label that was assigned. */
+    public static class RegisteredVersion {
+        public final ScriptInfo script;
+        public final String version;
+
+        RegisteredVersion(ScriptInfo script, String version) {
+            this.script = script;
+            this.version = version;
+        }
+    }
+
+    /**
+     * Like {@link #registerVersion(String, String, String, String, List, boolean, List, String)},
+     * additionally reporting the version label actually assigned (explicit or auto-incremented).
+     * A caller that must point at the new version afterwards (e.g. the admin UI's post-save
+     * redirect) needs the label from here — inferring "newest" from the sorted versions list is
+     * ambiguous when createdAt ties.
+     */
+    public synchronized RegisteredVersion registerVersionDetailed(String scriptId,
+                                                   String version,
+                                                   String content,
+                                                   String description,
+                                                   List<String> labels,
+                                                   boolean activate,
+                                                   List<OutputPublishRule> outputRules,
+                                                   String owner) {
         validateName("scriptId", scriptId);
         if (content == null || content.trim().length() == 0) {
             throw new IllegalArgumentException("content is required");
@@ -179,7 +208,7 @@ public class ScriptRegistry {
         markActiveVersion(info);
         sortVersions(info);
         saveScript(info);
-        return info.copy();
+        return new RegisteredVersion(info.copy(), resolvedVersion);
     }
 
     /**

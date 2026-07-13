@@ -265,6 +265,19 @@ public class RunManager {
         return scriptRegistry.registerVersion(scriptId, version, content, description, labels, activate, outputRules, owner);
     }
 
+    /** Registration variant reporting the version label actually assigned (explicit or
+     *  auto-incremented) — for callers that must point at the new version afterwards. */
+    public ScriptRegistry.RegisteredVersion registerScriptVersionDetailed(String scriptId,
+                                            String version,
+                                            String content,
+                                            String description,
+                                            List<String> labels,
+                                            boolean activate,
+                                            List<OutputPublishRule> outputRules,
+                                            String owner) {
+        return scriptRegistry.registerVersionDetailed(scriptId, version, content, description, labels, activate, outputRules, owner);
+    }
+
     /** Create an empty script shell (no versions, not active); code is added later. See ScriptRegistry. */
     public ScriptInfo createScript(String scriptId, String owner) {
         return scriptRegistry.createScript(scriptId, owner);

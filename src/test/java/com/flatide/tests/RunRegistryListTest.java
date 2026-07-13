@@ -89,6 +89,47 @@ public class RunRegistryListTest {
                         == registry.getRawRun("r0"));
     }
 
+    /**
+     * Archival trims diagnostics (logs/threads/properties) but must keep {@code resultData}
+     * intact — the result is the run's product and stays fetchable until purge (it used to be
+     * dropped at archive time, leaving only the 300-char resultSummary), including across a
+     * restart (the archived run file carries it).
+     */
+    @Test
+    public void archivedRunKeepsItsResultDataWhileTrimmingTheRest() throws Exception {
+        File dataDir = tempDir();
+        // runRetentionMs=0: a terminal run archives on the first maintenance pass.
+        RunRegistry registry = new RunRegistry(dataDir, 200, 50, 20, 0L, 7L * 24 * 3600_000L);
+        RunInfo run = run("r1", "s", RunStatus.COMPLETED, 1, false);
+        run.endedAt = Long.valueOf(1L);
+        java.util.Map<String, Object> result = new java.util.LinkedHashMap<String, Object>();
+        result.put("n", 1);
+        run.resultData = result;
+        run.resultSummary = "{\"n\": 1}";
+        for (int i = 0; i < 60; i++) {
+            run.stdoutLines.add("line" + i);
+        }
+        run.properties.put("input", "large-diagnostic-payload");
+        registry.register(run);
+
+        registry.maintainRuns();
+
+        RunInfo archived = registry.getRun("r1");
+        Assert.assertTrue("run is archived", archived.archived);
+        Assert.assertNotNull("resultData survives archival", archived.resultData);
+        Assert.assertEquals(Integer.valueOf(1),
+                ((java.util.Map<?, ?>) archived.resultData).get("n"));
+        Assert.assertEquals("stdout trimmed to the archive cap", 50, archived.stdoutLines.size());
+        Assert.assertTrue("threads emptied", archived.threads.isEmpty());
+        Assert.assertTrue("properties cleared", archived.properties.isEmpty());
+
+        RunRegistry restarted = new RunRegistry(dataDir, 200, 50, 20, 0L, 7L * 24 * 3600_000L);
+        RunInfo reloaded = restarted.getRun("r1");
+        Assert.assertTrue(reloaded.archived);
+        Assert.assertEquals("archived result survives a restart, engine-shaped",
+                Integer.valueOf(1), ((java.util.Map<?, ?>) reloaded.resultData).get("n"));
+    }
+
     @Test
     public void runsSurviveARestartWithoutAnOnDiskIndex() throws Exception {
         File dataDir = tempDir();

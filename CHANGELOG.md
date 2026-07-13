@@ -2,6 +2,31 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **A run's result now survives archival.** Archiving (terminal age past `runRetentionMs`,
+  default 24h) used to null `resultData`, leaving only the 300-char `resultSummary` — fetching a
+  day-old run's result returned a truncated string instead of the value the script produced. The
+  result is the run's product, so it is now kept intact (in memory and in the run file) until the
+  run is purged (`runArchiveRetentionMs`, default 7d); the client `/result` endpoint, admin run
+  detail, and stream-result descriptors keep working for archived runs. Everything else about
+  archival is unchanged: stdout/stderr still trim to 50/20 lines, threads and input properties are
+  still dropped. Note the heap trade-off — archived results stay resident for the archive window;
+  scripts with large payloads should return `STREAM_FILE` (tiny descriptor, bytes stream from
+  disk). Pinned by `archivedRunKeepsItsResultDataWhileTrimmingTheRest`.
+- **Fix: "Save as new version" no longer flips the editor back to the old version (perceived
+  version-content swap, with silent data loss).** After saving a new version the redirect dropped
+  `?version=`, and the detail page's fallback selected the ACTIVE version — the new version never
+  auto-activates, so the editor silently reloaded the OLD content. A user who kept editing and hit
+  **Save** (which targets the displayed version) then overwrote the old version with content meant
+  for the new one: the previous version ended up holding the newest edits while the new version
+  kept the earlier draft ("contents swapped"), and the old version's original source was destroyed
+  without warning. The save-as-new redirect now lands on the version it just created
+  (`?version=<assigned>`, reported by the registry rather than inferred from version ordering),
+  so the editing session continues on the new version. The **Save** button is also labeled with
+  its overwrite target (e.g. `Save (3)`) so the destructive action always names where it writes.
+  Pinned by `saveAsNewVersionLandsOnTheNewVersionNotTheOldActive`.
+
 ## 1.15.0
 
 - **Adopts the propertee2 0.15.0 namespace** (`com.flatide.propertee2.*`). The engine moved its

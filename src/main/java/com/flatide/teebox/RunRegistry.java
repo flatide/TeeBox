@@ -355,11 +355,12 @@ public class RunRegistry {
         run.threads = new ArrayList<RunThreadInfo>();
         run.stdoutLines = trimTail(run.stdoutLines, archivedStdoutLines);
         run.stderrLines = trimTail(run.stderrLines, archivedStderrLines);
-        // Drop large heap-resident fields. resultSummary is already a 300-char
-        // truncation, so the full resultData object can be released. Input
-        // properties may also be large. published is typically small
-        // (captured key-value pairs) and useful for retrospective inspection.
-        run.resultData = null;
+        // Trim the bulky diagnostics but keep resultData intact: the result is the run's product,
+        // and callers must be able to fetch it any time before purge (it used to be dropped here,
+        // leaving only the 300-char resultSummary). The heap cost of archived results staying
+        // resident for the archive window is accepted — scripts with large payloads should return
+        // STREAM_FILE (tiny descriptor; bytes stream from disk). Input properties can be equally
+        // large but are diagnostics, not the product; published stays (small captured key-values).
         run.properties = new LinkedHashMap<String, Object>();
     }
 
