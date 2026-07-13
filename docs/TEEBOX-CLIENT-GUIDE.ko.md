@@ -529,6 +529,22 @@ if (Boolean.TRUE.equals(env.get("ok"))) {
 > 봉투는 `getRunResult` 응답에만 실립니다(추가 필드, 기존 필드 무변경). 관리자 `RunInfo` 표면과
 > webhook 페이로드에는 의도적으로 싣지 않습니다.
 
+> **트러블슈팅 — "결과가 이중으로 중첩되어 보여요"** (`resultData` 안에 다시
+> `{status, ok, value}` 가 있거나, 심지어 `{runId, resultData, result}` 객체 전체가 들어 있는
+> 경우): 스크립트가 **빌트인 Result 를 UNWRAP 하지 않고 그대로 반환**한 것입니다.
+> `JSON_PARSE`, `SHELL`, `HTTP_*` 같은 빌트인은 값이 아니라 Result(`{status, ok, value}`)를
+> 반환하므로, `return JSON_PARSE(text)` 는 그 Result 가 run 의 데이터로 저장되고 run 봉투가
+> 한 번 더 감쌉니다(위 케이스 2 — TeeBox 는 값 내부를 들여다보지 않는 설계). 반환 전에
+> UNWRAP 하세요:
+>
+> ```
+> return UNWRAP(JSON_PARSE(text))   // 파싱된 값; 파싱 실패는 이 지점에서 run 을 FAILED 처리
+> ```
+>
+> `SHELL` 도 마찬가지이고(`return {"out": UNWRAP(s)}`), run 을 체이닝할 때는 가져온 run 결과
+> 응답에서 **필요한 조각만** 반환하세요(예: `body.resultData`) — 응답 객체 전체를 반환하면
+> 바로 `resultData` 안의 `resultData` 모양이 됩니다.
+
 #### `getRunTasksSummary(runId)` 응답 예시
 
 해당 run 의 태스크를 상태별로 집계합니다.

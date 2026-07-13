@@ -40,30 +40,58 @@ propertee.teebox.maxRuns=64
 |------|--------|------|
 | `bind` | `127.0.0.1` | 바인드 주소 |
 | `port` | `18080` | 리스닝 포트 |
-| `dataDir` | (필수) | 데이터 디렉터리 (`runs`, `tasks`, `script-registry`) |
+| `dataDir` | (필수) | 데이터 디렉터리 (`runs`, `tasks`, `script-registry`, `users`) |
 | `maxRuns` | `64` | 동시 실행 가능한 최대 run 수 |
 | `apiToken` | 없음 | 전체 API 공통 Bearer 토큰 (fallback) |
 | `clientApiToken` | 없음 | `/api/client` 전용 토큰 |
 | `publisherApiToken` | 없음 | `/api/publisher` 전용 토큰 |
 | `adminApiToken` | 없음 | `/api/admin` 전용 토큰 |
-| `runRetentionMs` | `24h` | run 보관 -> archived 전환 |
-| `runArchiveRetentionMs` | `7d` | archived -> 삭제 |
-| `maintenanceIntervalMs` | `1m` | 백그라운드 유지보수 주기 |
+| `adminUser` | 없음 | 관리 UI 부트스트랩 로그인: 사용자 명단이 비어 있을 때 이 관리자를 시드. 아래 "관리 UI 로그인" 참고 |
+| `adminPassword` | 없음 | `adminUser` 의 초기 비밀번호(선택 — 미설정 시 해당 관리자의 첫 로그인 때 설정) |
 | `streamRoots` | `dataDir` | `STREAM_FILE` 결과의 허용 루트 (`File.pathSeparator` 로 구분된 디렉토리 목록; Linux/macOS `:`, Windows `;`). 스트리밍 파일 경로는 이 중 하나의 하위로 canonicalize 되어야 함. §3 참고. |
 | `webhookEnabled` | `false` | run 종료 webhook 전달 활성화(opt-in). 꺼져 있으면 `callback` 이 실린 submit 은 HTTP 400 으로 거절. §3 참고. |
 | `webhookUrlAllowlist` | 없음 | 콜백 URL 의 **콤마 구분** `host[:port]` allowlist (활성화 시 필수 — 미설정이면 모든 콜백 거절). `host` 항목은 임의 포트 허용, `host:port` 는 정확히 일치. |
 | `webhookTimeoutMs` | `10000` | webhook 전달 per-POST connect/read 타임아웃(ms). |
+
+**duration / 보존 기간 설정 — 시스템 프로퍼티 전용.** 아래 항목들은 `-D` 시스템 프로퍼티로만
+읽히며, **`teebox.properties` 에 적으면 조용히 무시됩니다** — `JAVA_OPTS` 로 지정하세요
+(예: `JAVA_OPTS="-Dpropertee.teebox.runRetentionMs=48h"`):
+
+| 시스템 프로퍼티 | 기본값 | 설명 |
+|-----------------|--------|------|
+| `propertee.teebox.runRetentionMs` | `24h` | run 보관 -> archived 전환 |
+| `propertee.teebox.runArchiveRetentionMs` | `7d` | archived -> 완전 삭제(purge) |
+| `propertee.teebox.maintenanceIntervalMs` | `1m` | 백그라운드 유지보수 주기 |
+| `propertee.teebox.scriptRetentionMs` | `7d` | soft-delete 된 스크립트 보관 -> purge |
+| `propertee.task.retentionMs` | `24h` | task 보관 -> archive 전환 |
+| `propertee.task.archiveRetentionMs` | `7d` | archived task -> 삭제 |
+| `propertee.teebox.logDir` | `logs` | 로그 출력 디렉터리 (§7 참고) |
+
+duration 형식: 숫자만 쓰면 ms, suffix 는 `ms`, `s`, `m`, `h`, `d` (예: `500ms`, `30s`, `1m`, `24h`, `7d`).
 
 환경 변수:
 - `PROPERTEE_TEEBOX_CONFIG` - 설정 파일 경로 (기본: `conf/teebox.properties`)
 - `JAVA_HOME` - Java 설치 경로
 - `JAVA_OPTS` - JVM 옵션 (`-Xmx`, `-D` 등). 시스템 프로퍼티는 설정 파일보다 우선
 
-duration 형식:
-- `runRetentionMs`, `runArchiveRetentionMs`, `maintenanceIntervalMs`
-- `propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`
-- 지원 suffix: `ms`, `s`, `m`, `h`, `d`
-- 예: `500ms`, `30s`, `1m`, `24h`, `7d`
+### 관리 UI 로그인 (멀티유저)
+
+`/admin` HTML UI 는 **API Bearer 토큰과 독립된** 쿠키/세션 로그인을 갖습니다:
+
+- **명단이 없으면 완전 개방.** 사용자 명단이 없고(시드할 `adminUser` 도 없으면) 관리 UI 는
+  로그인 없이 열립니다 — 폐쇄망 기본값입니다. 토큰이 없는 API 네임스페이스도 마찬가지로
+  무인증입니다. 신뢰 네트워크 밖에 노출하기 전에 이 기본 자세를 점검하세요.
+- **명단** — `dataDir/users/users.json`, **운영자가 직접 관리**하는
+  `{"username": ..., "role": "admin"|"user"}` JSON 배열. 파일을 편집해 사용자를 추가/제거하며,
+  로그인 시마다 새로 읽으므로 재시작 없이 반영됩니다. `adminUser`(+선택 `adminPassword`)를
+  설정하면 명단이 비어 있을 때 기동 시 관리자 1명이 시드됩니다.
+- **비밀번호** — 각 사용자의 **첫 로그인 때** 설정됩니다(TeeBox가 관리하는
+  `dataDir/users/credentials.json` 에 PBKDF2 해시로 저장, 평문 미보관). 비밀번호 초기화는
+  `credentials.json` 에서 해당 사용자 항목을 제거하면 됩니다 — 다음 로그인 때 새로 설정.
+- **로그인이 막는 것** — 관리 UI 의 변경 동작만(등록/수정/실행/kill/설정/shutdown). GET 페이지는
+  세션 없이도 읽기 전용으로 열람 가능합니다. `user` 역할은 본인이 등록한 스크립트만
+  수정/실행할 수 있고, `admin` 은 전부 가능하며 서버 shutdown 은 admin 전용입니다.
+  `/api/*` 네임스페이스는 영향 없음(토큰 기반, 소유권 검사 없음).
 
 ### 실행
 
@@ -75,7 +103,7 @@ duration 형식:
 
 - Linux x86_64 Java 25 runtime (`runtime/bin/java`) 또는 시스템 Java 25+
 - `setsid` (util-linux) - task process group 격리에 필요. Linux에 기본 포함
-- 개발 시 `../propertee-java` composite build 필요
+- 개발 시 형제 저장소 `../propertee2-java` 필요 (composite build; ProperTee v2 런타임)
 
 ---
 
@@ -101,10 +129,10 @@ Admin HTML UI: `/admin`
 Publisher API로 스크립트 등록 -> Client API로 run 제출 -> TeeBox가 실행 -> 결과 조회
 ```
 
-1. **스크립트 등록**: `POST /api/publisher/scripts/{scriptId}/versions/{version}`
-2. **버전 활성화**: `POST /api/publisher/scripts/{scriptId}/activate/{version}`
-3. **Run 제출**: `POST /api/client/scripts/{scriptId}/runs`
-4. **결과 폴링**: `GET /api/client/runs/{runId}`
+1. **스크립트 등록**: `POST /api/publisher/scripts` (body: `scriptId`, `content`, 선택 `version` — 공란이면 `"1"`, `"2"`, … 자동 증가 — 및 `activate`). 기존 스크립트에 버전 추가는 `POST /api/publisher/scripts/{scriptId}/versions`
+2. **버전 활성화**: `POST /api/publisher/scripts/{scriptId}/activate` (body: `{"version": "..."}`). 기존 스크립트에 추가된 버전은 자동 활성화되지 않음 — 활성화는 명시적 단계(스테이징/롤백 용도)이며, 버전 생략 실행은 최신이 아니라 **활성** 버전을 실행
+3. **Run 제출**: `POST /api/client/scripts/{scriptId}/runs` (202 + `runId` 반환; 비동기)
+4. **결과 폴링**: `GET /api/client/runs/{runId}` (요약), `.../status`, `.../result`
 
 운영 권장 패턴:
 - job submit 스크립트는 job id를 확보하면 바로 종료
@@ -269,7 +297,7 @@ curl -s -o report.json http://host:18080/api/client/runs/$RUN_ID/result-stream
 propertee.teebox.streamRoots=/var/lib/teebox/exports:/mnt/shared
 ```
 
-**라이프사이클(참조만):** 디스크립터는 경로만 참조하며 TeeBox 가 파일을 복사·소유하지 않습니다. 파일은 결과 조회 전까지 존재해야 하고, 스트림 결과는 active 윈도우 동안 가용합니다(24h 후 아카이브 시 resultData 가 null 화).
+**라이프사이클(참조만):** 디스크립터는 경로만 참조하며 TeeBox 가 파일을 복사·소유하지 않습니다. 파일은 결과 조회 전까지 존재해야 합니다. 디스크립터 자체는 다른 run 결과처럼 아카이브를 넘어 유지되므로(1.15.1+ — 이전 버전은 24h 후 아카이브 시 삭제) 스트림 결과는 **참조 파일이 존재하는 한 run 이 purge 될 때까지** 조회 가능합니다.
 
 ### Run 종료 Webhook (callback)
 
@@ -436,16 +464,18 @@ do_something_else
 wait $WORKER_PID
 ```
 
-### `SLEEP()` 중첩 주의 (현재 런타임 동작)
+### `SLEEP()` 동작 (ProperTee v2 런타임)
 
-`SLEEP(ms)`의 협력적(비차단) 동작은 **최상위 문장** 또는 **worker로 직접 spawn**한 경우(`thread a: SLEEP(500)`)에만 적용됩니다. `SLEEP`이 **`loop`/함수/`if`/`monitor` 본문 안**에서 실행되면, 현재 ProperTee Java 런타임은 이를 **blocking** `Thread.sleep` fallback으로 처리합니다:
+ProperTee v2 런타임(TeeBox 1.0.0+)에서 **`SLEEP(ms)` 는 위치와 무관하게 완전 협력적**입니다 —
+최상위 문장이든, `loop`/`if`/함수 본문 중첩이든, `multi`/`monitor` 블록 안이든 동일합니다.
+sleep 중인 fiber 만 그 자리에서 중단되고, 해당 run 의 다른 `multi` worker 와 `monitor` tick 은
+계속 진행되며, 다른 run 에는 아무 영향이 없습니다. (중첩 `SLEEP` 이 blocking `Thread.sleep` 으로
+처리되던 v1 런타임의 제약은 더 이상 적용되지 않습니다.)
 
-- sleep 시간은 정확합니다(더 이상 즉시 리턴하지 않음).
-- 다만 **해당 run의 scheduler 스레드를 차단**하므로, 그 run의 다른 `multi` worker와 `monitor` tick이 sleep 동안 진행되지 않습니다.
-- **다른 run에는 영향 없습니다** — 각 run은 자체 pool 스레드에서 실행됩니다.
-- 단일 스레드 스크립트는 영향받지 않습니다.
-
-권장: 주기 작업은 하나의 run 안에서 `loop … do SLEEP(...) end`로 오래 도는 대신, **짧은 스크립트를 외부 스케줄러/cron으로 주기 호출**하세요. 동시 worker/monitor 진행에 의존한다면 `multi`/`monitor` 본문 내 `SLEEP`은 피하세요. (향후 런타임 릴리스에서 중첩 `SLEEP`이 완전 협력적으로 개선됩니다.)
+운영 권장은 그대로 유효합니다: 주기 작업은 하나의 run 이 `loop … SLEEP(...)` 으로 오래 도는
+대신 **짧은 스크립트를 외부 스케줄러/cron 으로 주기 호출**하세요 — 장수명 run 은 수명 내내
+글로벌 `maxRuns` 풀의 슬롯 하나를 점유하고, 서버 재시작 시 진행 상황을 잃습니다
+(`SERVER_RESTARTED`).
 
 ---
 
@@ -457,9 +487,11 @@ wait $WORKER_PID
 ```
 Active (0~24h) -> Archived (24h~7d) -> Purged (7d~)
 ```
-- Active: 전체 로그 (stdout/stderr 최대 200줄), 스레드 정보 유지
-- Archived: 스레드 목록 제거, stdout 50줄/stderr 20줄로 축소
+- Active: 전체 로그 (stdout/stderr 최대 200줄), 스레드 정보, 입력 properties, 결과 유지
+- Archived: 스레드 목록·입력 properties 제거, stdout 50줄/stderr 20줄로 축소. **run 결과(`resultData`)는 purge 까지 유지** (1.15.1+ — 이전 버전은 아카이브 시 삭제되어 300자 `resultSummary` 만 남았음)
 - Purged: 디스크에서 삭제
+
+(기간은 시스템 프로퍼티 `propertee.teebox.runRetentionMs` / `runArchiveRetentionMs` — §1 참고.)
 
 **Task:**
 - 동일한 retention 구조 (`propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`)
@@ -468,11 +500,25 @@ Active (0~24h) -> Archived (24h~7d) -> Purged (7d~)
 
 ```
 dataDir/
-  runs/            # run 상태 JSON 파일
-  tasks/           # task 메타데이터, stdout/stderr 로그
+  runs/            # run 상태 JSON 파일 (run 당 <runId>.json 하나)
+  tasks/           # task 메타데이터, stdout/stderr 로그 (task 당 task-<id>/ 디렉터리)
   script-registry/ # 등록된 스크립트 버전
+  users/           # 관리 UI 로그인 명단 + 비밀번호 해시 (§1 참고)
   webhooks/        # webhook 전달 outbox (webhookEnabled 시에만)
 ```
+
+**index 파일은 사라졌습니다 (1.14+).** `runs/index.json` 과 `tasks/index.json` 은 더 이상
+존재하지 않습니다 — run/task 목록은 인메모리 index 로 서빙되며, 기동 시 데이터 파일에서
+재구축됩니다. 운영 시 유의점:
+
+- 구버전이 남긴 레거시 `index.json` 은 **기동 시 자동 삭제**됩니다. 삭제가 불가능하면(권한 등)
+  **TeeBox 는 해당 파일명을 명시하며 기동을 거부**합니다 — 수동으로 제거하세요. (오래된 index
+  가 남으면, 이후 구버전으로 롤백했을 때 그 사이 기록된 run/task 가 목록에서 영구히 숨습니다.)
+- 1.14 미만 버전으로의 롤백은 안전합니다: 구버전은 index 파일이 없으면 데이터 파일에서 새로
+  재구축합니다.
+- `runs/` 에 임의 파일을 두지 마세요 — 기동 시 모든 `*.json` 을 스캔합니다. 손상되었거나
+  무관한 파일은 경고 후 건너뛰며(run 파일의 `runId` 는 파일명과 일치해야 함) 기동을 막지는
+  않습니다.
 
 ---
 
@@ -525,17 +571,29 @@ logs/
 2026-03-24 10:30:20.456 [ERROR] [RunManager] Run failed: run-abc -- RuntimeException: ...
 ```
 
+**Access 로그:** 전용 `access` 로거가 **`/api/*` 요청당 한 줄**을 기록합니다 — 메서드,
+경로(+쿼리), 클라이언트 IP(`X-Forwarded-For` 첫 홉 우선), 응답 상태, 소요 ms:
+
+```
+GET /api/client/runs?limit=10 from 127.0.0.1 -> 200 (4ms)
+```
+
+요청/응답 **본문은 기록하지 않습니다**(토큰·스크립트 소스·대용량 페이로드가 실릴 수 있음).
+`/admin`, `/health`, `/` 는 access 로그 대상이 아닙니다. `log4j2.xml` 의
+`<Logger name="access" level="..."/>` 로 독립적으로 조정/무음화할 수 있습니다.
+
 **주요 로그 컴포넌트:**
 
 | 컴포넌트 | 내용 |
 |----------|------|
 | `TeeBox` | 서버 시작/종료 |
+| `access` | `/api/*` 요청당 한 줄 (위 참고) |
 | `AUDIT` | Task 명령 허용/차단 |
 | `API` | API 요청 에러 |
 | `AdminUI` | Admin UI 에러 |
 | `RunManager` | Run 실행 실패, flush/maintenance 에러 |
-| `TaskEngine` | Task 인덱스/라이프사이클 에러, 프로세스 그룹 kill 실패 |
-| `RunStore` | Run store I/O 에러 |
+| `TaskEngine` | Task 라이프사이클 에러, 프로세스 그룹 kill 실패, 레거시 index 정리 |
+| `RunStore` | Run store I/O 에러, 파싱 불가 run 파일 스킵, 레거시 index 정리 |
 
 ### 안전한 종료 (Graceful Shutdown)
 

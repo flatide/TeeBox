@@ -40,30 +40,59 @@ propertee.teebox.maxRuns=64
 |----------|---------|-------------|
 | `bind` | `127.0.0.1` | Bind address |
 | `port` | `18080` | Listening port |
-| `dataDir` | (required) | Data directory (runs, tasks, script-registry) |
+| `dataDir` | (required) | Data directory (runs, tasks, script-registry, users) |
 | `maxRuns` | `64` | Maximum number of concurrent runs |
 | `apiToken` | none | Bearer token shared across all APIs (fallback) |
 | `clientApiToken` | none | Token specific to `/api/client` |
 | `publisherApiToken` | none | Token specific to `/api/publisher` |
 | `adminApiToken` | none | Token specific to `/api/admin` |
-| `runRetentionMs` | `24h` | Run retention before transitioning to archived |
-| `runArchiveRetentionMs` | `7d` | Archived run retention before deletion |
-| `maintenanceIntervalMs` | `1m` | Background maintenance interval |
+| `adminUser` | none | Bootstrap admin-UI login: seeds the user roster with this admin when the roster is empty. See "Admin UI login" below. |
+| `adminPassword` | none | Optional initial password for `adminUser` (otherwise it is set on that admin's first login). |
 | `streamRoots` | `dataDir` | Allowed roots for `STREAM_FILE` results (a `File.pathSeparator`-separated list of directories; `:` on Linux/macOS, `;` on Windows). A streamable file path must canonicalize within one of these. See §3. |
 | `webhookEnabled` | `false` | Enable run-terminal webhook delivery (opt-in). When off, a run submitted with a `callback` is rejected with HTTP 400. See §3. |
 | `webhookUrlAllowlist` | none | **Comma-separated** `host[:port]` allowlist for callback URLs (required when enabled — an unset allowlist rejects every callback). A `host` entry matches any port; `host:port` must match exactly. |
 | `webhookTimeoutMs` | `10000` | Per-POST connect/read timeout (ms) for webhook delivery. |
+
+**Duration / retention knobs — system properties ONLY.** The following are read exclusively as
+`-D` system properties and are **silently ignored if put in `teebox.properties`** — set them via
+`JAVA_OPTS` (e.g. `JAVA_OPTS="-Dpropertee.teebox.runRetentionMs=48h"`):
+
+| System property | Default | Description |
+|-----------------|---------|-------------|
+| `propertee.teebox.runRetentionMs` | `24h` | Run retention before transitioning to archived |
+| `propertee.teebox.runArchiveRetentionMs` | `7d` | Archived run retention before deletion (purge) |
+| `propertee.teebox.maintenanceIntervalMs` | `1m` | Background maintenance interval |
+| `propertee.teebox.scriptRetentionMs` | `7d` | Soft-deleted script retention before purge |
+| `propertee.task.retentionMs` | `24h` | Task retention before archival |
+| `propertee.task.archiveRetentionMs` | `7d` | Archived task retention before deletion |
+| `propertee.teebox.logDir` | `logs` | Log output directory (see §7) |
+
+Duration format: a bare number = ms, or suffixes `ms`, `s`, `m`, `h`, `d` (e.g. `500ms`, `30s`, `1m`, `24h`, `7d`).
 
 Environment variables:
 - `PROPERTEE_TEEBOX_CONFIG` — Path to the configuration file (default: `conf/teebox.properties`)
 - `JAVA_HOME` — Java installation path
 - `JAVA_OPTS` — JVM options (`-Xmx`, `-D`, etc.). System properties take precedence over the configuration file.
 
-Duration format:
-- `runRetentionMs`, `runArchiveRetentionMs`, `maintenanceIntervalMs`
-- `propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`
-- Supported suffixes: `ms`, `s`, `m`, `h`, `d`
-- Examples: `500ms`, `30s`, `1m`, `24h`, `7d`
+### Admin UI login (multi-user)
+
+The `/admin` HTML UI has its own cookie/session login, **independent of the API Bearer tokens**:
+
+- **No roster ⇒ fully open.** With no user roster (and no `adminUser` to seed one), the admin UI
+  requires no login — the closed-network default. Likewise, an API namespace with no token stays
+  unauthenticated. Review this posture before exposing TeeBox beyond a trusted network.
+- **Roster** — `dataDir/users/users.json`, an **operator-managed** JSON array of
+  `{"username": ..., "role": "admin"|"user"}`. Add/remove users by editing the file; it is read
+  fresh on every login, so edits apply without a restart. Setting `adminUser` (and optionally
+  `adminPassword`) seeds the roster with one admin at startup when it is missing/empty.
+- **Passwords** — a user sets their password on **first login** (stored as a PBKDF2 hash in the
+  TeeBox-managed `dataDir/users/credentials.json`; plaintext is never stored). To reset a password,
+  remove that user's entry from `credentials.json` — the next login sets a new one.
+- **What login gates** — only mutating admin-UI actions (register/edit/run/kill/settings/shutdown).
+  All GET pages stay viewable read-only without a session. Regular (`user` role) accounts may only
+  modify/run scripts they own (registered themselves); `admin` accounts may act on everything, and
+  server shutdown is admin-only. The `/api/*` namespaces are unaffected (token-gated, no ownership
+  checks).
 
 ### Running
 
@@ -75,7 +104,7 @@ Duration format:
 
 - Linux x86_64 Java 25 runtime (`runtime/bin/java`) or system Java 25+
 - `setsid` (util-linux) — Required for task process group isolation. Included by default on Linux.
-- For development, a `../propertee-java` composite build is required.
+- For development, the sibling `../propertee2-java` repo is required (composite build; the ProperTee v2 runtime).
 
 ---
 
@@ -101,10 +130,10 @@ Full API specification: `swagger.yaml` (OpenAPI 3.0)
 Register script via Publisher API → Submit run via Client API → TeeBox executes → Retrieve results
 ```
 
-1. **Register script**: `POST /api/publisher/scripts/{scriptId}/versions/{version}`
-2. **Activate version**: `POST /api/publisher/scripts/{scriptId}/activate/{version}`
-3. **Submit run**: `POST /api/client/scripts/{scriptId}/runs`
-4. **Poll results**: `GET /api/client/runs/{runId}`
+1. **Register script**: `POST /api/publisher/scripts` (body: `scriptId`, `content`, optional `version` — blank ⇒ auto-increment `"1"`, `"2"`, … — and `activate`). Add a version to an existing script with `POST /api/publisher/scripts/{scriptId}/versions`.
+2. **Activate version**: `POST /api/publisher/scripts/{scriptId}/activate` (body: `{"version": "..."}`). A version added to an existing script never auto-activates — activation is an explicit step (staging/rollback); version-less runs execute the **active** version, not the newest.
+3. **Submit run**: `POST /api/client/scripts/{scriptId}/runs` (returns 202 + `runId`; async)
+4. **Poll results**: `GET /api/client/runs/{runId}` (summary), `.../status`, `.../result`
 
 Recommended operational patterns:
 - A job-submit script should exit as soon as it obtains the job id.
@@ -252,7 +281,7 @@ The embeddable client offers `streamRunResult(runId, OutputStream)` and the one-
 propertee.teebox.streamRoots=/var/lib/teebox/exports:/mnt/shared
 ```
 
-**Lifecycle (reference-only):** the descriptor only references the path — TeeBox does not copy or own the file. The file must outlive the result fetch, and the stream result is available during the active window (resultData is nulled when the run is archived after 24h).
+**Lifecycle (reference-only):** the descriptor only references the path — TeeBox does not copy or own the file. The file must outlive the result fetch. The descriptor itself survives archival like any run result (1.15.1+; older versions dropped it when the run archived after 24h), so a stream result stays fetchable until the run is purged — as long as the referenced file still exists.
 
 ### Run-Terminal Webhooks (callback)
 
@@ -447,16 +476,18 @@ do_something_else
 wait $WORKER_PID
 ```
 
-### `SLEEP()` Nesting Caveat (current runtime behavior)
+### `SLEEP()` Behavior (ProperTee v2 runtime)
 
-`SLEEP(ms)` is cooperative (non-blocking) only at a statement's top level, or when spawned directly as a worker (`thread a: SLEEP(500)`). When `SLEEP` runs **inside a `loop`, function, `if`, or `monitor` body**, the current ProperTee Java runtime honors it with a **blocking** `Thread.sleep` fallback:
+On the ProperTee v2 runtime (TeeBox 1.0.0+), **`SLEEP(ms)` is fully cooperative wherever it
+appears** — statement level, nested in `loop`/`if`/function bodies, or inside `multi`/`monitor`
+blocks. The sleeping fiber suspends in place while the run's other `multi` workers and `monitor`
+ticks keep advancing, and other runs are never affected. (The old v1-runtime limitation where a
+nested `SLEEP` fell back to a blocking `Thread.sleep` no longer applies.)
 
-- The sleep duration is correct (it no longer silently returns instantly).
-- But it **blocks that run's scheduler thread**, so the run's other `multi` workers and `monitor` ticks do **not** advance during the sleep.
-- Other runs are **not** affected — each run executes on its own pool thread.
-- Single-threaded scripts are unaffected.
-
-Practical guidance: for periodic work, prefer a short script invoked by an external scheduler/cron over a long `loop … do SLEEP(...) end` inside one run; and avoid `SLEEP` inside a `multi`/`monitor` body if you rely on concurrent worker/monitor progress. (A future runtime release makes nested `SLEEP` fully cooperative.)
+Operational guidance stands regardless: for periodic work, prefer a short script invoked by an
+external scheduler/cron over one long-lived run holding a `loop … SLEEP(...)` — long-running runs
+occupy a slot of the global `maxRuns` pool for their whole lifetime and lose progress on a server
+restart (`SERVER_RESTARTED`).
 
 ---
 
@@ -468,9 +499,11 @@ Practical guidance: for periodic work, prefer a short script invoked by an exter
 ```
 Active (0~24h) → Archived (24h~7d) → Purged (7d~)
 ```
-- Active: Full logs (up to 200 lines of stdout/stderr), thread info retained
-- Archived: Thread list removed, stdout trimmed to 50 lines and stderr to 20 lines
+- Active: Full logs (up to 200 lines of stdout/stderr), thread info, input properties, result retained
+- Archived: Thread list and input properties removed, stdout trimmed to 50 lines and stderr to 20 lines. **The run's result (`resultData`) is kept until purge** (1.15.1+ — older versions dropped it at archival, leaving only the 300-char `resultSummary`)
 - Purged: Deleted from disk
+
+(Windows are the `propertee.teebox.runRetentionMs` / `runArchiveRetentionMs` system properties — see §1.)
 
 **Task:**
 - Same retention model (`propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`)
@@ -479,11 +512,26 @@ Active (0~24h) → Archived (24h~7d) → Purged (7d~)
 
 ```
 dataDir/
-  runs/           # run state JSON files
-  tasks/          # task metadata, stdout/stderr logs
+  runs/           # run state JSON files (one <runId>.json per run)
+  tasks/          # task metadata, stdout/stderr logs (one task-<id>/ dir per task)
   script-registry/ # registered script versions
+  users/          # admin-UI login roster + password hashes (see §1)
   webhooks/       # webhook delivery outbox (only when webhookEnabled)
 ```
+
+**Index files are gone (1.14+).** `runs/index.json` and `tasks/index.json` no longer exist — run
+and task listings are served from in-memory indexes, rebuilt from the data files at startup.
+Operational notes:
+
+- A leftover legacy `index.json` from an older version is **deleted automatically at startup**. If
+  it cannot be deleted (permissions), **TeeBox refuses to start** with a message naming the file —
+  remove it manually. (A stale index would make a rolled-back older TeeBox hide runs/tasks written
+  since.)
+- Rolling back to a pre-1.14 version is safe: the old version rebuilds its index from the data
+  files when the file is missing.
+- Do not place stray files in `runs/` — every `*.json` there is scanned at startup. A corrupt or
+  foreign file is skipped with a warning (a run file's `runId` must match its filename), never
+  blocking startup.
 
 ---
 
@@ -556,14 +604,26 @@ logs/
 2026-03-24 10:30:20.456 [ERROR] [RunManager] Run failed: run-abc -- RuntimeException: ...
 ```
 
+**Access log:** a dedicated `access` logger writes **one line per `/api/*` request** — method,
+path (+query), client IP (first `X-Forwarded-For` hop honored), response status, elapsed ms:
+
+```
+GET /api/client/runs?limit=10 from 127.0.0.1 -> 200 (4ms)
+```
+
+Request/response **bodies are never logged** (they can carry tokens, script source, or large
+payloads). `/admin`, `/health`, and `/` are not access-logged. Tune or silence it independently in
+`log4j2.xml` via `<Logger name="access" level="..."/>`.
+
 **Key log components:**
 
 | Component | Contents |
 |-----------|----------|
 | `TeeBox` | Server startup/shutdown |
+| `access` | One line per `/api/*` request (see above) |
 | `AUDIT` | Task command allow/block |
 | `API` | API request errors |
 | `AdminUI` | Admin UI errors |
 | `RunManager` | Run execution failures, flush/maintenance errors |
-| `TaskEngine` | Task index/lifecycle errors, process group kill failures |
-| `RunStore` | Run store I/O errors |
+| `TaskEngine` | Task lifecycle errors, process group kill failures, legacy-index cleanup |
+| `RunStore` | Run store I/O errors, skipped unparseable run files, legacy-index cleanup |

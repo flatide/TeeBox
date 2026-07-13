@@ -530,6 +530,21 @@ The `result` value per case (live-verified with the demos `demo/teebox/06_run_en
 > The envelope rides only on the `getRunResult` response (an additive field; existing fields
 > unchanged). The admin `RunInfo` surface and the webhook payload deliberately do not carry it.
 
+> **Troubleshooting — "my result looks doubly nested"** (`resultData` itself carrying
+> `{status, ok, value}`, or even a whole `{runId, resultData, result}` object): the script returned
+> a **builtin Result without unwrapping it**. Builtins like `JSON_PARSE`, `SHELL`, and `HTTP_*`
+> return a Result (`{status, ok, value}`) rather than the bare value — so `return JSON_PARSE(text)`
+> stores that Result as the run's data, and the run envelope wraps it once more (case 2 above,
+> by design — TeeBox never inspects the value). Unwrap before returning:
+>
+> ```
+> return UNWRAP(JSON_PARSE(text))   // the parsed value; a parse failure fails the run right here
+> ```
+>
+> The same applies to `SHELL` (`return {"out": UNWRAP(s)}`), and when chaining runs, return only
+> the piece you need from a fetched run-result response (e.g. `body.resultData`) — returning the
+> whole response object is what produces the `resultData`-inside-`resultData` shape.
+
 #### `getRunTasksSummary(runId)` response example
 
 Aggregates that run's tasks by status.
