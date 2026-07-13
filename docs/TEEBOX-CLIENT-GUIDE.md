@@ -35,7 +35,7 @@ import com.flatide.teebox.client.TeeBoxClient;
 Build the jar from the TeeBox repository.
 
 ```bash
-./gradlew clientJar          # → build/libs/teebox-client-<version>.jar  (e.g. teebox-client-0.12.0.jar)
+./gradlew clientJar          # → build/libs/teebox-client-<version>.jar  (e.g. teebox-client-1.15.1.jar)
 ./gradlew clientSourcesJar   # (optional) sources jar for IDE source attachment
 ```
 
@@ -49,7 +49,7 @@ Example of adding the jar to the host build:
 ```groovy
 // Gradle
 dependencies {
-    implementation files('libs/teebox-client-0.12.0.jar')
+    implementation files('libs/teebox-client-1.15.1.jar')
 }
 ```
 
@@ -58,7 +58,7 @@ dependencies {
 <dependency>
   <groupId>com.flatide</groupId>
   <artifactId>teebox-client</artifactId>
-  <version>0.12.0</version>
+  <version>1.15.1</version>
 </dependency>
 ```
 
@@ -347,7 +347,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // external SHE
 >
 > - For a stream result, `getRunResult(runId)` returns `resultData = {stream:true, contentType, size}` (the server path is hidden), so you can tell it is a stream target. Receive the actual bytes with `streamRunResult`.
 > - The `STREAM_FILE` path must be **within an allowed root** (`propertee.teebox.streamRoots`, default `dataDir`). If it is outside, the script fails.
-> - Because it is by reference, **the file must exist until the result is retrieved** (TeeBox does not copy or own it).
+> - Because it is by reference, **the file must exist until the result is retrieved** (TeeBox does not copy or own it). The descriptor itself stays fetchable until run purge (servers ≥ 1.15.1; older servers dropped it at archival, ~24h).
 
 > **stdout/stderr lookup**: a run has **two separately-captured output streams**, and one `getRunStdout(runId)` call returns both. **Queryable even during execution (RUNNING)** and after termination.
 > - **Script `PRINT(...)` output** → `lines` / `lineCount` (or `getRunStdoutLines(runId)`). The server keeps **a ring buffer of only the most recent `MAX_LOG_LINES` (default 200 lines)**, so very long output keeps only the tail.
@@ -443,6 +443,13 @@ String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING
   }
 }
 ```
+
+> **Result retention (server-side)**: a terminal run's `resultData` stays fetchable until the run
+> is **purged** (server default 7 days, `runArchiveRetentionMs`). On servers **older than 1.15.1**,
+> archival (default 24h, `runRetentionMs`) dropped `resultData` and left only the 300-char
+> `resultSummary` — against those servers, fetch results within a day. Archival still trims the
+> captured stdout/stderr to the last 50/20 lines and drops per-thread details, so fetch full logs
+> while the run is fresh.
 
 #### The run-result envelope — `getRunEnvelope(runId)`, example per case
 
@@ -814,6 +821,8 @@ try {
 - **Numbers come in as `Double`**. Integer conversion needed.
 - **Running with the version omitted = the active version** (not the newest).
 - The wait helpers' timeout is **client-side only** and does not stop server execution. Re-poll with the same `runId`.
+- **Run data has a server-side lifetime**: results stay until the run is purged (default 7 days); captured stdout/stderr are trimmed to the last 50/20 lines once the run is archived (default 24h). Servers older than 1.15.1 also dropped the result itself at archival — fetch within a day there.
+- Script/version **deletion, duplication, restore, and execution settings** are operator actions (publisher API / admin UI) — outside this client's scope.
 - Process termination (kill) is out of the client's scope — use the TeeBox admin UI/`/api/admin/...` or the admin API.
 - If you modify the file directly, keep it **Java 7 compatible** (no lambdas/streams/`java.time`).
 

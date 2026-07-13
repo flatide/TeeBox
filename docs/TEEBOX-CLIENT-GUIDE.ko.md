@@ -35,7 +35,7 @@ import com.flatide.teebox.client.TeeBoxClient;
 TeeBox 저장소에서 jar 를 빌드합니다.
 
 ```bash
-./gradlew clientJar          # → build/libs/teebox-client-<버전>.jar  (예: teebox-client-0.12.0.jar)
+./gradlew clientJar          # → build/libs/teebox-client-<버전>.jar  (예: teebox-client-1.15.1.jar)
 ./gradlew clientSourcesJar   # (선택) IDE 소스 첨부용 sources jar
 ```
 
@@ -49,7 +49,7 @@ TeeBox 저장소에서 jar 를 빌드합니다.
 ```groovy
 // Gradle
 dependencies {
-    implementation files('libs/teebox-client-0.12.0.jar')
+    implementation files('libs/teebox-client-1.15.1.jar')
 }
 ```
 
@@ -58,7 +58,7 @@ dependencies {
 <dependency>
   <groupId>com.flatide</groupId>
   <artifactId>teebox-client</artifactId>
-  <version>0.12.0</version>
+  <version>1.15.1</version>
 </dependency>
 ```
 
@@ -347,7 +347,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // 외부 SHELL
 >
 > - `getRunResult(runId)` 는 스트림 결과의 경우 `resultData = {stream:true, contentType, size}` (서버 경로는 숨김)를 돌려주므로 스트림 대상임을 알 수 있습니다. 실제 바이트는 `streamRunResult` 로 받으세요.
 > - `STREAM_FILE` 경로는 **허용 루트 내**(`propertee.teebox.streamRoots`, 기본 `dataDir`)여야 합니다. 밖이면 스크립트가 실패합니다.
-> - 참조 방식이라 **파일은 결과 조회 전까지 존재**해야 합니다(TeeBox가 복사·소유하지 않음).
+> - 참조 방식이라 **파일은 결과 조회 전까지 존재**해야 합니다(TeeBox가 복사·소유하지 않음). 디스크립터 자체는 run 이 purge 될 때까지 조회 가능합니다(1.15.1 이상 서버; 구버전은 아카이브 시점(~24h)에 사라졌음).
 
 > **stdout/stderr 조회**: 한 실행에는 **따로 캡처되는 두 출력 스트림**이 있고, `getRunStdout(runId)` 한 번 호출로 둘 다 받습니다. **실행 중(RUNNING)에도 조회 가능**하고 종료 후에도 남아 있습니다.
 > - **스크립트 `PRINT(...)` 출력** → `lines` / `lineCount` (또는 `getRunStdoutLines(runId)`). 서버가 **최근 `MAX_LOG_LINES`(기본 200줄)만 보관하는 ring buffer**라 아주 긴 출력은 끝부분만 남습니다.
@@ -443,6 +443,13 @@ String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING
   }
 }
 ```
+
+> **결과 보존 기간(서버 측)**: 종료된 run 의 `resultData` 는 run 이 **완전 삭제(purge)될 때까지**
+> 조회할 수 있습니다(서버 기본 7일, `runArchiveRetentionMs`). **1.15.1 미만 서버**에서는
+> 아카이브 시점(기본 24시간, `runRetentionMs`)에 `resultData` 가 삭제되고 300자 `resultSummary`
+> 만 남았으므로, 구버전 서버 상대로는 하루 안에 결과를 가져오세요. 아카이브 시 캡처된
+> stdout/stderr 가 마지막 50/20줄로 잘리고 스레드 상세가 사라지는 것은 지금도 동일하므로,
+> 전체 로그가 필요하면 run 이 신선할 때 조회하세요.
 
 #### 실행 결과 봉투(envelope) — `getRunEnvelope(runId)` 케이스별 예시
 
@@ -813,6 +820,8 @@ try {
 - **숫자는 `Double`** 로 들어옵니다. 정수 변환 필요.
 - **버전 생략 실행 = 활성 버전** (최신 아님).
 - 대기 헬퍼의 타임아웃은 **클라이언트 측**일 뿐, 서버 실행을 멈추지 않습니다. 같은 `runId` 로 재폴링하세요.
+- **run 데이터에는 서버 측 수명이 있습니다**: 결과는 run 이 purge 될 때까지(기본 7일) 조회 가능하고, 캡처된 stdout/stderr 는 아카이브 시점(기본 24시간)에 마지막 50/20줄로 잘립니다. 1.15.1 미만 서버는 아카이브 시 결과 자체도 삭제했으므로 하루 안에 가져오세요.
+- 스크립트/버전의 **삭제·복제·복구·실행 설정 변경**은 운영자 작업(publisher API / 관리 UI)으로, 이 클라이언트의 범위 밖입니다.
 - 프로세스 중단(kill)은 클라이언트 범위 밖입니다 — TeeBox 관리 UI/`/api/admin/...` 또는 admin API 를 사용하세요.
 - 파일을 직접 수정할 경우 **Java 7 호환**(람다/스트림/`java.time` 금지)을 유지하세요.
 
