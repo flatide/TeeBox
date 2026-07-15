@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.15.2
 
 - **Admin UI: killing a task no longer freezes the page.** The kill button used to run the whole
   termination sequence on the HTTP handler thread before responding — SIGTERM→SIGKILL escalation
