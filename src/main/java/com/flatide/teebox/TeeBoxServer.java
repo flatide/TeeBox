@@ -477,7 +477,8 @@ public class TeeBoxServer {
                         writeText(exchange, HttpURLConnection.HTTP_BAD_METHOD, "Use POST");
                         return;
                     }
-                    writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderRunPage(suffix));
+                    boolean killRequested = "1".equals(parseQuery(exchange).get("killRequested"));
+                    writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderRunPage(suffix, killRequested));
                     return;
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/runs/") && path.endsWith("/kill-tasks")) {
@@ -486,8 +487,11 @@ public class TeeBoxServer {
                         forbidden(exchange);
                         return;
                     }
-                    runManager.killRunTasks(runId);
-                    redirect(exchange, "/admin/runs/" + urlPath(runId));
+                    killInBackground("run " + runId, () -> {
+                        int killed = runManager.killRunTasks(runId);
+                        TeeBoxLog.info("AdminUI", "Background kill-tasks for run " + runId + ": " + killed + " task(s) killed");
+                    });
+                    redirect(exchange, "/admin/runs/" + urlPath(runId) + "?killRequested=1");
                     return;
                 }
                 if ("GET".equals(method) && path.startsWith("/admin/tasks/")) {
@@ -496,7 +500,8 @@ public class TeeBoxServer {
                         writeText(exchange, HttpURLConnection.HTTP_BAD_METHOD, "Use POST");
                         return;
                     }
-                    writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderTaskPage(suffix));
+                    boolean killRequested = "1".equals(parseQuery(exchange).get("killRequested"));
+                    writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderTaskPage(suffix, killRequested));
                     return;
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/tasks/") && path.endsWith("/kill")) {
@@ -506,11 +511,15 @@ public class TeeBoxServer {
                         return;
                     }
                     TaskInfo info = runManager.getTask(taskId);
-                    runManager.killTask(taskId);
+                    killInBackground("task " + taskId, () -> {
+                        if (!runManager.killTask(taskId)) {
+                            TeeBoxLog.warn("AdminUI", "Background kill for task " + taskId + " had no effect (already finished or unknown)");
+                        }
+                    });
                     if (info != null && info.runId != null) {
-                        redirect(exchange, "/admin/runs/" + urlPath(info.runId));
+                        redirect(exchange, "/admin/runs/" + urlPath(info.runId) + "?killRequested=1");
                     } else {
-                        redirect(exchange, "/admin/tasks/" + urlPath(taskId));
+                        redirect(exchange, "/admin/tasks/" + urlPath(taskId) + "?killRequested=1");
                     }
                     return;
                 }
@@ -1726,6 +1735,25 @@ public class TeeBoxServer {
         headers.set("Location", location);
         exchange.sendResponseHeaders(302, -1);
         exchange.close();
+    }
+
+    /**
+     * Runs an admin-UI kill on its own daemon thread so the handler can redirect immediately.
+     * A kill holds the per-task lock through its bounded waits (SIGTERM→SIGKILL exit polling,
+     * exit-code grace) — seconds per task, serial across a run's tasks — which used to stall the
+     * browser on the POST and stall the page's fragment auto-refresh behind the same lock. The
+     * /api/admin kill endpoints stay synchronous (their response reports the kill outcome).
+     */
+    private void killInBackground(String target, Runnable kill) {
+        Thread thread = new Thread(() -> {
+            try {
+                kill.run();
+            } catch (Exception e) {
+                TeeBoxLog.error("AdminUI", "Background kill failed for " + target, e);
+            }
+        }, "admin-ui-kill");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private String readBody(HttpExchange exchange) throws IOException {

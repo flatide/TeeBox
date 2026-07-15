@@ -137,6 +137,46 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void adminUiKillShouldRedirectImmediatelyAndKillInBackground() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("kill_task_ui", "v1",
+                "result = SHELL(\"" + testServer.script("sleep30") + "\")\n" +
+                "PRINT(result.ok)\n",
+                "ui kill test", Arrays.asList("test"), true);
+
+            String runId = (String) client.submitRun("kill_task_ui", null, new LinkedHashMap<String, Object>()).get("runId");
+            Assert.assertNotNull(runId);
+
+            Map<String, Object> detail = waitForRunWithTasks(testServer.baseUrl, runId, 1, 1, 8000L);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> tasks = (List<Map<String, Object>>) detail.get("tasks");
+            String taskId = (String) tasks.get(0).get("taskId");
+
+            // The UI kill hands the termination to a background thread and redirects at once,
+            // flagging the target page so it shows the kill-requested notice.
+            String location = postExpectingRedirect(testServer.baseUrl + "/admin/tasks/" + taskId + "/kill");
+            Assert.assertTrue("unexpected redirect: " + location, location.startsWith("/admin/runs/"));
+            Assert.assertTrue("missing killRequested flag: " + location, location.endsWith("?killRequested=1"));
+
+            String page = getHtml(testServer.baseUrl + location, 200);
+            Assert.assertTrue(page.contains("Kill requested"));
+
+            Map<String, Object> taskDetail = waitForTaskStatus(testServer.baseUrl, taskId, "killed", 10000L);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> taskInfo = (Map<String, Object>) taskDetail.get("task");
+            Assert.assertEquals("killed", taskInfo.get("status"));
+
+            // Kill-all-tasks for a run takes the same background path.
+            String runKillLocation = postExpectingRedirect(testServer.baseUrl + "/admin/runs/" + runId + "/kill-tasks");
+            Assert.assertTrue("missing killRequested flag: " + runKillLocation, runKillLocation.endsWith("?killRequested=1"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void serverShouldExposeStructuredResultContract() throws Exception {
         TestServer testServer = createServer();
         try {
@@ -1607,6 +1647,19 @@ public class TeeBoxServerTest {
         int status = conn.getResponseCode();
         Assert.assertEquals(expectedStatus, status);
         return readJsonMap(conn);
+    }
+
+    /** POST with an empty body, assert a 302, and return the Location header. */
+    private String postExpectingRedirect(String url) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setInstanceFollowRedirects(false);
+        conn.setRequestMethod("POST");
+        int code = conn.getResponseCode();
+        String location = conn.getHeaderField("Location");
+        conn.disconnect();
+        Assert.assertEquals(302, code);
+        Assert.assertNotNull(location);
+        return location;
     }
 
     private int postForm(String url, String formBody, String bearerToken) throws IOException {

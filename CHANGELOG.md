@@ -3,6 +3,18 @@
 All notable changes to TeeBox are documented here.
 
 ## Unreleased
+
+- **Admin UI: killing a task no longer freezes the page.** The kill button used to run the whole
+  termination sequence on the HTTP handler thread before responding — SIGTERM→SIGKILL escalation
+  with 1s exit polls, a 500ms exit-code grace read, meta persistence, all while holding the
+  per-task lock — so the browser sat on a pending POST for 3–4+ seconds (more when the process was
+  stuck in uninterruptible I/O), and the page's 5s auto-refresh queued up behind the same lock,
+  reading as a hang. `POST /admin/tasks/{id}/kill` and `POST /admin/runs/{id}/kill-tasks` now hand
+  the kill to a background thread and redirect immediately with `?killRequested=1`; the target
+  page shows a "Kill requested" notice and its auto-refresh picks up the KILLED state when the
+  kill lands. Kill-all over a run's N tasks (killed serially) benefits the most. The `/api/admin`
+  kill endpoints are unchanged — still synchronous, their response still reports the kill outcome.
+  Pinned by `adminUiKillShouldRedirectImmediatelyAndKillInBackground`.
 - **Editor: the syntax pre-check now runs client-side via the propertee-js `checkScript`.** The
   Check syntax button and the save interception used to POST to `/admin/scripts/validate` on every
   click; the ProperTee JS engine now ships a one-call `checkScript` (syntax + built-in typo lint,

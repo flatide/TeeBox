@@ -483,7 +483,7 @@ public class AdminPageRenderer {
         return sb.toString();
     }
 
-    public String renderRunPage(String runId) {
+    public String renderRunPage(String runId, boolean killRequested) {
         RunInfo run = runManager.getRun(runId);
         if (run == null) {
             return renderErrorPage("Run not found", runId);
@@ -499,6 +499,10 @@ public class AdminPageRenderer {
         sb.append("<span class='nav-sep'>|</span>");
         sb.append("<a href='/api/admin/runs/").append(urlPath(runId)).append("' class='link-subtle'>JSON</a>");
         sb.append("</div>");
+
+        if (killRequested) {
+            sb.append(killRequestedCallout());
+        }
 
         sb.append("<div id='run-detail-content'>");
         sb.append(renderRunDetailFragment(runId));
@@ -541,6 +545,14 @@ public class AdminPageRenderer {
         sb.append("</script>");
         sb.append(pageEnd());
         return sb.toString();
+    }
+
+    /** One-shot notice after an admin-UI kill POST: the kill runs in the background (the redirect
+     *  does not wait for it), so the state shown below may lag until the auto-refresh catches up.
+     *  Rendered outside the fragment-replaced region so the 5s refresh doesn't wipe it. */
+    private String killRequestedCallout() {
+        return "<div class='callout callout-warn'>Kill requested &mdash; terminating in the background. " +
+                "Status updates automatically; a kill can take a few seconds.</div>";
     }
 
     public String renderRunDetailFragment(String runId) {
@@ -681,7 +693,7 @@ public class AdminPageRenderer {
         return sb.toString();
     }
 
-    public String renderTaskPage(String taskId) {
+    public String renderTaskPage(String taskId, boolean killRequested) {
         TaskInfo info = runManager.getTask(taskId);
         if (info == null) {
             return renderErrorPage("Task not found", taskId);
@@ -701,6 +713,10 @@ public class AdminPageRenderer {
         sb.append("<span class='nav-sep'>|</span>");
         sb.append("<a href='/api/admin/tasks/").append(urlPath(taskId)).append("' class='link-subtle'>JSON</a>");
         sb.append("</div>");
+
+        if (killRequested) {
+            sb.append(killRequestedCallout());
+        }
 
         sb.append("<div id='task-detail-content'>");
         sb.append(renderTaskDetailFragment(taskId));
