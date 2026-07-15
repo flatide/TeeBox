@@ -281,7 +281,37 @@
             row.appendChild(panel);
             wireResizer(row, resizer, panel);
             syncPanelHeight(editor, panel);
+            wirePanelToggle(editor, resizer, panel);
         }
+    }
+
+    // TeeBox addition (not from the playground): the reference panel is hidden by default — most
+    // edits don't need it — and toggled by a small ƒ button pinned to the editor's top-right
+    // corner. The resizer hides with the panel. The choice persists per browser via localStorage
+    // (same pattern as the pages' auto-refresh toggle).
+    function wirePanelToggle(editor, resizer, panel) {
+        var KEY = 'teebox-fn-panel';
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'pt-fn-toggle';
+        btn.textContent = 'ƒ';
+        btn.title = 'Built-in function reference';
+        editor.appendChild(btn);
+        var open = false;
+        try { open = window.localStorage.getItem(KEY) === '1'; } catch (e) { }
+        function apply() {
+            resizer.style.display = open ? '' : 'none';
+            panel.style.display = open ? '' : 'none';
+            btn.classList.toggle('active', open);
+        }
+        btn.addEventListener('click', function () {
+            open = !open;
+            try {
+                if (open) { window.localStorage.setItem(KEY, '1'); } else { window.localStorage.removeItem(KEY); }
+            } catch (e) { }
+            apply();
+        });
+        apply();
     }
 
     // The panel stands exactly as tall as the code editor. The editor height is driven by the textarea

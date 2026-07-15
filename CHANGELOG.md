@@ -2,6 +2,24 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+- **Editor: the syntax pre-check now runs client-side via the propertee-js `checkScript`.** The
+  Check syntax button and the save interception used to POST to `/admin/scripts/validate` on every
+  click; the ProperTee JS engine now ships a one-call `checkScript` (syntax + built-in typo lint,
+  written to mirror that endpoint), so its browser bundle is inlined on the script detail page and
+  the check is instant with no server round-trip. The known-name set is NOT the JS engine's own:
+  the page injects the Java-runtime-enumerated catalog (engine + TeeBox host builtins — the same
+  set the server lint uses), so the two checks cannot disagree on what is a known function
+  (verified live: identical verdicts and identical unknown-function messages). If the bundle is
+  unavailable the old server POST is the automatic fallback, and server-side save validation stays
+  the backstop regardless. Costs ~360KB inlined on the script detail page only (TeeBox serves no
+  static files); the dashboard and list pages stay lean.
+- **Editor: the built-in function panel is now hidden by default, toggled by a ƒ button.** The
+  reference panel took a third of the editor width but most edits don't need it. A small ƒ button
+  pinned to the editor's top-right corner shows/hides the panel (the resize handle hides with it),
+  and the choice persists per browser (localStorage), so operators who keep it open keep it open.
+  Editor layout, highlighter, and panel content are unchanged.
+
 ## 1.15.1
 
 - **A run's result now survives archival.** Archiving (terminal age past `runRetentionMs`,

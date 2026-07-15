@@ -23,6 +23,11 @@ public class AdminPageRenderer {
      *  would block a separate /admin asset request anyway). */
     private static final String EDITOR_CSS = loadResource("/propertee-editor.css");
     private static final String EDITOR_JS = loadResource("/propertee-editor.js");
+    /** The propertee-js browser bundle, copied verbatim from ../propertee-js/docs/dist/ — provides
+     *  the client-side checkScript (syntax + builtin lint) used by the editor pre-check. Inlined
+     *  (TeeBox serves no static files) and emitted only on the script detail page. Refresh the
+     *  copy when the language spec moves. */
+    private static final String BUNDLE_JS = loadResource("/propertee-bundle.js");
 
     private static String loadResource(String path) {
         try (java.io.InputStream in = AdminPageRenderer.class.getResourceAsStream(path)) {
@@ -1161,6 +1166,7 @@ public class AdminPageRenderer {
             sb.append("</form></div>");
         }
 
+        sb.append(bundleScript());
         sb.append(editorScript());
         sb.append(pageEnd());
         return sb.toString();
@@ -1500,6 +1506,10 @@ public class AdminPageRenderer {
         return "<script>" + EDITOR_JS + "</script>";
     }
 
+    private String bundleScript() {
+        return "<script>" + BUNDLE_JS + "</script>";
+    }
+
     /**
      * Syntax pre-check wiring for the version-source editor: the Check-syntax button posts the
      * editor content to /admin/scripts/validate (the same parser the save rejects with) and renders
@@ -1509,20 +1519,53 @@ public class AdminPageRenderer {
      * a bad script through.
      */
     private String syntaxCheckScript() {
+        // Known-name set for the client-side lint: the same Java-runtime enumeration the server
+        // check uses (engine catalog + TeeBox host builtins), rendered into the page. The inlined
+        // propertee-js bundle has its own default set (the JS engine's) — authoritative names must
+        // come from the runtime that will actually execute the script, so the two checks can never
+        // disagree on what counts as a known function.
+        StringBuilder names = new StringBuilder();
+        for (String name : runManager.getKnownFunctionNames()) {
+            if (names.length() > 0) {
+                names.append(',');
+            }
+            names.append('\'').append(name).append('\'');
+        }
         StringBuilder sb = new StringBuilder();
         sb.append("<script>");
+        sb.append("var PT_KNOWN=[").append(names).append("];");
+        // Client-side check via the inlined propertee-js bundle (checkScript — syntax + builtin
+        // lint in one call, instant, no server round-trip). Returns null when the bundle is
+        // unavailable/broken, in which case the caller falls back to POST /admin/scripts/validate;
+        // the server-side save validation stays the backstop either way.
+        sb.append("function ptClientCheck(src){");
+        sb.append("if(typeof checkScript!=='function'||typeof ProperTeeCustomVisitor!=='function')return null;");
+        sb.append("if(!src||!src.trim())return {ok:false,errors:['content is required']};");
+        sb.append("try{");
+        sb.append("if(!window.__ptLintVisitor){");
+        sb.append("var fns={};for(var i=0;i<PT_KNOWN.length;i++){fns[PT_KNOWN[i]]=function(){};}");
+        sb.append("window.__ptLintVisitor=new ProperTeeCustomVisitor({},fns,{stdout:function(){},stderr:function(){}},{});");
+        sb.append("}");
+        sb.append("var r=checkScript(src,{visitor:window.__ptLintVisitor});");
+        sb.append("var errs=[];for(var j=0;j<r.problems.length;j++){var p=r.problems[j];");
+        sb.append("errs.push('Line '+p.line+':'+p.column+' - '+p.message);}");
+        sb.append("return {ok:r.ok===true,errors:errs};");
+        sb.append("}catch(e){return null;}");
+        sb.append("}");
+        sb.append("function ptRenderCheck(d,box){");
+        sb.append("box.style.display='block';");
+        sb.append("if(d.ok){box.className='syntax-ok';box.textContent='No syntax errors.';}");
+        sb.append("else{box.className='syntax-err';box.textContent=(d.errors||['Unknown error']).join('\\n').trim();}");
+        sb.append("}");
         sb.append("function ptCheckSyntax(done){");
         sb.append("var form=document.getElementById('version-source-form');");
         sb.append("var ta=form.querySelector(\"textarea[name='content']\");");
         sb.append("var box=document.getElementById('syntax-result');");
+        sb.append("var local=ptClientCheck(ta.value);");
+        sb.append("if(local){ptRenderCheck(local,box);if(done)done(local.ok);return;}");
         sb.append("fetch('/admin/scripts/validate',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'content='+encodeURIComponent(ta.value)})");
         sb.append(".then(function(r){return r.json();})");
-        sb.append(".then(function(d){");
-        sb.append("box.style.display='block';");
-        sb.append("if(d.ok){box.className='syntax-ok';box.textContent='No syntax errors.';}");
-        sb.append("else{box.className='syntax-err';box.textContent=(d.errors||['Unknown error']).join('\\n').trim();}");
-        sb.append("if(done)done(d.ok===true);");
-        sb.append("})");
+        sb.append(".then(function(d){ptRenderCheck(d,box);if(done)done(d.ok===true);})");
         sb.append(".catch(function(){box.style.display='none';if(done)done(true);});");
         sb.append("}");
         sb.append("(function(){");

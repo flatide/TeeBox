@@ -327,6 +327,12 @@ public class RunManager {
         return ScriptLint.check(content, scriptExecutor.knownFunctionNames());
     }
 
+    /** The callable ALL-CAPS name set enumerated from the executing runtime (engine catalog +
+     *  TeeBox host builtins) — the same set the server-side lint checks against. */
+    public java.util.Set<String> getKnownFunctionNames() {
+        return scriptExecutor.knownFunctionNames();
+    }
+
     /** Register an additional maintenance task to run on every maintenance cycle. */
     public void addMaintenanceTask(Runnable task) {
         if (task != null) {

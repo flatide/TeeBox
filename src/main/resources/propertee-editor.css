@@ -65,6 +65,19 @@
 /* width is the resize axis (set by the drag handle); height is synced to the editor in JS so the panel
    stands exactly as tall as the code area. min-width keeps it usable; overflow:hidden clips the list,
    which scrolls internally (.pt-fn-list is flex:1 1 auto; overflow-y:auto). */
+/* TeeBox addition: the builtin panel is hidden by default; this ƒ button (pinned to the editor's
+   top-right, above the code layers) toggles it. Overrides the admin pages' global `button` style. */
+.pt-fn-toggle {
+    position:absolute; top:6px; right:8px; z-index:5;
+    width:28px; height:28px; padding:0; border-radius:6px; box-sizing:border-box;
+    border:1px solid #585b70; background:#313244; color:#cdd6f4;
+    font-family:Georgia,'Times New Roman',serif; font-style:italic; font-size:16px; line-height:1;
+    cursor:pointer; transition:color 0.12s, border-color 0.12s, background 0.12s;
+    box-shadow:0 1px 3px rgba(0,0,0,0.4);
+}
+.pt-fn-toggle:hover { color:#fff; border-color:#89b4fa; background:#45475a; }
+.pt-fn-toggle.active { color:#1e1e2e; border-color:#89b4fa; background:#89b4fa; }
+
 .pt-fn-panel {
     flex:0 0 auto; width:300px; min-width:220px; display:flex; flex-direction:column; background:#181825;
     border:1px solid #313244; border-radius:6px; overflow:hidden; max-height:640px;

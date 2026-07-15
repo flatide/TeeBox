@@ -149,6 +149,26 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("TeeBox Host category in the panel docs", html.contains("cat: 'TeeBox Host'"));
             Assert.assertTrue("STREAM_FILE documented in the panel", html.contains("name: 'STREAM_FILE'"));
 
+            // The builtin panel is hidden by default and toggled by the ƒ button pinned to the
+            // editor's top-right (TeeBox addition); the choice persists via localStorage.
+            Assert.assertTrue("panel toggle wiring shipped (JS + CSS)", html.contains("pt-fn-toggle"));
+            Assert.assertTrue("panel visibility persisted per browser", html.contains("teebox-fn-panel"));
+            Assert.assertTrue("panel toggle function present", html.contains("function wirePanelToggle"));
+
+            // The editor pre-check runs client-side via the inlined propertee-js bundle
+            // (checkScript), seeded with the Java-runtime-enumerated known-name set so the client
+            // and server lints can never disagree; the server validate endpoint stays the fallback.
+            Assert.assertTrue("propertee-js bundle inlined (checkScript chain)",
+                    html.contains("lintUnknownFunctions"));
+            Assert.assertTrue("client-first check wired", html.contains("ptClientCheck"));
+            int knownStart = html.indexOf("var PT_KNOWN=[");
+            Assert.assertTrue("runtime known-name set rendered", knownStart >= 0);
+            String knownList = html.substring(knownStart, html.indexOf("];", knownStart));
+            Assert.assertTrue("TeeBox host builtins in the injected known set",
+                    knownList.contains("'STREAM_FILE'") && knownList.contains("'THUMBNAIL'"));
+            Assert.assertTrue("engine builtins in the injected known set", knownList.contains("'SHELL'"));
+
+
             // The Active Version Source card is now the single edit + add-version surface: the separate
             // "Add New Version" card is gone, and it carries both a "Save" (overwrite active) and a
             // "Save as new version" button that overrides the form action to the register endpoint.
@@ -162,6 +182,8 @@ public class TeeBoxMultiUserUiTest {
             String dashboard = getBody(base, "/admin", alice);
             Assert.assertFalse("editor JS should not bloat non-editor pages",
                     dashboard.contains("function highlightSyntax"));
+            Assert.assertFalse("the propertee-js bundle should not bloat non-editor pages",
+                    dashboard.contains("lintUnknownFunctions"));
         } finally {
             server.stop();
         }
