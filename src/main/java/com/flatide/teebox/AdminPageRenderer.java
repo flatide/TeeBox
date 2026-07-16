@@ -377,6 +377,7 @@ public class AdminPageRenderer {
         sb.append("<option value='RUNNING'>RUNNING</option>");
         sb.append("<option value='COMPLETED'>COMPLETED</option>");
         sb.append("<option value='FAILED'>FAILED</option>");
+        sb.append("<option value='CANCELLED'>CANCELLED</option>");
         sb.append("<option value='SERVER_RESTARTED'>SERVER_RESTARTED</option>");
         sb.append("</select>");
         // Unchecked (default) = hide instant runs; checked = include them. (The fragment/API still
@@ -484,6 +485,10 @@ public class AdminPageRenderer {
     }
 
     public String renderRunPage(String runId, boolean killRequested) {
+        return renderRunPage(runId, killRequested, false);
+    }
+
+    public String renderRunPage(String runId, boolean killRequested, boolean cancelRequested) {
         RunInfo run = runManager.getRun(runId);
         if (run == null) {
             return renderErrorPage("Run not found", runId);
@@ -502,6 +507,9 @@ public class AdminPageRenderer {
 
         if (killRequested) {
             sb.append(killRequestedCallout());
+        }
+        if (cancelRequested) {
+            sb.append(cancelRequestedCallout());
         }
 
         sb.append("<div id='run-detail-content'>");
@@ -555,6 +563,13 @@ public class AdminPageRenderer {
                 "Status updates automatically; a kill can take a few seconds.</div>";
     }
 
+    /** One-shot notice after an admin-UI cancel POST: the engine aborts cooperatively and the
+     *  task kill runs in the background, so CANCELLED appears when the run unwinds. */
+    private String cancelRequestedCallout() {
+        return "<div class='callout callout-warn'>Cancel requested &mdash; the run is being aborted. " +
+                "Status updates automatically; it becomes CANCELLED once the engine unwinds.</div>";
+    }
+
     public String renderRunDetailFragment(String runId) {
         RunInfo run = runManager.getRun(runId);
         if (run == null) return "<p class='empty'>Run not found</p>";
@@ -565,6 +580,13 @@ public class AdminPageRenderer {
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>").append(escape(runId)).append("</h2>");
         if (canModifyScriptId(run.scriptId)) {
+            boolean cancellable = run.status == RunStatus.QUEUED || run.status == RunStatus.PENDING
+                || run.status == RunStatus.RUNNING;
+            if (cancellable) {
+                sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/cancel' ");
+                sb.append("style='display:inline;margin-right:6px'>");
+                sb.append("<button type='submit' class='btn-danger btn-sm'>Cancel Run</button></form>");
+            }
             sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/kill-tasks'>");
             sb.append("<button type='submit' class='btn-danger btn-sm'>Kill All Tasks</button></form>");
         }
@@ -1164,6 +1186,7 @@ public class AdminPageRenderer {
         sb.append("<div class='form-row'><label>Props (JSON)</label><input type='text' name='propsJson' value='{}'/></div>");
         sb.append("<div class='form-row-inline'>");
         sb.append("<div><label>Max Iterations</label><input type='text' name='maxIterations' value='1000' style='width:100px'/></div>");
+        sb.append("<div><label>Timeout (ms, 0 = server default)</label><input type='text' name='timeoutMs' value='0' style='width:100px'/></div>");
         sb.append("<label class='checkbox-label'><input type='checkbox' name='warnLoops'/> Warn Loops</label>");
         sb.append("<button type='submit'>Run</button>");
         sb.append("</div></form></div>");
@@ -1633,7 +1656,7 @@ public class AdminPageRenderer {
             if ("running".equals(lower)) css = "badge badge-running";
             else if ("completed".equals(lower) || "done".equals(lower)) css = "badge badge-completed";
             else if ("error".equals(lower) || "failed".equals(lower)) css = "badge badge-error";
-            else if ("killed".equals(lower)) css = "badge badge-killed";
+            else if ("killed".equals(lower) || "cancelled".equals(lower)) css = "badge badge-killed";
             else if ("queued".equals(lower) || "pending".equals(lower)) css = "badge badge-queued";
             else if ("waiting".equals(lower) || "blocked".equals(lower)) css = "badge badge-blocked";
             else if ("ready".equals(lower)) css = "badge badge-ready";

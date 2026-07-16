@@ -249,6 +249,7 @@ public class TeeBoxServer {
                     request.props = parsePropsJson(form.get("propsJson"));
                     request.maxIterations = parseInt(form.get("maxIterations"), 1000);
                     request.warnLoops = "on".equals(form.get("warnLoops")) || "true".equals(form.get("warnLoops"));
+                    request.timeoutMs = parseLong(form.get("timeoutMs"), 0L);
                     // Admin-UI submits record the logged-in operator as the submitter (null when the UI
                     // is open / no roster) — same field the API fills from the X-TeeBox-User header.
                     request.userId = session != null ? session.username : null;
@@ -473,12 +474,15 @@ public class TeeBoxServer {
                 }
                 if ("GET".equals(method) && path.startsWith("/admin/runs/")) {
                     String suffix = path.substring("/admin/runs/".length());
-                    if (suffix.endsWith("/kill-tasks")) {
+                    if (suffix.endsWith("/kill-tasks") || suffix.endsWith("/cancel")) {
                         writeText(exchange, HttpURLConnection.HTTP_BAD_METHOD, "Use POST");
                         return;
                     }
-                    boolean killRequested = "1".equals(parseQuery(exchange).get("killRequested"));
-                    writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderRunPage(suffix, killRequested));
+                    Map<String, String> query = parseQuery(exchange);
+                    boolean killRequested = "1".equals(query.get("killRequested"));
+                    boolean cancelRequested = "1".equals(query.get("cancelRequested"));
+                    writeHtml(exchange, HttpURLConnection.HTTP_OK,
+                        pageRenderer.renderRunPage(suffix, killRequested, cancelRequested));
                     return;
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/runs/") && path.endsWith("/kill-tasks")) {
@@ -492,6 +496,19 @@ public class TeeBoxServer {
                         TeeBoxLog.info("AdminUI", "Background kill-tasks for run " + runId + ": " + killed + " task(s) killed");
                     });
                     redirect(exchange, "/admin/runs/" + urlPath(runId) + "?killRequested=1");
+                    return;
+                }
+                if ("POST".equals(method) && path.startsWith("/admin/runs/") && path.endsWith("/cancel")) {
+                    String runId = path.substring("/admin/runs/".length(), path.length() - "/cancel".length());
+                    if (!canModifyRun(session, runId)) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    // cancelRun's synchronous part is quick (abort flag + latch; the task kill runs
+                    // on its own background thread inside cancelRun), so no killInBackground here.
+                    String who = session != null ? session.username : null;
+                    runManager.cancelRun(runId, "Cancelled by admin" + (who != null ? " " + who : ""));
+                    redirect(exchange, "/admin/runs/" + urlPath(runId) + "?cancelRequested=1");
                     return;
                 }
                 if ("GET".equals(method) && path.startsWith("/admin/tasks/")) {
@@ -712,6 +729,12 @@ public class TeeBoxServer {
     }
 
     private void handleClientApi(HttpExchange exchange, String method, String path) throws IOException {
+        if ("POST".equals(method) && path.startsWith("/api/client/runs/") && path.endsWith("/cancel")) {
+            String runId = path.substring("/api/client/runs/".length(), path.length() - "/cancel".length());
+            String userId = sanitizeUserId(exchange.getRequestHeaders().getFirst(USER_HEADER));
+            handleRunCancel(exchange, runId, "Cancelled by client" + (userId != null ? " " + userId : ""));
+            return;
+        }
         if ("GET".equals(method) && "/api/client/runs".equals(path)) {
             Map<String, String> query = parseQuery(exchange);
             String status = trimToNull(query.get("status"));
@@ -931,6 +954,11 @@ public class TeeBoxServer {
             result.put("runId", runId);
             result.put("killed", Integer.valueOf(runManager.killRunTasks(runId)));
             writeJson(exchange, HttpURLConnection.HTTP_OK, result);
+            return;
+        }
+        if ("POST".equals(method) && path.startsWith("/api/admin/runs/") && path.endsWith("/cancel")) {
+            String runId = path.substring("/api/admin/runs/".length(), path.length() - "/cancel".length());
+            handleRunCancel(exchange, runId, "Cancelled by admin");
             return;
         }
         if ("GET".equals(method) && "/api/admin/tasks".equals(path)) {
@@ -1195,6 +1223,14 @@ public class TeeBoxServer {
         Object warnLoops = raw.get("warnLoops");
         if (warnLoops instanceof Boolean) {
             request.warnLoops = ((Boolean) warnLoops).booleanValue();
+        }
+        Object timeoutMs = raw.get("timeoutMs");
+        if (timeoutMs instanceof Number) {
+            long value = ((Number) timeoutMs).longValue();
+            if (value < 0) {
+                throw new IllegalArgumentException("timeoutMs must be >= 0");
+            }
+            request.timeoutMs = value;
         }
     }
 
@@ -1473,6 +1509,7 @@ public class TeeBoxServer {
      * <pre>
      *   COMPLETED               → {status:"done",    ok:true,  value:&lt;resultData&gt;}
      *   FAILED                  → {status:"error",   ok:false, value:&lt;errorMessage&gt;}
+     *   CANCELLED               → {status:"error",   ok:false, value:&lt;cancel reason&gt;}
      *   QUEUED/PENDING/RUNNING  → {status:"running", ok:false, value:{}}
      *   SERVER_RESTARTED        → {status:"error",   ok:false, value:"server restarted"}
      * </pre>
@@ -1495,6 +1532,12 @@ public class TeeBoxServer {
             envelope.put("status", "error");
             envelope.put("ok", Boolean.FALSE);
             envelope.put("value", run.errorMessage != null ? run.errorMessage : "");
+        } else if (status == RunStatus.CANCELLED) {
+            // Must precede the running fall-through: a cancelled run left in the "running" arm
+            // would poll as unfinished forever.
+            envelope.put("status", "error");
+            envelope.put("ok", Boolean.FALSE);
+            envelope.put("value", run.errorMessage != null ? run.errorMessage : "cancelled");
         } else if (status == RunStatus.SERVER_RESTARTED) {
             envelope.put("status", "error");
             envelope.put("ok", Boolean.FALSE);
@@ -1550,6 +1593,15 @@ public class TeeBoxServer {
         out.put("stream", stdout ? "stdout" : "stderr");
         out.put("lines", lines);
         out.put("lineCount", Integer.valueOf(lines.size()));
+        // Total ever appended vs retained (the script output is a ring buffer): lets a consumer
+        // tell "exactly N lines" from "the last N of many". Legacy persisted runs (counters read
+        // back as 0) are clamped so truncated stays false for them.
+        int totalLines = stdout ? run.stdoutTotalLines : run.stderrTotalLines;
+        if (totalLines < lines.size()) {
+            totalLines = lines.size();
+        }
+        out.put("totalLineCount", Integer.valueOf(totalLines));
+        out.put("truncated", Boolean.valueOf(totalLines > lines.size()));
 
         // Merge the run's task (SHELL) output. listTasksForRun is newest-first; reverse to the order
         // the tasks were spawned so multi-task output reads top-to-bottom chronologically.
@@ -1738,6 +1790,30 @@ public class TeeBoxServer {
     }
 
     /**
+     * Shared API run-cancel: 404 unknown run, 409 already terminal, else 202 with
+     * {@code {runId, status, cancelRequested:true}} — the cancel of a RUNNING run is asynchronous
+     * (the engine aborts cooperatively; the SHELL task kill runs on a background thread), so
+     * callers poll the run until it reaches CANCELLED (or COMPLETED, if the run won the race).
+     */
+    private void handleRunCancel(HttpExchange exchange, String runId, String reason) throws IOException {
+        RunInfo run = runManager.getRun(runId);
+        if (run == null) {
+            writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
+            return;
+        }
+        if (!runManager.cancelRun(runId, reason)) {
+            writeJson(exchange, HttpURLConnection.HTTP_CONFLICT, errorMap("Run already finished"));
+            return;
+        }
+        RunInfo after = runManager.getRun(runId);
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("runId", runId);
+        result.put("status", after != null && after.status != null ? after.status.name() : null);
+        result.put("cancelRequested", Boolean.TRUE);
+        writeJson(exchange, HttpURLConnection.HTTP_ACCEPTED, result);
+    }
+
+    /**
      * Runs an admin-UI kill on its own daemon thread so the handler can redirect immediately.
      * A kill holds the per-task lock through its bounded waits (SIGTERM→SIGKILL exit polling,
      * exit-code grace) — seconds per task, serial across a run's tasks — which used to stall the
@@ -1787,6 +1863,15 @@ public class TeeBoxServer {
         if (raw == null || raw.trim().length() == 0) return defaultValue;
         try {
             return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private long parseLong(String raw, long defaultValue) {
+        if (raw == null || raw.trim().length() == 0) return defaultValue;
+        try {
+            return Long.parseLong(raw.trim());
         } catch (NumberFormatException e) {
             return defaultValue;
         }

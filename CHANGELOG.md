@@ -2,6 +2,48 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.16.0
+
+Run cancellation, run execution timeouts, and runaway-run containment — built on the engine's new
+cooperative abort API (propertee2 0.16.0). Until now a script stuck in an `infinite` loop could not
+be stopped at all: the kill endpoints only reach SHELL child processes, drain waits for active
+runs, and a spinning script pinned a virtual-thread carrier (JDK vthreads are not time-sliced),
+degrading every other run on the server.
+
+- **Cancel a run**: `POST /api/client/runs/{id}/cancel` (client token; `X-TeeBox-User` recorded in
+  the reason for audit) and `POST /api/admin/runs/{id}/cancel`, plus a Cancel Run button on the
+  admin run page (owner-checked like kill-tasks). QUEUED/PENDING runs cancel immediately (the
+  per-script concurrency slot is released — a leaked slot would deadlock the script); a RUNNING
+  run is aborted cooperatively and its SHELL tasks are killed on a background thread, so the
+  endpoints return **202** at once and callers poll to `CANCELLED`. A run that completes before
+  the abort lands stays `COMPLETED` — a finished run is never flipped.
+- **New terminal status `CANCELLED`** (reason in `errorMessage`: who cancelled, or the timeout),
+  wired through the terminal sets (archival/purge, webhook delivery, both TeeBoxClients'
+  `waitForRunTerminal`), the run envelope (`{status:"error", ok:false, value:<reason>}` — a
+  cancelled run never polls as still-running), the runs-page filter, and swagger. Rollback note:
+  a pre-1.16 TeeBox reading a persisted CANCELLED run parses its status as null and flips it to
+  SERVER_RESTARTED on startup — cosmetic only.
+- **Run execution timeout**: per-run `timeoutMs` submit field, server-wide `runTimeoutMs` config
+  default (off unless set; duration syntax). The clock starts at RUNNING — queue wait does not
+  count, so a busy server never times out runs that were never given CPU. Expiry goes through the
+  same cancel path (`CANCELLED`, reason `"Cancelled: run exceeded timeout (N ms)"`).
+- **Runaway containment** (engine side, propertee2 0.16.0): the abort checkpoint also
+  `Thread.yield()`s every 1024th statement/iteration, so one CPU-bound script can no longer starve
+  the other runs' virtual threads of carrier time.
+- **Script-output truncation is now visible**: the run stdout/stderr endpoints report
+  `totalLineCount` and `truncated` alongside the ring-buffered `lines` (the cap itself is now
+  configurable via `runOutputMaxLines`, default unchanged at 200 — raising it multiplies run
+  memory, so it stays conservative).
+- Shipped client (`client/…/TeeBoxClient.java`, Java 7): `cancelRun(runId)` + CANCELLED in the
+  terminal set — without it, `waitForRunTerminal` would spin on cancelled runs until timeout.
+- Known limit (inherent to the cooperative engine): a host call that never returns delays the
+  abort until it returns. In practice that is only SHELL without a `timeout` option — and the
+  cancel kills the run's tasks, which unblocks the wait; the HTTP builtins have 30s timeouts.
+
+Pinned by `RunCancelTest` (cancel across RUNNING/QUEUED/PENDING, slot release, thread teardown,
+task kill, 404/409, admin UI redirect+notice, output cap) and `RunTimeoutTest` (per-run, server
+default, off-by-default, no stray cancel of fast runs, queue wait excluded). 216 tests green.
+
 ## 1.15.2
 
 - **Admin UI: killing a task no longer freezes the page.** The kill button used to run the whole

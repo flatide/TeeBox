@@ -30,6 +30,12 @@ public class RunInfo {
     public Long endedAt;
     public int maxIterations;
     public String iterationLimitBehavior;
+    /** Per-run execution timeout (ms, from RUNNING); 0 = server default. */
+    public long timeoutMs;
+    /** Total script stdout/stderr lines ever appended (the retained lists are ring-capped);
+     *  legacy persisted runs read back as 0. */
+    public int stdoutTotalLines;
+    public int stderrTotalLines;
     public boolean hasExplicitReturn;
     public Object resultData;
     public String resultSummary;
@@ -59,6 +65,9 @@ public class RunInfo {
         copy.endedAt = endedAt;
         copy.maxIterations = maxIterations;
         copy.iterationLimitBehavior = iterationLimitBehavior;
+        copy.timeoutMs = timeoutMs;
+        copy.stdoutTotalLines = stdoutTotalLines;
+        copy.stderrTotalLines = stderrTotalLines;
         copy.hasExplicitReturn = hasExplicitReturn;
         copy.resultData = copyValue(resultData);
         copy.resultSummary = resultSummary;

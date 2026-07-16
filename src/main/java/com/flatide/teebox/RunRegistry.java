@@ -251,9 +251,21 @@ public class RunRegistry {
         }
     }
 
+    public void markCancelled(RunInfo run, String message) {
+        synchronized (run) {
+            run.status = RunStatus.CANCELLED;
+            run.endedAt = Long.valueOf(System.currentTimeMillis());
+            run.errorMessage = message != null ? message : "Cancelled";
+            persistRun(run);
+        }
+    }
+
     public void appendLog(RunInfo run, boolean stdout, String line) {
         synchronized (run) {
             List<String> target = stdout ? run.stdoutLines : run.stderrLines;
+            // Count every appended line so API consumers can tell "exactly N" from "N of many"
+            // after the ring below drops older lines.
+            if (stdout) run.stdoutTotalLines++; else run.stderrTotalLines++;
             target.add(line);
             while (target.size() > maxLogLines) {
                 target.remove(0);
@@ -421,6 +433,7 @@ public class RunRegistry {
     }
 
     private boolean isTerminal(RunStatus status) {
-        return status == RunStatus.COMPLETED || status == RunStatus.FAILED || status == RunStatus.SERVER_RESTARTED;
+        return status == RunStatus.COMPLETED || status == RunStatus.FAILED
+            || status == RunStatus.CANCELLED || status == RunStatus.SERVER_RESTARTED;
     }
 }

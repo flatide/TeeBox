@@ -307,7 +307,7 @@ public class WebhookDispatcher {
 
     private static boolean isTerminal(RunStatus status) {
         return status == RunStatus.COMPLETED || status == RunStatus.FAILED
-            || status == RunStatus.SERVER_RESTARTED;
+            || status == RunStatus.CANCELLED || status == RunStatus.SERVER_RESTARTED;
     }
 
     private static Map<String, Object> buildPayload(RunInfo run) {

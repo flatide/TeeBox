@@ -160,6 +160,35 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/client/runs/{runId}/cancel:
+    post:
+      tags: [Client]
+      summary: Cancel a run
+      description: >
+        Cancel a run in any non-terminal state. QUEUED/PENDING runs are cancelled immediately;
+        a RUNNING run is aborted cooperatively (the engine stops at its next checkpoint and the
+        run's SHELL tasks are killed on a background thread), so this returns 202 as soon as the
+        cancel is requested — poll the run until it reaches `CANCELLED` (or `COMPLETED`, if the
+        run finished first; a completed run is never flipped). Any client-token holder may cancel
+        any run (the client token is a shared credential; `X-TeeBox-User` is recorded in the
+        cancel reason for audit only).
+      operationId: clientCancelRun
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '202':
+          description: Cancel requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelRunResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Run already finished
+
   /api/client/runs/{runId}/status:
     get:
       tags: [Client]
@@ -428,6 +457,28 @@ paths:
                   killed:
                     type: integer
                     description: Number of tasks killed
+
+  /api/admin/runs/{runId}/cancel:
+    post:
+      tags: [Admin]
+      summary: Cancel a run
+      description: Same behavior as the client cancel endpoint, under the admin token.
+      operationId: adminCancelRun
+      security:
+        - AdminToken: []
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '202':
+          description: Cancel requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelRunResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Run already finished
 
   /api/admin/tasks:
     get:
@@ -915,6 +966,14 @@ components:
           type: boolean
           default: false
           description: Warn instead of error on loop iteration limit
+        timeoutMs:
+          type: integer
+          format: int64
+          default: 0
+          description: >
+            Wall-clock execution timeout in ms, measured from RUNNING (queue wait excluded);
+            on expiry the run is cancelled (status CANCELLED, reason in errorMessage).
+            0 = use the server default (`runTimeoutMs` config), which itself defaults to off.
 
     ScriptRunRequest:
       type: object
@@ -936,6 +995,14 @@ components:
           type: boolean
           default: false
           description: Warn instead of error on loop iteration limit
+        timeoutMs:
+          type: integer
+          format: int64
+          default: 0
+          description: >
+            Wall-clock execution timeout in ms, measured from RUNNING (queue wait excluded);
+            on expiry the run is cancelled (status CANCELLED, reason in errorMessage).
+            0 = use the server default (`runTimeoutMs` config), which itself defaults to off.
 
     RunInfo:
       type: object
@@ -981,6 +1048,16 @@ components:
         iterationLimitBehavior:
           type: string
           enum: [error, warn]
+        timeoutMs:
+          type: integer
+          format: int64
+          description: Per-run execution timeout (ms, from RUNNING); 0 = server default
+        stdoutTotalLines:
+          type: integer
+          description: Total stdout lines ever appended (stdoutLines is ring-capped); 0 for legacy runs
+        stderrTotalLines:
+          type: integer
+          description: Total stderr lines ever appended (stderrLines is ring-capped); 0 for legacy runs
         hasExplicitReturn:
           type: boolean
         resultData:
@@ -1016,7 +1093,7 @@ components:
 
     RunStatus:
       type: string
-      enum: [QUEUED, PENDING, RUNNING, COMPLETED, FAILED, SERVER_RESTARTED]
+      enum: [QUEUED, PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, SERVER_RESTARTED]
       description: |
         Run execution status:
           * `QUEUED` - waiting in the global run queue
@@ -1024,6 +1101,9 @@ components:
           * `RUNNING` - currently executing
           * `COMPLETED` - finished successfully
           * `FAILED` - finished with an error
+          * `CANCELLED` - stopped by operator/client cancel or run timeout (reason in errorMessage;
+            added in 1.16.0 — a pre-1.16 TeeBox reading a persisted CANCELLED run parses its status
+            as null and shows it as SERVER_RESTARTED after restart, cosmetic only)
           * `SERVER_RESTARTED` - was interrupted by a server restart
 
     RunThreadInfo:
@@ -1172,6 +1252,7 @@ components:
         The whole run viewed as a ProperTee Result — one shape for every outcome, exactly like a
         `multi` collection entry (the run is "thread #0"). `COMPLETED` → `{status: done, ok: true,
         value: <resultData>}`; `FAILED` → `{status: error, ok: false, value: <errorMessage>}`;
+        `CANCELLED` → `{status: error, ok: false, value: <cancel reason>}`;
         not yet terminal → `{status: running, ok: false, value: {}}`; `SERVER_RESTARTED` →
         `{status: error, ok: false, value: "server restarted"}`. A script that deliberately returns
         a ProperTee Result nests it inside `value` (the shape is never inspected). A value-less run
@@ -1204,11 +1285,30 @@ components:
           enum: [stdout, stderr]
         lines:
           type: array
-          description: Captured output lines (most recent MAX_LOG_LINES, default 200)
+          description: Captured output lines (most recent `runOutputMaxLines`, default 200)
           items:
             type: string
         lineCount:
           type: integer
+          description: Retained line count (== lines.length)
+        totalLineCount:
+          type: integer
+          description: >
+            Total lines the script ever printed on this stream — larger than lineCount when the
+            ring buffer dropped older lines. Runs persisted before 1.16.0 report it as lineCount.
+        truncated:
+          type: boolean
+          description: True when older lines were dropped (totalLineCount > lineCount)
+
+    CancelRunResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+        status:
+          $ref: '#/components/schemas/RunStatus'
+        cancelRequested:
+          type: boolean
 
     ClientTaskSummary:
       type: object

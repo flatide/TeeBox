@@ -6,5 +6,6 @@ public enum RunStatus {
     RUNNING,
     COMPLETED,
     FAILED,
+    CANCELLED,   // stopped by operator/client cancel or run timeout (terminal; reason in errorMessage)
     SERVER_RESTARTED
 }

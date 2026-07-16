@@ -47,6 +47,15 @@ public class RunManager {
     private final long maintenanceIntervalMs;
     private final WebhookDispatcher webhookDispatcher;   // null when webhooks are disabled
     private final java.util.concurrent.ConcurrentHashMap<String, Future<?>> activeRuns = new java.util.concurrent.ConcurrentHashMap<String, Future<?>>();
+    // --- run cancel/timeout state (per runId; entries live only while the run is active) ---
+    /** Engine abort handles, registered by executeRun's onCancelHandle once the engine exists. */
+    private final java.util.concurrent.ConcurrentHashMap<String, Runnable> abortHandles = new java.util.concurrent.ConcurrentHashMap<String, Runnable>();
+    /** Cancel-latch: reason keyed by runId. Set by cancelRun BEFORE acting, re-checked at handle
+     *  registration and at run completion — closes every register/complete race. */
+    private final java.util.concurrent.ConcurrentHashMap<String, String> cancelReasons = new java.util.concurrent.ConcurrentHashMap<String, String>();
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>> timeoutTasks = new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>>();
+    private final ScheduledExecutorService timeoutScheduler;
+    private final long defaultRunTimeoutMs;
     private final java.util.List<Runnable> extraMaintenanceTasks = new java.util.concurrent.CopyOnWriteArrayList<Runnable>();
     private final java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher> outputWatchers = new java.util.concurrent.ConcurrentHashMap<String, TaskOutputWatcher>();
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger> scriptActiveCount = new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>();
@@ -82,7 +91,11 @@ public class RunManager {
         }
         long runRetentionMs = parseDurationProperty("runRetentionMs", DEFAULT_RUN_RETENTION_MS);
         long runArchiveRetentionMs = parseDurationProperty("runArchiveRetentionMs", DEFAULT_RUN_ARCHIVE_RETENTION_MS);
-        this.runRegistry = new RunRegistry(this.dataDir, MAX_LOG_LINES, ARCHIVED_STDOUT_LINES, ARCHIVED_STDERR_LINES, runRetentionMs, runArchiveRetentionMs);
+        int maxLogLines = (teeBoxConfig != null && teeBoxConfig.runOutputMaxLines > 0)
+            ? teeBoxConfig.runOutputMaxLines : MAX_LOG_LINES;
+        this.defaultRunTimeoutMs = (teeBoxConfig != null && teeBoxConfig.runTimeoutMs > 0)
+            ? teeBoxConfig.runTimeoutMs : 0L;
+        this.runRegistry = new RunRegistry(this.dataDir, maxLogLines, ARCHIVED_STDOUT_LINES, ARCHIVED_STDERR_LINES, runRetentionMs, runArchiveRetentionMs);
         this.scriptRegistry = new ScriptRegistry(this.dataDir);
         this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId());
         this.managedTaskEngine.init();
@@ -95,6 +108,14 @@ public class RunManager {
         this.runExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(Math.max(1, maxConcurrentRuns));
         this.immediateExecutor = (ThreadPoolExecutor) Executors.newCachedThreadPool();
         this.maintenanceScheduler = Executors.newSingleThreadScheduledExecutor();
+        this.timeoutScheduler = Executors.newSingleThreadScheduledExecutor(new java.util.concurrent.ThreadFactory() {
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "teebox-run-timeout");
+                t.setDaemon(true);
+                return t;
+            }
+        });
         if (teeBoxConfig != null && teeBoxConfig.webhookEnabled) {
             // Keep webhook tombstones longer than the run purge horizon so a delivered record always
             // outlives its run; reconcile then never re-enqueues an already-delivered run.
@@ -153,6 +174,7 @@ public class RunManager {
         run.createdAt = System.currentTimeMillis();
         run.maxIterations = request.maxIterations > 0 ? request.maxIterations : 1000;
         run.iterationLimitBehavior = request.warnLoops ? "warn" : "error";
+        run.timeoutMs = request.timeoutMs > 0 ? request.timeoutMs : 0;
         run.properties = sanitizeProperties(request.props);
         run.callback = request.callback;
         run.submittedBy = request.userId;
@@ -436,6 +458,155 @@ public class RunManager {
         return managedTaskEngine.killRun(runId);
     }
 
+    /**
+     * Cancel a run in any non-terminal state. PENDING/QUEUED runs are cancelled immediately;
+     * a RUNNING run is aborted cooperatively (this returns as soon as the abort is requested —
+     * the terminal CANCELLED transition happens when the engine unwinds, so callers poll).
+     * The run's SHELL tasks are killed on a background thread (a kill blocks seconds per task).
+     *
+     * <p>Implemented as a state-re-judging loop: every arm can lose a race with the run moving
+     * to its next state (pending→queued promotion, executor pickup, engine-handle registration),
+     * so a failed arm re-reads the status and retries instead of giving up.
+     *
+     * @return true if a cancel was applied or requested; false if the run is unknown or already terminal.
+     */
+    public boolean cancelRun(String runId, String reason) {
+        final RunInfo run = runRegistry.getRawRun(runId);
+        if (run == null) {
+            return false;
+        }
+        String cancelReason = reason != null ? reason : "Cancelled";
+        // Latch FIRST: executeRun re-checks this map when it registers the abort handle and again
+        // when the engine returns, so a cancel that races either point still lands.
+        cancelReasons.putIfAbsent(runId, cancelReason);
+        long deadline = System.currentTimeMillis() + 5000L;
+        while (true) {
+            RunStatus status;
+            synchronized (run) {
+                status = run.status;
+            }
+            if (status == RunStatus.PENDING) {
+                if (removeFromPendingQueue(run)) {
+                    runRegistry.markCancelled(run, cancelReason);
+                    cancelReasons.remove(runId);
+                    if (webhookDispatcher != null) {
+                        webhookDispatcher.onRunTerminal(run);
+                    }
+                    TeeBoxLog.info("RunManager", "Cancelled pending run " + runId);
+                    return true;
+                }
+                // promoted to QUEUED concurrently — re-judge
+            } else if (status == RunStatus.QUEUED) {
+                Future<?> future = activeRuns.get(runId);
+                if (future != null && future.cancel(false)) {
+                    runRegistry.markCancelled(run, cancelReason);
+                    cancelReasons.remove(runId);
+                    activeRuns.remove(runId);
+                    // The run took a per-script slot at submit but executeRun will never release it.
+                    dequeueNextRun(run.scriptId);
+                    if (webhookDispatcher != null) {
+                        webhookDispatcher.onRunTerminal(run);
+                    }
+                    TeeBoxLog.info("RunManager", "Cancelled queued run " + runId);
+                    return true;
+                }
+                // future not yet published, or already picked up by the executor — re-judge
+            } else if (status == RunStatus.RUNNING) {
+                Runnable handle = abortHandles.get(runId);
+                if (handle != null) {
+                    handle.run();
+                }
+                // handle == null ⇒ executeRun hasn't registered it yet; the cancelReasons latch
+                // makes onCancelHandle self-abort the moment it does. Either way the run unwinds.
+                killRunTasksInBackground(runId);   // unblocks SHELL waits + kills children
+                TeeBoxLog.info("RunManager", "Cancel requested for running run " + runId);
+                return true;
+            } else {
+                // Terminal (or the run completed while we were latching): drop the latch so it
+                // doesn't leak into a later state, and report "nothing to cancel".
+                cancelReasons.remove(runId);
+                return false;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                // States normally settle in milliseconds; if we are still losing races after 5s,
+                // fall back on the latch (the run WILL be cancelled at handle registration or at
+                // completion) and report the request as accepted.
+                TeeBoxLog.warn("RunManager", "cancelRun(" + runId + ") still racing after 5s — relying on the cancel latch");
+                return true;
+            }
+            try {
+                Thread.sleep(5);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return true;   // latch is set; the run will still be cancelled
+            }
+        }
+    }
+
+    /** Remove a PENDING run from its script's pending queue; false if it was already promoted. */
+    private boolean removeFromPendingQueue(RunInfo run) {
+        if (run.scriptId == null) {
+            return false;
+        }
+        java.util.concurrent.atomic.AtomicInteger count = getScriptActiveCount(run.scriptId);
+        synchronized (count) {   // same lock discipline as submit/dequeueNextRun
+            java.util.concurrent.ConcurrentLinkedQueue<PendingRun> queue = scriptPendingQueue.get(run.scriptId);
+            if (queue == null) {
+                return false;
+            }
+            java.util.Iterator<PendingRun> it = queue.iterator();
+            while (it.hasNext()) {
+                if (run.runId.equals(it.next().run.runId)) {
+                    it.remove();
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /** Kill a run's SHELL tasks off the caller's thread — a kill holds per-task locks through
+     *  bounded waits (seconds per task, serial), which must not stall cancel endpoints. */
+    private void killRunTasksInBackground(final String runId) {
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    int killed = managedTaskEngine.killRun(runId);
+                    if (killed > 0) {
+                        TeeBoxLog.info("RunManager", "Cancel killed " + killed + " task(s) for run " + runId);
+                    }
+                } catch (Exception e) {
+                    TeeBoxLog.warn("RunManager", "Cancel task-kill failed for run " + runId, e);
+                }
+            }
+        }, "run-cancel-kill");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    /** Schedule the wall-clock execution timeout (per-run value, else the server default; 0 = off).
+     *  Called at RUNNING transition — queue wait deliberately does not count. */
+    private void scheduleRunTimeout(final RunInfo run) {
+        final long timeoutMs = run.timeoutMs > 0 ? run.timeoutMs : defaultRunTimeoutMs;
+        if (timeoutMs <= 0) {
+            return;
+        }
+        java.util.concurrent.ScheduledFuture<?> future = timeoutScheduler.schedule(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (cancelRun(run.runId, "Cancelled: run exceeded timeout (" + timeoutMs + " ms)")) {
+                        TeeBoxLog.warn("RunManager", "Run " + run.runId + " exceeded timeout (" + timeoutMs + " ms) — cancelling");
+                    }
+                } catch (Exception e) {
+                    TeeBoxLog.warn("RunManager", "Run timeout cancel failed for " + run.runId, e);
+                }
+            }
+        }, timeoutMs, TimeUnit.MILLISECONDS);
+        timeoutTasks.put(run.runId, future);
+    }
+
     public int getQueuedCount() {
         return runExecutor.getQueue().size() + immediateExecutor.getQueue().size() + getPendingScriptRunsCount();
     }
@@ -562,6 +733,7 @@ public class RunManager {
             webhookDispatcher.shutdown();
         }
         maintenanceScheduler.shutdownNow();
+        timeoutScheduler.shutdownNow();
         runRegistry.flushDirty();
         managedTaskEngine.shutdown();
         runExecutor.shutdown();
@@ -619,6 +791,7 @@ public class RunManager {
         final List<OutputPublishRule> outputRules = getOutputRulesForScript(run.scriptId, run.version);
         try {
             runRegistry.markStarted(run);
+            scheduleRunTimeout(run);
             // Wrap task engine to auto-register watchers on task creation
             final ManagedTaskEngine engine = managedTaskEngine;
             com.flatide.propertee2.task.TaskRunner taskRunner = (outputRules != null && !outputRules.isEmpty())
@@ -663,21 +836,50 @@ public class RunManager {
                     public void onThreadError(ThreadContext thread) {
                         runRegistry.upsertThread(run, createThreadSnapshot(thread));
                     }
+
+                    @Override
+                    public void onCancelHandle(Runnable cancelHandle) {
+                        abortHandles.put(run.runId, cancelHandle);
+                        // A cancel that arrived before the engine existed latched a reason;
+                        // apply it now that there is something to abort.
+                        if (cancelReasons.containsKey(run.runId)) {
+                            cancelHandle.run();
+                        }
+                    }
                 }
             );
             // Flush watchers for this run before marking complete
             flushWatchersForRun(run.runId);
             runRegistry.flushDirty();
-            if (result.success) {
+            if (result.cancelled || (!result.success && cancelReasons.containsKey(run.runId))) {
+                // Cancelled — either the engine unwound with ProperTeeAborted, or the cancel raced
+                // a failure it caused (e.g. the task kill made SHELL error out first). A successful
+                // completion always wins over a late cancel.
+                runRegistry.markCancelled(run, cancelReasons.get(run.runId));
+                // Final sweep: a SHELL statement that had already passed its abort checkpoint may
+                // have spawned a process after cancelRun's kill — close the orphan window.
+                killRunTasksInBackground(run.runId);
+            } else if (result.success) {
                 runRegistry.markCompleted(run, result.hasExplicitReturn, result.resultData);
             } else {
                 runRegistry.markFailed(run, result.errorMessage);
             }
         } catch (Throwable error) {
-            TeeBoxLog.error("RunManager", "Run failed: " + run.runId, error);
             flushWatchersForRun(run.runId);
-            runRegistry.markFailed(run, error != null ? error.getMessage() : "Unknown error");
+            if (cancelReasons.containsKey(run.runId)) {
+                runRegistry.markCancelled(run, cancelReasons.get(run.runId));
+                killRunTasksInBackground(run.runId);
+            } else {
+                TeeBoxLog.error("RunManager", "Run failed: " + run.runId, error);
+                runRegistry.markFailed(run, error != null ? error.getMessage() : "Unknown error");
+            }
         } finally {
+            java.util.concurrent.ScheduledFuture<?> timeout = timeoutTasks.remove(run.runId);
+            if (timeout != null) {
+                timeout.cancel(false);
+            }
+            abortHandles.remove(run.runId);
+            cancelReasons.remove(run.runId);
             if (webhookDispatcher != null) {
                 webhookDispatcher.onRunTerminal(run);
             }

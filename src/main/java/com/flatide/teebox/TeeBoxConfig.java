@@ -25,6 +25,11 @@ public class TeeBoxConfig {
     public String webhookUrlAllowlist;
     /** Per-POST connect/read timeout (ms) for webhook delivery. */
     public int webhookTimeoutMs = 10000;
+    /** Server-default run execution timeout (ms, measured from RUNNING; duration syntax accepted,
+     *  e.g. "30m"). 0 = off. A per-run {@code timeoutMs} request field overrides it. */
+    public long runTimeoutMs = 0;
+    /** Retained script-output ring size per run (stdout and stderr each). 0 = default (200). */
+    public int runOutputMaxLines = 0;
     public static TeeBoxConfig fromArgs(String[] args) {
         File configFile = resolveConfigFile(args);
         Properties fileProps = loadProperties(configFile);
@@ -93,6 +98,14 @@ public class TeeBoxConfig {
         String webhookTimeoutMs = getSetting("webhookTimeoutMs", fileProps);
         if (webhookTimeoutMs != null && webhookTimeoutMs.trim().length() > 0) {
             config.webhookTimeoutMs = Integer.parseInt(webhookTimeoutMs.trim());
+        }
+        String runTimeoutMs = getSetting("runTimeoutMs", fileProps);
+        if (runTimeoutMs != null && runTimeoutMs.trim().length() > 0) {
+            config.runTimeoutMs = DurationParser.parseMillis(runTimeoutMs.trim());
+        }
+        String runOutputMaxLines = getSetting("runOutputMaxLines", fileProps);
+        if (runOutputMaxLines != null && runOutputMaxLines.trim().length() > 0) {
+            config.runOutputMaxLines = Integer.parseInt(runOutputMaxLines.trim());
         }
         return config;
     }

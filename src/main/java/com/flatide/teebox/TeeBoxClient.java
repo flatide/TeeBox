@@ -144,9 +144,19 @@ public class TeeBoxClient {
         return postJson("/api/admin/tasks/" + urlPath(taskId) + "/kill", new LinkedHashMap<String, Object>(), 200);
     }
 
+    /** Request cancellation of a run (202 = accepted; the cancel of a RUNNING run is asynchronous —
+     *  poll until CANCELLED). 404 unknown / 409 already terminal raise IOException. */
+    public Map<String, Object> cancelRun(String runId) throws IOException {
+        return postJson("/api/client/runs/" + urlPath(runId) + "/cancel", new LinkedHashMap<String, Object>(), 202);
+    }
+
+    public Map<String, Object> cancelAdminRun(String runId) throws IOException {
+        return postJson("/api/admin/runs/" + urlPath(runId) + "/cancel", new LinkedHashMap<String, Object>(), 202);
+    }
+
     /**
      * Block until the run reaches a terminal state ({@code COMPLETED} / {@code FAILED} /
-     * {@code SERVER_RESTARTED}) and return its status payload, or throw if {@code timeoutMs}
+     * {@code CANCELLED} / {@code SERVER_RESTARTED}) and return its status payload, or throw if {@code timeoutMs}
      * elapses first. This is client-side polling: the server stays asynchronous, so a dropped
      * connection or timeout here never aborts the run — re-poll the same {@code runId} to resume.
      * Poll interval backs off from 50ms to 1s so short runs return fast without hammering long ones.
@@ -186,7 +196,7 @@ public class TeeBoxClient {
             }
             Object statusValue = run.get("status");
             String status = statusValue != null ? String.valueOf(statusValue) : null;
-            if ("COMPLETED".equals(status) || "FAILED".equals(status) || "SERVER_RESTARTED".equals(status)) {
+            if (isTerminalStatus(status)) {
                 throw new IOException("Run " + runId + " ended " + status + " without publishing '" + key + "'");
             }
             Thread.sleep(50L);
@@ -221,7 +231,8 @@ public class TeeBoxClient {
     }
 
     private static boolean isTerminalStatus(String status) {
-        return "COMPLETED".equals(status) || "FAILED".equals(status) || "SERVER_RESTARTED".equals(status);
+        return "COMPLETED".equals(status) || "FAILED".equals(status)
+            || "CANCELLED".equals(status) || "SERVER_RESTARTED".equals(status);
     }
 
     private Map<String, Object> getJsonMap(String path, int expectedStatus) throws IOException {

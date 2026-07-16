@@ -418,6 +418,19 @@ public class TeeBoxClient {
         return asMap(request("GET", "/api/client/runs/" + enc(runId) + "/status", null, 200));
     }
 
+    /**
+     * Request cancellation of a run. Returns the 202 payload
+     * ({@code {runId, status, cancelRequested:true}}); cancelling a RUNNING run is asynchronous —
+     * poll ({@link #waitForRunTerminal}) until the run reaches {@code CANCELLED} (or
+     * {@code COMPLETED}, if the run finished first). Unknown run → 404, already-terminal → 409,
+     * both surfaced as {@link IOException}. (POST /api/client/runs/{runId}/cancel)
+     */
+    public Map<String, Object> cancelRun(String runId) throws IOException {
+        requireText("runId", runId);
+        return asMap(request("POST", "/api/client/runs/" + enc(runId) + "/cancel",
+            new LinkedHashMap<String, Object>(), 202));
+    }
+
     /** Run result data (available once terminal). (GET /api/client/runs/{runId}/result) */
     public Map<String, Object> getRunResult(String runId) throws IOException {
         requireText("runId", runId);
@@ -594,7 +607,7 @@ public class TeeBoxClient {
 
     /**
      * Block (client-side polling, 50ms&rarr;1s backoff) until the run reaches a terminal state
-     * ({@code COMPLETED} / {@code FAILED} / {@code SERVER_RESTARTED}) and return its status payload,
+     * ({@code COMPLETED} / {@code FAILED} / {@code CANCELLED} / {@code SERVER_RESTARTED}) and return its status payload,
      * or throw {@link IOException} if {@code timeoutMs} elapses first. The run keeps executing
      * server-side regardless — the timeout message carries the {@code runId} so you can re-poll.
      */
@@ -757,7 +770,8 @@ public class TeeBoxClient {
     }
 
     private static boolean isTerminalStatus(String status) {
-        return "COMPLETED".equals(status) || "FAILED".equals(status) || "SERVER_RESTARTED".equals(status);
+        return "COMPLETED".equals(status) || "FAILED".equals(status)
+            || "CANCELLED".equals(status) || "SERVER_RESTARTED".equals(status);
     }
 
     // ===================== HTTP plumbing =====================

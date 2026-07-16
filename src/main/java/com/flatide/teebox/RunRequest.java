@@ -11,6 +11,9 @@ public class RunRequest {
     public Map<String, Object> props = new LinkedHashMap<String, Object>();
     public int maxIterations = 1000;
     public boolean warnLoops = false;
+    /** Wall-clock execution timeout in ms, measured from RUNNING (queue wait excluded);
+     *  0 = use the server default ({@code runTimeoutMs} config), which itself defaults to off. */
+    public long timeoutMs = 0;
     /** Optional run-terminal webhook callback target (null = none). */
     public WebhookTarget callback;
     /** Optional submitter identity (null = anonymous): the X-TeeBox-User header on API submits, or the

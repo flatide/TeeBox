@@ -129,6 +129,18 @@ public class ScriptExecutor {
             sys.put("scriptId", scriptId != null ? scriptId : "");
             sys.put("version", version != null ? version : "");
             visitor.variables.put("_SYS", sys);
+            // Hand the host a cancel handle BEFORE the run starts. RunManager re-checks its cancel
+            // latch right after storing the handle, so a cancel that raced this registration still
+            // aborts the run (the engine-side abort is itself latched and thread-safe).
+            if (callbacks != null) {
+                final ProperTeeInterpreter running = visitor;
+                callbacks.onCancelHandle(new Runnable() {
+                    @Override
+                    public void run() {
+                        running.abort();
+                    }
+                });
+            }
             Scheduler scheduler = new Scheduler(visitor, callbacks != null ? new CallbackSchedulerListener(callbacks) : null);
             ProperTeeInterpreter.RootStepper mainStepper = visitor.createRootStepper(tree);
             Object result = scheduler.run(mainStepper);
@@ -145,6 +157,10 @@ public class ScriptExecutor {
                 outputData = new LinkedHashMap<String, Object>();
             }
             return ExecutionResult.completed(mainStepper.hasExplicitReturn(), outputData);
+        } catch (com.flatide.propertee2.runtime.ProperTeeAborted aborted) {
+            // Host-initiated cancel — deliberately NOT a script error (the Throwable arm below
+            // would misreport it as FAILED); RunManager maps this to RunStatus.CANCELLED.
+            return ExecutionResult.cancelled();
         } catch (Throwable error) {
             return ExecutionResult.failed(error != null ? error.getMessage() : "Unknown error");
         } finally {
@@ -161,27 +177,39 @@ public class ScriptExecutor {
         void onThreadUpdated(ThreadContext thread);
         void onThreadCompleted(ThreadContext thread);
         void onThreadError(ThreadContext thread);
+        /** Receives a handle that cooperatively aborts this execution (thread-safe, callable from
+         *  any thread). Delivered once the engine exists, before the run starts; hosts store it to
+         *  implement run cancel. Default: ignored, so existing Callbacks impls keep compiling. */
+        default void onCancelHandle(Runnable cancelHandle) { }
     }
 
     public static class ExecutionResult {
         public final boolean success;
+        /** True when the run ended because the host cancelled it (never a script failure). */
+        public final boolean cancelled;
         public final boolean hasExplicitReturn;
         public final Object resultData;
         public final String errorMessage;
 
-        private ExecutionResult(boolean success, boolean hasExplicitReturn, Object resultData, String errorMessage) {
+        private ExecutionResult(boolean success, boolean cancelled, boolean hasExplicitReturn,
+                                Object resultData, String errorMessage) {
             this.success = success;
+            this.cancelled = cancelled;
             this.hasExplicitReturn = hasExplicitReturn;
             this.resultData = resultData;
             this.errorMessage = errorMessage;
         }
 
         public static ExecutionResult completed(boolean hasExplicitReturn, Object resultData) {
-            return new ExecutionResult(true, hasExplicitReturn, resultData, null);
+            return new ExecutionResult(true, false, hasExplicitReturn, resultData, null);
         }
 
         public static ExecutionResult failed(String errorMessage) {
-            return new ExecutionResult(false, false, null, errorMessage);
+            return new ExecutionResult(false, false, false, null, errorMessage);
+        }
+
+        public static ExecutionResult cancelled() {
+            return new ExecutionResult(false, true, false, null, "Run aborted");
         }
     }
 
