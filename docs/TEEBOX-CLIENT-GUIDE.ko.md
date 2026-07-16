@@ -35,7 +35,7 @@ import com.flatide.teebox.client.TeeBoxClient;
 TeeBox 저장소에서 jar 를 빌드합니다.
 
 ```bash
-./gradlew clientJar          # → build/libs/teebox-client-<버전>.jar  (예: teebox-client-1.15.2.jar)
+./gradlew clientJar          # → build/libs/teebox-client-<버전>.jar  (예: teebox-client-1.16.0.jar)
 ./gradlew clientSourcesJar   # (선택) IDE 소스 첨부용 sources jar
 ```
 
@@ -49,7 +49,7 @@ TeeBox 저장소에서 jar 를 빌드합니다.
 ```groovy
 // Gradle
 dependencies {
-    implementation files('libs/teebox-client-1.15.2.jar')
+    implementation files('libs/teebox-client-1.16.0.jar')
 }
 ```
 
@@ -58,7 +58,7 @@ dependencies {
 <dependency>
   <groupId>com.flatide</groupId>
   <artifactId>teebox-client</artifactId>
-  <version>1.15.2</version>
+  <version>1.16.0</version>
 </dependency>
 ```
 
@@ -277,7 +277,7 @@ TeeBox 서버는 **비동기**입니다.
 
 - `submitRun(...)` 은 즉시 반환하고 `runId` 를 줍니다(상태 `QUEUED`, 또는 스크립트별 동시 실행 제한에 걸리면 `PENDING`). **이 시점에 스크립트는 아직 실행 전입니다.**
 - 결과는 `runId` 로 폴링해서 얻습니다. 이 클라이언트의 대기 헬퍼는 모두 **클라이언트 측 폴링**이라, 타임아웃이나 연결 끊김이 발생해도 **서버의 실행은 중단되지 않습니다** — 같은 `runId` 로 다시 폴링하면 됩니다.
-- 종료 상태(terminal): `COMPLETED` / `FAILED` / `SERVER_RESTARTED`.
+- 종료 상태(terminal): `COMPLETED` / `FAILED` / `SERVER_RESTARTED` / `CANCELLED` (1.16.0+, `cancelRun` 또는 실행 타임아웃).
 
 ### 7.2 제출
 
@@ -380,7 +380,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // 외부 SHELL
   "runId": "run-20260617-133304-465-cf31",
   "scriptId": "calc_sum",
   "version": "1",
-  "status": "COMPLETED",            // QUEUED/PENDING/RUNNING/COMPLETED/FAILED/SERVER_RESTARTED
+  "status": "COMPLETED",            // QUEUED/PENDING/RUNNING/COMPLETED/FAILED/SERVER_RESTARTED/CANCELLED
   "submittedBy": "journey.kim",     // 제출 시 넘긴 userId (익명이면 null/부재)
   "createdAt": 1781670784465,       // 제출 시각
   "startedAt": 1781670784470,       // 실행 시작(시작 전이면 없음)
@@ -505,13 +505,20 @@ if (Boolean.TRUE.equals(env.get("ok"))) {
 { "status": "error", "ok": false, "value": "server restarted" }
 ```
 
-**6) 값 없는 run — `return` 도 `result` 전역도 없음**
+**6) `CANCELLED` — `cancelRun`/어드민 취소, 또는 실행 타임아웃 초과 (1.16.0+)**
+
+```jsonc
+{ "status": "error", "ok": false,
+  "value": "Cancelled by admin" }   // 또는 "Cancelled: run exceeded timeout (N ms)"
+```
+
+**7) 값 없는 run — `return` 도 `result` 전역도 없음**
 
 ```jsonc
 { "status": "done", "ok": true, "value": {} }   // {} = ProperTee 의 "값 없음"(absence)
 ```
 
-**7) 값에 first-class `null` 포함 (1.10.0/1.10.1)**
+**8) 값에 first-class `null` 포함 (1.10.0/1.10.1)**
 
 ```jsonc
 { "status": "done", "ok": true,
@@ -523,7 +530,7 @@ if (Boolean.TRUE.equals(env.get("ok"))) {
 > `containsKey("coupon")` 은 `true`, `get("coupon")` 은 `null` 입니다. `{}`(absence, 빈 Map)와
 > 구분됩니다.
 
-**8) `STREAM_FILE` 결과** — `value` 에는 redact 된 디스크립터(`{stream:true, contentType, size}`)가
+**9) `STREAM_FILE` 결과** — `value` 에는 redact 된 디스크립터(`{stream:true, contentType, size}`)가
 실립니다. 실제 바이트는 `streamRunResult` 로 받으세요.
 
 > 봉투는 `getRunResult` 응답에만 실립니다(추가 필드, 기존 필드 무변경). 관리자 `RunInfo` 표면과
@@ -762,6 +769,7 @@ try {
 | `getRunTaskStdoutLines(runId)` `[, maxTaskLines]` | `List<String>` | 병합된 `SHELL` 태스크 stdout 줄 목록(`runId` 만으로) |
 | `getRunTaskStderrLines(runId)` `[, maxTaskLines]` | `List<String>` | 병합된 `SHELL` 태스크 stderr 줄 목록 |
 | `streamRunResult(runId, OutputStream)` | `long`(바이트) | `STREAM_FILE` 결과를 OutputStream으로 스트리밍(대용량용; 호출자가 stream을 닫음). 스트림 결과 아니면 `IOException`(409) |
+| `cancelRun(runId)` | `Map`(상태) | 취소 요청(202 — 비동기). `waitForRunTerminal`로 `CANCELLED`(먼저 끝났으면 `COMPLETED`)까지 폴링. 없는 run → 404, 이미 터미널 → 409, 둘 다 `IOException`. TeeBox >= 1.16.0 필요 |
 | `waitForRunTerminal(runId, timeoutMs)` | `Map`(상태) | 종료까지 클라이언트 측 폴링(50ms→1s 백오프). 초과 시 `IOException` |
 | `runAndWait(scriptId, version, props, timeoutMs)` `[, userId]` | `Map`(결과) | 제출→대기→결과. 비-`COMPLETED`/타임아웃 시 `IOException`. 마지막 `userId`(null 허용) = `X-TeeBox-User` 제출자 id |
 | `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` `[, userId]` | `long`(바이트) | `STREAM_FILE` 스크립트 전용: 제출→대기→스트림 한 번에. submit 이후 실패는 `RunStreamException`(`getRunId()`로 runId 회수). 마지막 `userId`(null 허용) = `X-TeeBox-User` 제출자 id |

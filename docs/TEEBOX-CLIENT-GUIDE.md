@@ -35,7 +35,7 @@ import com.flatide.teebox.client.TeeBoxClient;
 Build the jar from the TeeBox repository.
 
 ```bash
-./gradlew clientJar          # → build/libs/teebox-client-<version>.jar  (e.g. teebox-client-1.15.2.jar)
+./gradlew clientJar          # → build/libs/teebox-client-<version>.jar  (e.g. teebox-client-1.16.0.jar)
 ./gradlew clientSourcesJar   # (optional) sources jar for IDE source attachment
 ```
 
@@ -49,7 +49,7 @@ Example of adding the jar to the host build:
 ```groovy
 // Gradle
 dependencies {
-    implementation files('libs/teebox-client-1.15.2.jar')
+    implementation files('libs/teebox-client-1.16.0.jar')
 }
 ```
 
@@ -58,7 +58,7 @@ dependencies {
 <dependency>
   <groupId>com.flatide</groupId>
   <artifactId>teebox-client</artifactId>
-  <version>1.15.2</version>
+  <version>1.16.0</version>
 </dependency>
 ```
 
@@ -277,7 +277,7 @@ The TeeBox server is **asynchronous**.
 
 - `submitRun(...)` returns immediately and gives you a `runId` (status `QUEUED`, or `PENDING` if the per-script concurrent-run limit is hit). **At this point the script has not run yet.**
 - The result is obtained by polling with the `runId`. All of this client's wait helpers are **client-side polling**, so even if a timeout or dropped connection occurs, **the server's execution is not aborted** — just poll again with the same `runId`.
-- Terminal states: `COMPLETED` / `FAILED` / `SERVER_RESTARTED`.
+- Terminal states: `COMPLETED` / `FAILED` / `SERVER_RESTARTED` / `CANCELLED` (1.16.0+, via `cancelRun` or an execution timeout).
 
 ### 7.2 Submit
 
@@ -380,7 +380,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // external SHE
   "runId": "run-20260617-133304-465-cf31",
   "scriptId": "calc_sum",
   "version": "1",
-  "status": "COMPLETED",            // QUEUED/PENDING/RUNNING/COMPLETED/FAILED/SERVER_RESTARTED
+  "status": "COMPLETED",            // QUEUED/PENDING/RUNNING/COMPLETED/FAILED/SERVER_RESTARTED/CANCELLED
   "submittedBy": "journey.kim",     // the userId passed at submit (null/absent when anonymous)
   "createdAt": 1781670784465,       // submit time
   "startedAt": 1781670784470,       // execution start (absent before it starts)
@@ -507,13 +507,20 @@ The `result` value per case (live-verified with the demos `demo/teebox/06_run_en
 { "status": "error", "ok": false, "value": "server restarted" }
 ```
 
-**6) A value-less run — no `return` and no `result` global**
+**6) `CANCELLED` — cancelled via `cancelRun`/admin, or the run exceeded its execution timeout (1.16.0+)**
+
+```jsonc
+{ "status": "error", "ok": false,
+  "value": "Cancelled by admin" }   // or "Cancelled: run exceeded timeout (N ms)"
+```
+
+**7) A value-less run — no `return` and no `result` global**
 
 ```jsonc
 { "status": "done", "ok": true, "value": {} }   // {} = ProperTee's "no value" (absence)
 ```
 
-**7) A value carrying first-class `null` (1.10.0/1.10.1)**
+**8) A value carrying first-class `null` (1.10.0/1.10.1)**
 
 ```jsonc
 { "status": "done", "ok": true,
@@ -524,7 +531,7 @@ The `result` value per case (live-verified with the demos `demo/teebox/06_run_en
 > In the client Map a JSON `null` shows up as a Java `null` with the key kept — `containsKey("coupon")`
 > is `true`, `get("coupon")` is `null` — distinct from `{}` (absence, an empty Map).
 
-**8) A `STREAM_FILE` result** — `value` carries the redacted descriptor
+**9) A `STREAM_FILE` result** — `value` carries the redacted descriptor
 (`{stream:true, contentType, size}`); fetch the actual bytes with `streamRunResult`.
 
 > The envelope rides only on the `getRunResult` response (an additive field; existing fields
@@ -762,6 +769,7 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `getRunTaskStdoutLines(runId)` `[, maxTaskLines]` | `List<String>` | merged `SHELL` task stdout lines (by `runId` alone) |
 | `getRunTaskStderrLines(runId)` `[, maxTaskLines]` | `List<String>` | merged `SHELL` task stderr lines |
 | `streamRunResult(runId, OutputStream)` | `long`(bytes) | Stream a `STREAM_FILE` result to an OutputStream (for large data; the caller closes the stream). `IOException`(409) if not a stream result |
+| `cancelRun(runId)` | `Map`(status) | Request cancellation (202 — asynchronous). Poll with `waitForRunTerminal` until `CANCELLED` (or `COMPLETED` if the run finished first). Unknown run → 404, already-terminal → 409, both as `IOException`. Requires TeeBox >= 1.16.0 |
 | `waitForRunTerminal(runId, timeoutMs)` | `Map`(status) | Client-side poll until termination (50ms→1s backoff). `IOException` on exceeding the timeout |
 | `runAndWait(scriptId, version, props, timeoutMs)` `[, userId]` | `Map`(result) | Submit→wait→result. `IOException` on non-`COMPLETED`/timeout. Optional trailing `userId` (nullable) = the `X-TeeBox-User` submitter id |
 | `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` `[, userId]` | `long`(bytes) | `STREAM_FILE` scripts only: submit→wait→stream in one call. Failures after submit are `RunStreamException` (recover runId via `getRunId()`). Optional trailing `userId` (nullable) = the `X-TeeBox-User` submitter id |
