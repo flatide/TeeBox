@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.17.0
 
 Output capture learns to keep capturing. Continuous rules existed in name only (`firstOnly:
 false` was accepted but dead): a stream with only continuous rules was never even read, at most
