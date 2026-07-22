@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Per-run file persistence ({@code dataDir/runs/<runId>.json}). Listing, counting, and filtering
@@ -172,7 +173,27 @@ public class RunStore {
                 // keep Gson's best-effort shape rather than dropping the whole run
             }
         }
+        normalizePublishedNumbers(run.published);
         return run;
+    }
+
+    /**
+     * Gson's generic Object mapping reads every JSON number as Double, so a reloaded
+     * published map would serve {@code key.detectedAt}/{@code key.count} as 1.7E12 / 3.0
+     * after a restart. Captured values themselves are Strings; only the numeric metadata
+     * keys need restoring — convert whole-number Doubles back to Long.
+     */
+    private static void normalizePublishedNumbers(Map<String, Object> published) {
+        if (published == null) return;
+        for (Map.Entry<String, Object> entry : published.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof Double) {
+                double d = (Double) value;
+                if (d == Math.floor(d) && !Double.isInfinite(d)) {
+                    entry.setValue(Long.valueOf((long) d));
+                }
+            }
+        }
     }
 
     /**

@@ -1277,6 +1277,14 @@ public class TeeBoxServer {
                 if (publishKey instanceof String) rule.publishKey = (String) publishKey;
                 Object firstOnly = ruleMap.get("firstOnly");
                 if (firstOnly instanceof Boolean) rule.firstOnly = ((Boolean) firstOnly).booleanValue();
+                Object taskKey = ruleMap.get("taskKey");
+                if (taskKey instanceof String && ((String) taskKey).trim().length() > 0) {
+                    rule.taskKey = ((String) taskKey).trim();
+                }
+                Object maxCaptures = ruleMap.get("maxCaptures");
+                if (maxCaptures instanceof Number) {
+                    rule.maxCaptures = Math.max(0, ((Number) maxCaptures).intValue());
+                }
                 request.outputRules.add(rule);
             }
             // Validate regex patterns at registration time
@@ -1322,6 +1330,13 @@ public class TeeBoxServer {
         String captureGroup = form.get("captureGroup");
         if (captureGroup != null && captureGroup.trim().length() > 0) {
             try { rule.captureGroup = Integer.parseInt(captureGroup.trim()); } catch (NumberFormatException ignore) {}
+        }
+        if ("continuous".equals(form.get("publishMode"))) rule.firstOnly = false;
+        String taskKey = form.get("taskKey");
+        if (taskKey != null && taskKey.trim().length() > 0) rule.taskKey = taskKey.trim();
+        String maxCaptures = form.get("maxCaptures");
+        if (maxCaptures != null && maxCaptures.trim().length() > 0) {
+            try { rule.maxCaptures = Math.max(0, Integer.parseInt(maxCaptures.trim())); } catch (NumberFormatException ignore) {}
         }
         List<OutputPublishRule> rules = new ArrayList<OutputPublishRule>();
         rules.add(rule);

@@ -634,6 +634,10 @@ rules.add(TeeBoxClient.outputRule("jobId", "JOB_ID=(\\S+)"));
 
 // 전체 지정형: outputRule(publishKey, pattern, stream, captureGroup, firstOnly)
 rules.add(TeeBoxClient.outputRule("token", "TOKEN:(\\w+)", "stdout", 1, true));
+
+// 연속형 (TeeBox >= 1.17.0): 첫 매치만이 아니라 매치될 때마다 캡처 — 8.4 참고
+// continuousOutputRule(publishKey, pattern, stream, captureGroup, taskKey, maxCaptures)
+rules.add(TeeBoxClient.continuousOutputRule("progress", "progress:\\s*(\\d+)", "stdout", 1, null, 0));
 ```
 
 | 파라미터 | 의미 | 기본값(간단형) |
@@ -642,7 +646,9 @@ rules.add(TeeBoxClient.outputRule("token", "TOKEN:(\\w+)", "stdout", 1, true));
 | `pattern` | 정규식 | (필수) |
 | `stream` | `stdout` / `stderr` | `stdout` |
 | `captureGroup` | 사용할 캡처 그룹 번호 | `1` |
-| `firstOnly` | 첫 매치만 게시할지 | `true` |
+| `firstOnly` | `true`: 첫 매치만 게시. `false`: 연속 캡처 (8.4 참고) | `true` |
+| `taskKey` | 감시할 task 지정: 미지정 = run의 첫 task, 지정 = env `TEEBOX_TASK_KEY` 가 이 값인 첫 task (8.4 참고) | (미지정) |
+| `maxCaptures` | 연속 모드 전용 — 이 개수만큼 캡처하면 중단, `0` = 무제한(task 종료까지) | `0` |
 
 ### 8.2 규칙과 함께 등록
 
@@ -669,6 +675,49 @@ Object jobId = teebox.waitForPublished(runId, "jobId", 60000L);  // 예: "abc123
   "jobId.detectedAt": 1781702632309
 }
 ```
+
+### 8.4 연속 캡처 — 반복 매치 (TeeBox >= 1.17.0)
+
+기본 규칙(`firstOnly=true`)은 첫 매치에서 값이 고정됩니다. 값이 **반복해서** 나오는 경우 — 진행률 퍼센트, 주기적으로 출력되는 항목 ID 등 — 는 `continuousOutputRule` 로 규칙을 만드세요(`firstOnly=false`): task 가 종료될 때까지, 또는 `maxCaptures` 개를 채울 때까지(`0` = 무제한) 매치될 때마다 캡처됩니다.
+
+```java
+// "item: <id>" 라인을 전부 캡처 (무제한), run 의 첫 task 대상
+rules.add(TeeBoxClient.continuousOutputRule("item", "item:\\s*(\\S+)", "stdout", 1, null, 0));
+
+// worker1 로 태깅된 task 에서 진행률을 최대 100개까지 캡처
+rules.add(TeeBoxClient.continuousOutputRule("progress", "progress:\\s*(\\d+)", "stdout", 1, "worker1", 100));
+```
+
+연속 키는 `published` 맵에 네 개 엔트리로 게시됩니다 — 키 자체는 항상 **최신 값**을 담으므로 `waitForPublished` 는 그대로 동작합니다:
+
+```jsonc
+"published": {
+  "item": "a5",                          // 마지막(최신) 캡처 값
+  "item.values": ["a1","a2","a3","a4","a5"], // 캡처 전체 리스트, 순서 보존 (maxCaptures 로 상한)
+  "item.count": 5,                       // 누적 캡처 수
+  "item.detectedAt": 1781702632309       // 마지막 캡처 시각
+}
+```
+
+**`taskKey` 로 task 지정.** `taskKey` 없는 규칙은 run 의 **첫 번째** task 만 감시합니다. 다른 task 에서 캡처하려면 스크립트에서 예약 env 변수 `TEEBOX_TASK_KEY` 로 그 task 를 태깅하고 규칙에서 참조하세요:
+
+```
+r1 = SHELL("do_setup.sh")
+r2 = SHELL("do_work.sh", {"env": {"TEEBOX_TASK_KEY": "worker1"}})
+```
+
+`taskKey = "worker1"` 인 규칙은 `r2` 의 task 를 감시합니다(같은 key 가 여러 task 에 붙으면 그 key 로 뜬 첫 task). 이 env 변수는 다른 `env` 항목처럼 프로세스에도 그대로 전달됩니다.
+
+**캡처가 쌓이기를 대기:**
+
+```java
+// 최소 3개 캡처될 때까지 대기 후 현재까지의 리스트 반환
+List<Object> items = teebox.waitForPublishedCount(runId, "item", 3, 60000L);
+```
+
+`waitForPublishedCount` 는 `published` 의 `<key>.count` 를 폴링해 `minCount` 에 도달하면 `<key>.values` 를 반환합니다. run 이 먼저 종료되거나 `timeoutMs` 초과 시 `IOException`.
+
+> 참고: 구버전 서버(TeeBox < 1.17.0)는 `firstOnly=false` 규칙도 첫 매치만 캡처합니다 — 연속 규칙은 1.17.0+ 서버가 필요합니다.
 
 ---
 
@@ -748,6 +797,7 @@ try {
 | `getScriptContent(scriptId, version)` | `String` | 특정 버전 소스 |
 | `static outputRule(publishKey, pattern)` | `Map` | 출력 캡처 규칙 빌더(stdout 첫 매치, 그룹 1) |
 | `static outputRule(publishKey, pattern, stream, captureGroup, firstOnly)` | `Map` | 출력 캡처 규칙 빌더(전체 지정) |
+| `static continuousOutputRule(publishKey, pattern, stream, captureGroup, taskKey, maxCaptures)` | `Map` | 연속(반복) 캡처 규칙 빌더 — task 종료 또는 `maxCaptures` 개(0 = 무제한)까지 매 매치 캡처. `taskKey` 는 env `TEEBOX_TASK_KEY` 로 태깅된 task 지정(null = 첫 task). §8.4 참고. TeeBox >= 1.17.0 필요 |
 
 ### 실행 / 추적 — §7·§8
 | 메서드 | 반환 | 설명 |
@@ -774,6 +824,7 @@ try {
 | `runAndWait(scriptId, version, props, timeoutMs)` `[, userId]` | `Map`(결과) | 제출→대기→결과. 비-`COMPLETED`/타임아웃 시 `IOException`. 마지막 `userId`(null 허용) = `X-TeeBox-User` 제출자 id |
 | `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` `[, userId]` | `long`(바이트) | `STREAM_FILE` 스크립트 전용: 제출→대기→스트림 한 번에. submit 이후 실패는 `RunStreamException`(`getRunId()`로 runId 회수). 마지막 `userId`(null 허용) = `X-TeeBox-User` 제출자 id |
 | `waitForPublished(runId, key, timeoutMs)` | `Object` | `published[key]` 가 나타날 때까지 폴링해 그 값 반환(§8) |
+| `waitForPublishedCount(runId, key, minCount, timeoutMs)` | `List<Object>` | 연속 캡처의 `published[key.count]` 가 `minCount` 에 도달할 때까지 폴링 후 `published[key.values]` 반환(§8.4). run 이 먼저 종료되거나 타임아웃 시 `IOException`. TeeBox >= 1.17.0 필요 |
 
 ### JSON 유틸 (선택)
 | 메서드 | 반환 | 설명 |

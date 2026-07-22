@@ -214,6 +214,25 @@ public class TeeBoxClient {
         return rule;
     }
 
+    /**
+     * Build a continuous (repeated-capture) output rule: every match is captured until the task
+     * terminates or {@code maxCaptures} values were taken (0 = unlimited). The run's {@code published}
+     * map then carries {@code key} = latest value, {@code key.values} = capture list, {@code key.count}
+     * = total captures, {@code key.detectedAt} = last capture time. {@code taskKey} targets the first
+     * task launched with env {@code TEEBOX_TASK_KEY} equal to it — e.g. the script runs
+     * {@code SHELL(cmd, {"env": {"TEEBOX_TASK_KEY": "worker1"}})}; null/empty = the run's first task.
+     * Requires TeeBox &gt;= 1.17.0 (older servers capture only the first match).
+     */
+    public static Map<String, Object> continuousOutputRule(String publishKey, String pattern, String stream,
+                                                           int captureGroup, String taskKey, int maxCaptures) {
+        Map<String, Object> rule = outputRule(publishKey, pattern, stream, captureGroup, false);
+        if (taskKey != null && taskKey.length() > 0) {
+            rule.put("taskKey", taskKey);
+        }
+        rule.put("maxCaptures", Integer.valueOf(maxCaptures));
+        return rule;
+    }
+
     /** Register a script (auto version) with output-capture {@code outputRules} (see {@link #outputRule}). */
     public Map<String, Object> registerScript(String scriptId, String content, boolean activate,
                                               List<Map<String, Object>> outputRules) throws IOException {
@@ -767,6 +786,47 @@ public class TeeBoxClient {
         }
         throw new IOException("Timed out waiting for published key '" + key + "' on run " + runId
             + " after " + timeoutMs + "ms");
+    }
+
+    /**
+     * Block until a continuous capture under {@code key} has published at least {@code minCount}
+     * values (the {@code published} map's {@code key.count}), and return the current
+     * {@code key.values} list. Companion to {@link #continuousOutputRule}. Throws {@link IOException}
+     * if the run terminates before reaching {@code minCount}, or on timeout. Requires TeeBox &gt;= 1.17.0.
+     */
+    public List<Object> waitForPublishedCount(String runId, String key, int minCount, long timeoutMs)
+            throws IOException, InterruptedException {
+        requireText("runId", runId);
+        requireText("key", key);
+        long start = System.currentTimeMillis();
+        long pollMs = pollIntervalMinMs;
+        while ((System.currentTimeMillis() - start) < timeoutMs) {
+            Map<String, Object> run = getRun(runId);
+            Object published = run.get("published");
+            if (published instanceof Map) {
+                Map<?, ?> map = (Map<?, ?>) published;
+                Object count = map.get(key + ".count");
+                if (count instanceof Number && ((Number) count).longValue() >= minCount) {
+                    Object values = map.get(key + ".values");
+                    if (values instanceof List) {
+                        List<Object> out = new ArrayList<Object>();
+                        for (Object v : (List<?>) values) {
+                            out.add(v);
+                        }
+                        return out;
+                    }
+                }
+            }
+            String status = run.get("status") != null ? String.valueOf(run.get("status")) : null;
+            if (isTerminalStatus(status)) {
+                throw new IOException("Run " + runId + " ended " + status + " before '" + key
+                    + "' reached " + minCount + " captures");
+            }
+            Thread.sleep(pollMs);
+            pollMs = Math.min(pollMs * 2L, pollIntervalMaxMs);
+        }
+        throw new IOException("Timed out waiting for " + minCount + " captures of '" + key + "' on run "
+            + runId + " after " + timeoutMs + "ms");
     }
 
     private static boolean isTerminalStatus(String status) {

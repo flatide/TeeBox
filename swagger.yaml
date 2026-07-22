@@ -1552,6 +1552,23 @@ components:
               firstOnly:
                 type: boolean
                 default: true
+                description: >
+                  true (default): publish the first match only. false: continuous capture —
+                  every match is published (key = latest value, key.values = capture list,
+                  key.count = total, key.detectedAt = last capture time) until the task
+                  terminates or maxCaptures is reached.
+              taskKey:
+                type: string
+                description: >
+                  Which task this rule watches. Absent/empty = the run's first task.
+                  Otherwise the first task launched with env TEEBOX_TASK_KEY equal to this
+                  value (script: SHELL(cmd, {"env": {"TEEBOX_TASK_KEY": "worker1"}})).
+              maxCaptures:
+                type: integer
+                default: 0
+                description: >
+                  Continuous mode only (firstOnly=false) — stop after this many captures.
+                  0 = unlimited (capture until the task terminates).
 
     # ── System ──
 

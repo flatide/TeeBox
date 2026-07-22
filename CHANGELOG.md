@@ -2,6 +2,34 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+Output capture learns to keep capturing. Continuous rules existed in name only (`firstOnly:
+false` was accepted but dead): a stream with only continuous rules was never even read, at most
+one match per scan chunk was taken, and the publish layer froze every key at its first value.
+
+- **Continuous capture (`firstOnly: false`) now works**: every match is captured — all matches in
+  a chunk, across scans — until the task terminates or the rule's new **`maxCaptures`** is
+  reached (`0` = unlimited, the default). Continuous keys publish `key` = latest value (so
+  `waitForPublished` is unchanged), `key.values` = the ordered capture list, `key.count`, and
+  `key.detectedAt` = last capture time. firstOnly rules keep their exact legacy shape.
+- **Rules can target a task by key** (new rule field **`taskKey`**): the script tags a task via
+  the reserved env var `TEEBOX_TASK_KEY` — `SHELL("cmd", {"env": {"TEEBOX_TASK_KEY":
+  "worker1"}})` — and a rule with `taskKey: "worker1"` watches that task instead of the run's
+  first (keyless rules keep the first-task behavior; first task per key wins when several share
+  one). Settable via the Publisher API, the shipped client, and the admin-UI rule form (new
+  Mode / Task Key / Max Captures fields).
+- **Completion no longer loses tail output**: the final watcher flush now drains the log to EOF
+  (it used to read at most one 64KB chunk, so a fast-writing task's late matches could be
+  missed even with firstOnly). The periodic scan's budget rises 64KB → 1MB per 2s tick.
+- **Restart fidelity**: reloaded `published` numeric metadata (`key.detectedAt`, `key.count`) is
+  normalized back to integers — it used to be served as `1.7E12`-style doubles after a restart.
+- Shipped client (`client/…/TeeBoxClient.java`, Java 7): `continuousOutputRule(publishKey,
+  pattern, stream, captureGroup, taskKey, maxCaptures)` builder and
+  `waitForPublishedCount(runId, key, minCount, timeoutMs)` (returns `key.values` once
+  `key.count` reaches `minCount`). Both need a 1.17.0+ server; older servers capture only the
+  first match.
+
 ## 1.16.0
 
 Run cancellation, run execution timeouts, and runaway-run containment — built on the engine's new

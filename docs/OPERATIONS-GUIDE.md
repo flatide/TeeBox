@@ -240,10 +240,10 @@ curl http://host:18080/api/client/runs/{runId}
 Rules can also be configured via the Admin UI on the script detail page.
 
 **How it works:**
-- Only the first task created by the run is watched (prevents false matches from auxiliary tasks)
+- By default, only the first task created by the run is watched (prevents false matches from auxiliary tasks). A rule with a `taskKey` instead watches the first task launched with env `TEEBOX_TASK_KEY` equal to that value — the script tags it: `SHELL("cmd", {"env": {"TEEBOX_TASK_KEY": "worker1"}})`
 - The watcher incrementally reads the task's stdout.log file
 - Matching happens per-line with configurable capture group
-- `firstOnly: true` means only the first match is published (recommended)
+- `firstOnly: true` publishes only the first match; `firstOnly: false` (1.17.0+) captures **continuously** — every match until the task terminates or `maxCaptures` values were taken (`0` = unlimited). Continuous keys publish `key` (latest value), `key.values` (capture list), `key.count`, and `key.detectedAt` (last capture time)
 - Captured values are persisted immediately and visible in both API and Admin UI
 
 ### Large Result Streaming (STREAM_FILE)

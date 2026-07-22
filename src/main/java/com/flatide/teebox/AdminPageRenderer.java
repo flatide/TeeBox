@@ -1130,7 +1130,16 @@ public class AdminPageRenderer {
                 sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'>");
                 sb.append("<option value='stdout'").append(activeRule == null || !"stderr".equals(activeRule.stream) ? " selected" : "").append(">stdout</option>");
                 sb.append("<option value='stderr'").append(activeRule != null && "stderr".equals(activeRule.stream) ? " selected" : "").append(">stderr</option>");
-                sb.append("</select></div></div></div></details>");
+                sb.append("</select></div>");
+                boolean continuousRule = activeRule != null && !activeRule.firstOnly;
+                sb.append("<div class='form-row' style='flex:1'><label>Mode</label><select name='publishMode'>");
+                sb.append("<option value='first'").append(!continuousRule ? " selected" : "").append(">first match only</option>");
+                sb.append("<option value='continuous'").append(continuousRule ? " selected" : "").append(">continuous</option>");
+                sb.append("</select></div></div>");
+                sb.append("<div style='display:flex;gap:12px;'>");
+                sb.append("<div class='form-row' style='flex:1'><label>Task Key <span class='dim'>(TEEBOX_TASK_KEY env; empty = first task)</span></label><input type='text' name='taskKey' value='").append(activeRule != null && activeRule.taskKey != null ? escape(activeRule.taskKey) : "").append("' placeholder='worker1'/></div>");
+                sb.append("<div class='form-row' style='flex:1'><label>Max Captures <span class='dim'>(continuous; 0 = unlimited)</span></label><input type='number' name='maxCaptures' value='").append(activeRule != null ? activeRule.maxCaptures : 0).append("' min='0' style='width:80px;'/></div>");
+                sb.append("</div></div></details>");
                 sb.append("<div class='form-row-inline' style='align-items:center;'>");
                 // Prefilled with the selected version's description so plain Save updates it in
                 // place (clearing the field clears the description); Save-as-new records whatever

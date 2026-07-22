@@ -634,6 +634,10 @@ rules.add(TeeBoxClient.outputRule("jobId", "JOB_ID=(\\S+)"));
 
 // Full form: outputRule(publishKey, pattern, stream, captureGroup, firstOnly)
 rules.add(TeeBoxClient.outputRule("token", "TOKEN:(\\w+)", "stdout", 1, true));
+
+// Continuous form (TeeBox >= 1.17.0): capture EVERY match, not just the first — see 8.4
+// continuousOutputRule(publishKey, pattern, stream, captureGroup, taskKey, maxCaptures)
+rules.add(TeeBoxClient.continuousOutputRule("progress", "progress:\\s*(\\d+)", "stdout", 1, null, 0));
 ```
 
 | Parameter | Meaning | Default (simple form) |
@@ -642,7 +646,9 @@ rules.add(TeeBoxClient.outputRule("token", "TOKEN:(\\w+)", "stdout", 1, true));
 | `pattern` | regex | (required) |
 | `stream` | `stdout` / `stderr` | `stdout` |
 | `captureGroup` | capture group number to use | `1` |
-| `firstOnly` | whether to publish only the first match | `true` |
+| `firstOnly` | `true`: publish the first match only. `false`: continuous capture (see 8.4) | `true` |
+| `taskKey` | which task to watch: unset = the run's first task; set = the first task launched with env `TEEBOX_TASK_KEY` equal to it (see 8.4) | (unset) |
+| `maxCaptures` | continuous mode only — stop after this many captures; `0` = unlimited (until the task ends) | `0` |
 
 ### 8.2 Register together with the rules
 
@@ -669,6 +675,49 @@ Object jobId = teebox.waitForPublished(runId, "jobId", 60000L);  // e.g. "abc123
   "jobId.detectedAt": 1781702632309
 }
 ```
+
+### 8.4 Continuous capture — repeated matches (TeeBox >= 1.17.0)
+
+A default rule (`firstOnly=true`) freezes at the first match. When the value **repeats** — a progress percentage, periodically emitted item IDs — build the rule with `continuousOutputRule` (`firstOnly=false`): every match is captured until the task terminates, or until `maxCaptures` values were taken (`0` = unlimited).
+
+```java
+// Capture every "item: <id>" line (unlimited), from the run's first task
+rules.add(TeeBoxClient.continuousOutputRule("item", "item:\\s*(\\S+)", "stdout", 1, null, 0));
+
+// Capture at most 100 progress values from the task tagged worker1
+rules.add(TeeBoxClient.continuousOutputRule("progress", "progress:\\s*(\\d+)", "stdout", 1, "worker1", 100));
+```
+
+For a continuous key the `published` map carries four entries — the bare key always holds the **latest** value, so `waitForPublished` keeps working unchanged:
+
+```jsonc
+"published": {
+  "item": "a5",                          // latest captured value
+  "item.values": ["a1","a2","a3","a4","a5"], // all captures, in order (bounded by maxCaptures)
+  "item.count": 5,                       // total captures so far
+  "item.detectedAt": 1781702632309       // time of the LAST capture
+}
+```
+
+**Targeting a task with `taskKey`.** Rules without a `taskKey` watch the run's **first** task only. To capture from a different task, tag that task in the script via the reserved env var `TEEBOX_TASK_KEY` and reference it from the rule:
+
+```
+r1 = SHELL("do_setup.sh")
+r2 = SHELL("do_work.sh", {"env": {"TEEBOX_TASK_KEY": "worker1"}})
+```
+
+A rule with `taskKey = "worker1"` then watches `r2`'s task (the first task launched with that key, if several share it). The env var is passed through to the process like any other `env` entry.
+
+**Waiting for captures to accumulate:**
+
+```java
+// Block until at least 3 values were captured, then get the list so far
+List<Object> items = teebox.waitForPublishedCount(runId, "item", 3, 60000L);
+```
+
+`waitForPublishedCount` polls `published`'s `<key>.count` and returns `<key>.values` once it reaches `minCount`; if the run terminates first or `timeoutMs` elapses, it throws `IOException`.
+
+> Note: an older server (TeeBox < 1.17.0) captures only the first match even for `firstOnly=false` rules — continuous rules need a 1.17.0+ server.
 
 ---
 
@@ -748,6 +797,7 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `getScriptContent(scriptId, version)` | `String` | Specific version source |
 | `static outputRule(publishKey, pattern)` | `Map` | Output capture rule builder (stdout, first match, group 1) |
 | `static outputRule(publishKey, pattern, stream, captureGroup, firstOnly)` | `Map` | Output capture rule builder (full spec) |
+| `static continuousOutputRule(publishKey, pattern, stream, captureGroup, taskKey, maxCaptures)` | `Map` | Continuous (repeated-capture) rule builder — every match until the task ends or `maxCaptures` (0 = unlimited); `taskKey` targets the task tagged with env `TEEBOX_TASK_KEY` (null = first task). See §8.4. Requires TeeBox >= 1.17.0 |
 
 ### Execution / tracking — §7·§8
 | Method | Returns | Description |
@@ -774,6 +824,7 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `runAndWait(scriptId, version, props, timeoutMs)` `[, userId]` | `Map`(result) | Submit→wait→result. `IOException` on non-`COMPLETED`/timeout. Optional trailing `userId` (nullable) = the `X-TeeBox-User` submitter id |
 | `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` `[, userId]` | `long`(bytes) | `STREAM_FILE` scripts only: submit→wait→stream in one call. Failures after submit are `RunStreamException` (recover runId via `getRunId()`). Optional trailing `userId` (nullable) = the `X-TeeBox-User` submitter id |
 | `waitForPublished(runId, key, timeoutMs)` | `Object` | Poll until `published[key]` appears and return that value (§8) |
+| `waitForPublishedCount(runId, key, minCount, timeoutMs)` | `List<Object>` | Poll until a continuous capture's `published[key.count]` reaches `minCount`, then return `published[key.values]` (§8.4). `IOException` if the run terminates first or on timeout. Requires TeeBox >= 1.17.0 |
 
 ### JSON utilities (optional)
 | Method | Returns | Description |

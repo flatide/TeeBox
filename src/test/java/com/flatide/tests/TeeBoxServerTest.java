@@ -1220,6 +1220,143 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void continuousCaptureShouldPublishEveryMatch() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "continuous_capture");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content",
+                "result = SHELL(\"for i in 1 2 3 4 5; do echo item: a$i; done\")\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "item:\\s*(\\S+)");
+            rule.put("publishKey", "item");
+            rule.put("firstOnly", Boolean.FALSE);
+            rule.put("maxCaptures", Double.valueOf(0));
+            rules.add(rule);
+            registerPayload.put("outputRules", rules);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> submitResult = postJson(
+                testServer.baseUrl + "/api/client/scripts/continuous_capture/runs", runPayload, 202);
+            String runId = (String) submitResult.get("runId");
+
+            waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
+
+            Map<String, Object> clientRun = getJsonMap(
+                testServer.baseUrl + "/api/client/runs/" + runId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
+            Assert.assertNotNull("published should exist", published);
+            Assert.assertEquals("key holds the latest value", "a5", published.get("item"));
+            @SuppressWarnings("unchecked")
+            List<Object> values = (List<Object>) published.get("item.values");
+            Assert.assertNotNull("item.values should exist", values);
+            Assert.assertEquals("all 5 matches captured",
+                java.util.Arrays.asList((Object) "a1", "a2", "a3", "a4", "a5"), values);
+            Assert.assertEquals("count is total captures", 5,
+                ((Number) published.get("item.count")).intValue());
+            Assert.assertNotNull("detectedAt should exist", published.get("item.detectedAt"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void continuousCaptureShouldStopAtMaxCaptures() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "capped_capture");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content",
+                "result = SHELL(\"for i in 1 2 3 4 5; do echo item: a$i; done\")\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "item:\\s*(\\S+)");
+            rule.put("publishKey", "item");
+            rule.put("firstOnly", Boolean.FALSE);
+            rule.put("maxCaptures", Double.valueOf(3));
+            rules.add(rule);
+            registerPayload.put("outputRules", rules);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> submitResult = postJson(
+                testServer.baseUrl + "/api/client/scripts/capped_capture/runs", runPayload, 202);
+            String runId = (String) submitResult.get("runId");
+
+            waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
+
+            Map<String, Object> clientRun = getJsonMap(
+                testServer.baseUrl + "/api/client/runs/" + runId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
+            Assert.assertNotNull("published should exist", published);
+            @SuppressWarnings("unchecked")
+            List<Object> values = (List<Object>) published.get("item.values");
+            Assert.assertEquals("cap of 3 keeps the first three",
+                java.util.Arrays.asList((Object) "a1", "a2", "a3"), values);
+            Assert.assertEquals("a3", published.get("item"));
+            Assert.assertEquals(3, ((Number) published.get("item.count")).intValue());
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void taskKeyRuleShouldWatchTheKeyedTaskNotTheFirst() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // First task has no key and no match; the keyed rule must capture from the
+            // second task, which carries TEEBOX_TASK_KEY=worker1.
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "task_key_capture");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content",
+                "r1 = SHELL(\"echo 'jobid: WRONG'\")\n" +
+                "r2 = SHELL(\"echo 'jobid: RIGHT'\", {\"env\": {\"TEEBOX_TASK_KEY\": \"worker1\"}})\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "jobid:\\s*(\\S+)");
+            rule.put("publishKey", "jobId");
+            rule.put("firstOnly", Boolean.TRUE);
+            rule.put("taskKey", "worker1");
+            rules.add(rule);
+            registerPayload.put("outputRules", rules);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> submitResult = postJson(
+                testServer.baseUrl + "/api/client/scripts/task_key_capture/runs", runPayload, 202);
+            String runId = (String) submitResult.get("runId");
+
+            waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
+
+            Map<String, Object> clientRun = getJsonMap(
+                testServer.baseUrl + "/api/client/runs/" + runId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
+            Assert.assertNotNull("published should exist", published);
+            Assert.assertEquals("keyed rule captured from the keyed task, not the first",
+                "RIGHT", published.get("jobId"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void outputPublishShouldRejectInvalidRegex() throws Exception {
         TestServer testServer = createServer();
         try {

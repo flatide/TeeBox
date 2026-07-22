@@ -256,10 +256,10 @@ curl http://host:18080/api/client/runs/{runId}
 Admin UI의 스크립트 상세 페이지에서도 규칙을 설정할 수 있습니다.
 
 **동작 방식:**
-- run에서 생성된 첫 번째 태스크만 감시 (보조 태스크의 오탐 방지)
+- 기본은 run에서 생성된 첫 번째 태스크만 감시 (보조 태스크의 오탐 방지). 규칙에 `taskKey` 를 지정하면 env `TEEBOX_TASK_KEY` 가 그 값인 첫 태스크를 대신 감시 — 스크립트에서 태깅: `SHELL("cmd", {"env": {"TEEBOX_TASK_KEY": "worker1"}})`
 - 태스크의 stdout.log 파일을 증분 읽기
 - 설정 가능한 캡처 그룹으로 라인별 매칭
-- `firstOnly: true`는 첫 매치만 publish (권장)
+- `firstOnly: true`는 첫 매치만 publish. `firstOnly: false`(1.17.0+)는 **연속 캡처** — 태스크 종료 또는 `maxCaptures` 개 도달까지(`0` = 무제한) 매 매치를 캡처. 연속 키는 `key`(최신 값), `key.values`(캡처 리스트), `key.count`, `key.detectedAt`(마지막 캡처 시각)으로 게시
 - 캡처된 값은 즉시 저장되며 API와 Admin UI에서 확인 가능
 
 ### 대용량 결과 스트리밍 (STREAM_FILE)

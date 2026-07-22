@@ -1148,7 +1148,7 @@ public class RunManager {
         for (Map.Entry<String, TaskOutputWatcher> entry : outputWatchers.entrySet()) {
             TaskOutputWatcher watcher = entry.getValue();
             if (runId.equals(watcher.getRunId())) {
-                Map<String, Object> finalMatches = watcher.finalScan();
+                Map<String, List<String>> finalMatches = watcher.finalScan();
                 applyWatcherMatches(watcher, finalMatches);
                 toRemove.add(entry.getKey());
             }
@@ -1162,7 +1162,7 @@ public class RunManager {
         List<String> toRemove = new ArrayList<String>();
         for (Map.Entry<String, TaskOutputWatcher> entry : outputWatchers.entrySet()) {
             TaskOutputWatcher watcher = entry.getValue();
-            Map<String, Object> matches = watcher.scan();
+            Map<String, List<String>> matches = watcher.scan();
             applyWatcherMatches(watcher, matches);
 
             // Remove if all rules matched or task is no longer alive
@@ -1172,7 +1172,7 @@ public class RunManager {
                 TaskObservation obs = managedTaskEngine.observe(entry.getKey());
                 if (obs == null || !obs.alive) {
                     // Task terminated — flush remainder and do final match
-                    Map<String, Object> finalMatches = watcher.finalScan();
+                    Map<String, List<String>> finalMatches = watcher.finalScan();
                     applyWatcherMatches(watcher, finalMatches);
                     toRemove.add(entry.getKey());
                 }
@@ -1183,7 +1183,15 @@ public class RunManager {
         }
     }
 
-    private void applyWatcherMatches(TaskOutputWatcher watcher, Map<String, Object> matches) {
+    /**
+     * Merge a scan's captures into the run's published map. firstOnly keys are first-wins
+     * (legacy shape: {@code key} + {@code key.detectedAt}, frozen at the first value).
+     * Continuous keys accumulate: {@code key} = latest value, {@code key.values} = capture
+     * list (bounded by the rule's maxCaptures — the watcher stops capturing at the cap),
+     * {@code key.count} = total captures, {@code key.detectedAt} = last capture time.
+     */
+    @SuppressWarnings("unchecked")
+    private void applyWatcherMatches(TaskOutputWatcher watcher, Map<String, List<String>> matches) {
         if (matches.isEmpty()) return;
         RunInfo run = runRegistry.getRawRun(watcher.getRunId());
         if (run == null) return;
@@ -1192,12 +1200,27 @@ public class RunManager {
                 run.published = new LinkedHashMap<String, Object>();
             }
             long now = System.currentTimeMillis();
-            for (Map.Entry<String, Object> match : matches.entrySet()) {
+            for (Map.Entry<String, List<String>> match : matches.entrySet()) {
                 String key = match.getKey();
-                if (!run.published.containsKey(key)) {
-                    run.published.put(key, match.getValue());
+                List<String> values = match.getValue();
+                if (values.isEmpty()) continue;
+                if (watcher.isContinuousKey(key)) {
+                    List<String> all = (List<String>) run.published.get(key + ".values");
+                    if (all == null) {
+                        all = new ArrayList<String>();
+                        run.published.put(key + ".values", all);
+                    }
+                    all.addAll(values);
+                    run.published.put(key, values.get(values.size() - 1));
+                    run.published.put(key + ".count", Long.valueOf(all.size()));
                     run.published.put(key + ".detectedAt", now);
-                    TeeBoxLog.info("OutputWatcher", "Published " + key + "=" + match.getValue() + " for run=" + run.runId);
+                    TeeBoxLog.info("OutputWatcher", "Published " + key + " +" + values.size()
+                            + " (total " + all.size() + ", latest=" + values.get(values.size() - 1)
+                            + ") for run=" + run.runId);
+                } else if (!run.published.containsKey(key)) {
+                    run.published.put(key, values.get(0));
+                    run.published.put(key + ".detectedAt", now);
+                    TeeBoxLog.info("OutputWatcher", "Published " + key + "=" + values.get(0) + " for run=" + run.runId);
                 }
             }
         }

@@ -63,6 +63,28 @@ curl -X POST $HOST/api/publisher/scripts \
   }'
 ```
 
+**연속 캡처 (1.17.0+)** — `firstOnly: false` 는 매치될 때마다 캡처합니다(`maxCaptures` 개까지, `0` = 무제한). `taskKey` 를 지정하면 첫 task 대신 env `TEEBOX_TASK_KEY` 가 그 값인 task 를 감시합니다:
+
+```bash
+curl -X POST $HOST/api/publisher/scripts \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "scriptId": "worker",
+    "version": "v1",
+    "content": "r = SHELL(\"./work.sh\", {\"env\": {\"TEEBOX_TASK_KEY\": \"worker1\"}})\n",
+    "activate": true,
+    "outputRules": [{
+      "stream": "stdout",
+      "pattern": "item:\\s*(\\S+)",
+      "publishKey": "item",
+      "firstOnly": false,
+      "taskKey": "worker1",
+      "maxCaptures": 0
+    }]
+  }'
+# published: {"item": "<최신값>", "item.values": [...전체 캡처...], "item.count": N, "item.detectedAt": ...}
+```
+
 ### 1.3 스크립트 목록
 
 ```bash
