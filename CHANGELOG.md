@@ -2,6 +2,34 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Output-capture rules now target a task by `SHELL()` execution order, not by key.** The
+  1.17.0 `taskKey` mechanism (tagging a task via the `TEEBOX_TASK_KEY` env var) proved
+  unusable for distinguishing SHELL() calls in practice and is **removed**; the rule field
+  **`taskIndex`** replaces it: `0` (default) = the run's first task — identical to the legacy
+  behavior — `1` = the second task, and so on. Only successfully launched tasks consume an
+  index, and no script changes are needed. Caveat: order is deterministic only for sequential
+  SHELL calls (parallel `multi`/`thread` SHELLs are created in scheduling order). A 1.17.x
+  script.json carrying `taskKey` loads fine — the unknown field is ignored and the rule falls
+  back to `taskIndex` 0 (first task).
+- **`firstOnly` is folded into `maxCaptures` — one capture knob.** The capture mode and the
+  cap overlapped (`firstOnly: true` ≡ `maxCaptures: 1`, `false` ≡ `0`), so the boolean is gone
+  from the rule model: **`maxCaptures`** is the single knob — `1` (the new default) = the
+  first match only, `0` = unlimited (every match until the task terminates), `N` = up to N.
+  The published shape is now **uniform for every rule**: `key` = latest value, `key.values` =
+  ordered capture list, `key.count`, `key.detectedAt` = last capture time (a default rule
+  simply holds one value; consumers reading only `key`/`key.detectedAt` are unaffected). The
+  admin-UI rule form drops the Mode select (Task Index / Max Captures inputs remain), and the
+  run page folds the companion keys into one row per capture key. **Deprecated input alias**:
+  raw JSON `firstOnly` is still accepted (`true` → maxCaptures 1; `false` with no explicit
+  maxCaptures → 0), so 1.17.x client jars keep working, and persisted 1.17.x rules migrate on
+  load (1.17.x wrote `maxCaptures: 0` even for first-only rules — the flag disambiguates).
+  Shipped client builders: `outputRule(publishKey, pattern)` (first match, first task) and
+  `outputRule(publishKey, pattern, stream, captureGroup, taskIndex, maxCaptures)`;
+  `continuousOutputRule` and the boolean `firstOnly` overload are removed — recompile
+  embedders that used the 1.17.x signatures.
+
 ## 1.17.1
 
 - **Editor: pressing Enter on a horizontally scrolled long line no longer leaves the text flush

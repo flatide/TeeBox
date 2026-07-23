@@ -642,14 +642,28 @@ public class AdminPageRenderer {
         if (hasPublished || hasOutputRules) {
             sb.append("<div class='card'><h2>Published</h2>");
             if (hasPublished) {
+                // One row per base key; the .values/.count/.detectedAt companion entries are
+                // folded into the row (latest value + capture count + last capture time).
                 sb.append("<table class='data-table'><thead><tr><th>Key</th><th>Value</th></tr></thead><tbody>");
                 for (java.util.Map.Entry<String, Object> entry : run.published.entrySet()) {
-                    if (entry.getKey().endsWith(".detectedAt")) continue;
-                    sb.append("<tr><td class='mono'>").append(escape(entry.getKey())).append("</td>");
+                    String key = entry.getKey();
+                    if (key.endsWith(".detectedAt") || key.endsWith(".values") || key.endsWith(".count")) continue;
+                    sb.append("<tr><td class='mono'>").append(escape(key)).append("</td>");
                     sb.append("<td class='mono'>").append(escape(entry.getValue()));
-                    Object detectedAt = run.published.get(entry.getKey() + ".detectedAt");
+                    Object count = run.published.get(key + ".count");
+                    Object detectedAt = run.published.get(key + ".detectedAt");
+                    sb.append(" <span class='dim'>(");
+                    if (count instanceof Number) {
+                        sb.append("captures: ").append(((Number) count).longValue());
+                        if (detectedAt instanceof Number) sb.append(", ");
+                    }
                     if (detectedAt instanceof Number) {
-                        sb.append(" <span class='dim'>(detected at ").append(formatTime(((Number) detectedAt).longValue())).append(")</span>");
+                        sb.append("last at ").append(formatTime(((Number) detectedAt).longValue()));
+                    }
+                    sb.append(")</span>");
+                    Object values = run.published.get(key + ".values");
+                    if (values instanceof java.util.List && ((java.util.List<?>) values).size() > 1) {
+                        sb.append("<br/><span class='dim'>values: ").append(escape(values)).append("</span>");
                     }
                     sb.append("</td></tr>");
                 }
@@ -1130,15 +1144,10 @@ public class AdminPageRenderer {
                 sb.append("<div class='form-row' style='flex:1'><label>Stream</label><select name='publishStream'>");
                 sb.append("<option value='stdout'").append(activeRule == null || !"stderr".equals(activeRule.stream) ? " selected" : "").append(">stdout</option>");
                 sb.append("<option value='stderr'").append(activeRule != null && "stderr".equals(activeRule.stream) ? " selected" : "").append(">stderr</option>");
-                sb.append("</select></div>");
-                boolean continuousRule = activeRule != null && !activeRule.firstOnly;
-                sb.append("<div class='form-row' style='flex:1'><label>Mode</label><select name='publishMode'>");
-                sb.append("<option value='first'").append(!continuousRule ? " selected" : "").append(">first match only</option>");
-                sb.append("<option value='continuous'").append(continuousRule ? " selected" : "").append(">continuous</option>");
                 sb.append("</select></div></div>");
                 sb.append("<div style='display:flex;gap:12px;'>");
-                sb.append("<div class='form-row' style='flex:1'><label>Task Key <span class='dim'>(TEEBOX_TASK_KEY env; empty = first task)</span></label><input type='text' name='taskKey' value='").append(activeRule != null && activeRule.taskKey != null ? escape(activeRule.taskKey) : "").append("' placeholder='worker1'/></div>");
-                sb.append("<div class='form-row' style='flex:1'><label>Max Captures <span class='dim'>(continuous; 0 = unlimited)</span></label><input type='number' name='maxCaptures' value='").append(activeRule != null ? activeRule.maxCaptures : 0).append("' min='0' style='width:80px;'/></div>");
+                sb.append("<div class='form-row' style='flex:1'><label>Task Index <span class='dim'>(SHELL execution order; 0 = first)</span></label><input type='number' name='taskIndex' value='").append(activeRule != null ? activeRule.taskIndex : 0).append("' min='0' style='width:80px;'/></div>");
+                sb.append("<div class='form-row' style='flex:1'><label>Max Captures <span class='dim'>(1 = first match only, 0 = unlimited)</span></label><input type='number' name='maxCaptures' value='").append(activeRule != null ? activeRule.maxCaptures : 1).append("' min='0' style='width:80px;'/></div>");
                 sb.append("</div></div></details>");
                 sb.append("<div class='form-row-inline' style='align-items:center;'>");
                 // Prefilled with the selected version's description so plain Save updates it in

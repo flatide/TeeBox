@@ -225,7 +225,7 @@ curl -X POST http://host:18080/api/publisher/scripts \
       "pattern": "Job <(\\d+)> is submitted",
       "captureGroup": 1,
       "publishKey": "jobId",
-      "firstOnly": true
+      "maxCaptures": 1
     }]
   }'
 ```
@@ -240,10 +240,10 @@ curl http://host:18080/api/client/runs/{runId}
 Rules can also be configured via the Admin UI on the script detail page.
 
 **How it works:**
-- By default, only the first task created by the run is watched (prevents false matches from auxiliary tasks). A rule with a `taskKey` instead watches the first task launched with env `TEEBOX_TASK_KEY` equal to that value — the script tags it: `SHELL("cmd", {"env": {"TEEBOX_TASK_KEY": "worker1"}})`
+- By default, only the first task created by the run is watched (prevents false matches from auxiliary tasks). A rule's `taskIndex` selects a task by `SHELL()` execution order within the run: `0` (default) = the first task, `1` = the second, etc. — no script changes needed (order is deterministic only for sequential SHELL calls; parallel `multi`/`thread` SHELLs are created in scheduling order)
 - The watcher incrementally reads the task's stdout.log file
 - Matching happens per-line with configurable capture group
-- `firstOnly: true` publishes only the first match; `firstOnly: false` (1.17.0+) captures **continuously** — every match until the task terminates or `maxCaptures` values were taken (`0` = unlimited). Continuous keys publish `key` (latest value), `key.values` (capture list), `key.count`, and `key.detectedAt` (last capture time)
+- `maxCaptures` (1.18.0+) is the single capture knob: `1` (default) = the first match only, `0` = unlimited (every match until the task terminates), `N` = up to N. Every key publishes `key` (latest value), `key.values` (capture list), `key.count`, and `key.detectedAt` (last capture time). The pre-1.18 `firstOnly` boolean is still accepted as a deprecated alias (`true` → 1; `false` with no maxCaptures → 0)
 - Captured values are persisted immediately and visible in both API and Admin UI
 
 ### Large Result Streaming (STREAM_FILE)

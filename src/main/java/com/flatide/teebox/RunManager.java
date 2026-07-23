@@ -1184,11 +1184,11 @@ public class RunManager {
     }
 
     /**
-     * Merge a scan's captures into the run's published map. firstOnly keys are first-wins
-     * (legacy shape: {@code key} + {@code key.detectedAt}, frozen at the first value).
-     * Continuous keys accumulate: {@code key} = latest value, {@code key.values} = capture
-     * list (bounded by the rule's maxCaptures — the watcher stops capturing at the cap),
-     * {@code key.count} = total captures, {@code key.detectedAt} = last capture time.
+     * Merge a scan's captures into the run's published map. Every key publishes the same
+     * shape: {@code key} = latest value, {@code key.values} = capture list (bounded by the
+     * rule's maxCaptures — the watcher stops capturing at the cap, so a default rule holds
+     * exactly one value), {@code key.count} = total captures, {@code key.detectedAt} = last
+     * capture time.
      */
     @SuppressWarnings("unchecked")
     private void applyWatcherMatches(TaskOutputWatcher watcher, Map<String, List<String>> matches) {
@@ -1204,24 +1204,18 @@ public class RunManager {
                 String key = match.getKey();
                 List<String> values = match.getValue();
                 if (values.isEmpty()) continue;
-                if (watcher.isContinuousKey(key)) {
-                    List<String> all = (List<String>) run.published.get(key + ".values");
-                    if (all == null) {
-                        all = new ArrayList<String>();
-                        run.published.put(key + ".values", all);
-                    }
-                    all.addAll(values);
-                    run.published.put(key, values.get(values.size() - 1));
-                    run.published.put(key + ".count", Long.valueOf(all.size()));
-                    run.published.put(key + ".detectedAt", now);
-                    TeeBoxLog.info("OutputWatcher", "Published " + key + " +" + values.size()
-                            + " (total " + all.size() + ", latest=" + values.get(values.size() - 1)
-                            + ") for run=" + run.runId);
-                } else if (!run.published.containsKey(key)) {
-                    run.published.put(key, values.get(0));
-                    run.published.put(key + ".detectedAt", now);
-                    TeeBoxLog.info("OutputWatcher", "Published " + key + "=" + values.get(0) + " for run=" + run.runId);
+                List<String> all = (List<String>) run.published.get(key + ".values");
+                if (all == null) {
+                    all = new ArrayList<String>();
+                    run.published.put(key + ".values", all);
                 }
+                all.addAll(values);
+                run.published.put(key, values.get(values.size() - 1));
+                run.published.put(key + ".count", Long.valueOf(all.size()));
+                run.published.put(key + ".detectedAt", now);
+                TeeBoxLog.info("OutputWatcher", "Published " + key + " +" + values.size()
+                        + " (total " + all.size() + ", latest=" + values.get(values.size() - 1)
+                        + ") for run=" + run.runId);
             }
         }
         runRegistry.markDirty(run);

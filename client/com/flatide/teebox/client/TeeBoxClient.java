@@ -195,41 +195,32 @@ public class TeeBoxClient {
 
     /**
      * Build an output-capture rule (for {@code outputRules}) that publishes the first stdout match of
-     * {@code pattern} (capture group 1) under {@code publishKey}. Use this to surface a long job's id
-     * early so callers can track it via {@link #waitForPublished}.
+     * {@code pattern} (capture group 1) under {@code publishKey}, from the run's first task. Use this
+     * to surface a long job's id early so callers can track it via {@link #waitForPublished}.
      */
     public static Map<String, Object> outputRule(String publishKey, String pattern) {
-        return outputRule(publishKey, pattern, "stdout", 1, true);
+        return outputRule(publishKey, pattern, "stdout", 1, 0, 1);
     }
 
-    /** Build a fully-specified output-capture rule. */
+    /**
+     * Build a fully-specified output-capture rule. {@code taskIndex} selects the watched task by
+     * SHELL() execution order within the run (0 = the first task, 1 = the second, ...; order is
+     * only deterministic for sequential SHELL calls). {@code maxCaptures} is how many matches to
+     * capture: 1 = the first match only, 0 = unlimited (every match until the task terminates),
+     * N = up to N. The run's {@code published} map carries {@code key} = latest value,
+     * {@code key.values} = capture list, {@code key.count} = total captures, {@code key.detectedAt}
+     * = last capture time. taskIndex/multi-capture need TeeBox &gt;= 1.18.0 (older servers ignore
+     * taskIndex and capture only the first match).
+     */
     public static Map<String, Object> outputRule(String publishKey, String pattern, String stream,
-                                                 int captureGroup, boolean firstOnly) {
+                                                 int captureGroup, int taskIndex, int maxCaptures) {
         Map<String, Object> rule = new LinkedHashMap<String, Object>();
         rule.put("stream", stream);
         rule.put("pattern", pattern);
         rule.put("captureGroup", Integer.valueOf(captureGroup));
         rule.put("publishKey", publishKey);
-        rule.put("firstOnly", Boolean.valueOf(firstOnly));
-        return rule;
-    }
-
-    /**
-     * Build a continuous (repeated-capture) output rule: every match is captured until the task
-     * terminates or {@code maxCaptures} values were taken (0 = unlimited). The run's {@code published}
-     * map then carries {@code key} = latest value, {@code key.values} = capture list, {@code key.count}
-     * = total captures, {@code key.detectedAt} = last capture time. {@code taskKey} targets the first
-     * task launched with env {@code TEEBOX_TASK_KEY} equal to it — e.g. the script runs
-     * {@code SHELL(cmd, {"env": {"TEEBOX_TASK_KEY": "worker1"}})}; null/empty = the run's first task.
-     * Requires TeeBox &gt;= 1.17.0 (older servers capture only the first match).
-     */
-    public static Map<String, Object> continuousOutputRule(String publishKey, String pattern, String stream,
-                                                           int captureGroup, String taskKey, int maxCaptures) {
-        Map<String, Object> rule = outputRule(publishKey, pattern, stream, captureGroup, false);
-        if (taskKey != null && taskKey.length() > 0) {
-            rule.put("taskKey", taskKey);
-        }
-        rule.put("maxCaptures", Integer.valueOf(maxCaptures));
+        rule.put("taskIndex", Integer.valueOf(taskIndex < 0 ? 0 : taskIndex));
+        rule.put("maxCaptures", Integer.valueOf(maxCaptures < 0 ? 0 : maxCaptures));
         return rule;
     }
 

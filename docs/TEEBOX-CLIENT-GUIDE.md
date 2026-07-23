@@ -632,12 +632,9 @@ List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
 // Simple form: publish the first match of pattern (capture group 1) from stdout as jobId
 rules.add(TeeBoxClient.outputRule("jobId", "JOB_ID=(\\S+)"));
 
-// Full form: outputRule(publishKey, pattern, stream, captureGroup, firstOnly)
-rules.add(TeeBoxClient.outputRule("token", "TOKEN:(\\w+)", "stdout", 1, true));
-
-// Continuous form (TeeBox >= 1.17.0): capture EVERY match, not just the first — see 8.4
-// continuousOutputRule(publishKey, pattern, stream, captureGroup, taskKey, maxCaptures)
-rules.add(TeeBoxClient.continuousOutputRule("progress", "progress:\\s*(\\d+)", "stdout", 1, null, 0));
+// Full form: outputRule(publishKey, pattern, stream, captureGroup, taskIndex, maxCaptures)
+// maxCaptures is the single capture knob: 1 = first match only, 0 = unlimited — see 8.4
+rules.add(TeeBoxClient.outputRule("progress", "progress:\\s*(\\d+)", "stdout", 1, 0, 0));
 ```
 
 | Parameter | Meaning | Default (simple form) |
@@ -646,9 +643,10 @@ rules.add(TeeBoxClient.continuousOutputRule("progress", "progress:\\s*(\\d+)", "
 | `pattern` | regex | (required) |
 | `stream` | `stdout` / `stderr` | `stdout` |
 | `captureGroup` | capture group number to use | `1` |
-| `firstOnly` | `true`: publish the first match only. `false`: continuous capture (see 8.4) | `true` |
-| `taskKey` | which task to watch: unset = the run's first task; set = the first task launched with env `TEEBOX_TASK_KEY` equal to it (see 8.4) | (unset) |
-| `maxCaptures` | continuous mode only — stop after this many captures; `0` = unlimited (until the task ends) | `0` |
+| `taskIndex` | which task to watch, by `SHELL()` execution order within the run: `0` = the first task, `1` = the second, … (TeeBox >= 1.18.0; see 8.4) | `0` |
+| `maxCaptures` | how many matches to capture: `1` = the first match only, `0` = unlimited (every match until the task ends), `N` = up to N (see 8.4) | `1` |
+
+> The pre-1.18 `firstOnly` boolean is gone from the builders — it was redundant with `maxCaptures` (`true` ≡ `1`, `false` ≡ `0`). Servers >= 1.18.0 still accept it in raw JSON as a deprecated alias.
 
 ### 8.2 Register together with the rules
 
@@ -667,28 +665,20 @@ Object jobId = teebox.waitForPublished(runId, "jobId", 60000L);  // e.g. "abc123
 ```
 
 - `waitForPublished` polls `getRun`'s `published` map and, once the key is published, returns **that value (usually the captured string)** (returning it does not stop execution). If the run ends without publishing the key, or `timeoutMs` is exceeded, it throws `IOException`.
-- For reference, the `published` map in the `getRun` response looks like this (it includes a `<key>.detectedAt` key carrying the publish time):
 
-```jsonc
-"published": {
-  "jobId": "abc123",
-  "jobId.detectedAt": 1781702632309
-}
-```
+### 8.4 Repeated capture with `maxCaptures` (TeeBox >= 1.18.0)
 
-### 8.4 Continuous capture — repeated matches (TeeBox >= 1.17.0)
-
-A default rule (`firstOnly=true`) freezes at the first match. When the value **repeats** — a progress percentage, periodically emitted item IDs — build the rule with `continuousOutputRule` (`firstOnly=false`): every match is captured until the task terminates, or until `maxCaptures` values were taken (`0` = unlimited).
+A default rule (`maxCaptures = 1`) stops at the first match. When the value **repeats** — a progress percentage, periodically emitted item IDs — set `maxCaptures` to `0` (unlimited: every match until the task terminates) or `N` (up to N):
 
 ```java
-// Capture every "item: <id>" line (unlimited), from the run's first task
-rules.add(TeeBoxClient.continuousOutputRule("item", "item:\\s*(\\S+)", "stdout", 1, null, 0));
+// Capture every "item: <id>" line (unlimited), from the run's first task (taskIndex 0)
+rules.add(TeeBoxClient.outputRule("item", "item:\\s*(\\S+)", "stdout", 1, 0, 0));
 
-// Capture at most 100 progress values from the task tagged worker1
-rules.add(TeeBoxClient.continuousOutputRule("progress", "progress:\\s*(\\d+)", "stdout", 1, "worker1", 100));
+// Capture at most 100 progress values from the run's SECOND task (taskIndex 1)
+rules.add(TeeBoxClient.outputRule("progress", "progress:\\s*(\\d+)", "stdout", 1, 1, 100));
 ```
 
-For a continuous key the `published` map carries four entries — the bare key always holds the **latest** value, so `waitForPublished` keeps working unchanged:
+Every key publishes the same four entries — the bare key always holds the **latest** value (for a `maxCaptures=1` rule, its only value), so `waitForPublished` works for every rule:
 
 ```jsonc
 "published": {
@@ -699,14 +689,14 @@ For a continuous key the `published` map carries four entries — the bare key a
 }
 ```
 
-**Targeting a task with `taskKey`.** Rules without a `taskKey` watch the run's **first** task only. To capture from a different task, tag that task in the script via the reserved env var `TEEBOX_TASK_KEY` and reference it from the rule:
+**Targeting a task with `taskIndex` (TeeBox >= 1.18.0).** A rule watches the task selected by **`SHELL()` execution order** within the run: `taskIndex: 0` (the default) is the run's first task, `1` the second, and so on — no script changes needed:
 
 ```
-r1 = SHELL("do_setup.sh")
-r2 = SHELL("do_work.sh", {"env": {"TEEBOX_TASK_KEY": "worker1"}})
+r1 = SHELL("do_setup.sh")    // taskIndex 0
+r2 = SHELL("do_work.sh")     // taskIndex 1  ← a rule with taskIndex: 1 watches this task
 ```
 
-A rule with `taskKey = "worker1"` then watches `r2`'s task (the first task launched with that key, if several share it). The env var is passed through to the process like any other `env` entry.
+Only successfully launched tasks consume an index. Caveat: with SHELLs running in **parallel threads** (`multi`/`thread`), creation order depends on scheduling — order-based targeting is deterministic only for sequential `SHELL()` calls.
 
 **Waiting for captures to accumulate:**
 
@@ -717,7 +707,7 @@ List<Object> items = teebox.waitForPublishedCount(runId, "item", 3, 60000L);
 
 `waitForPublishedCount` polls `published`'s `<key>.count` and returns `<key>.values` once it reaches `minCount`; if the run terminates first or `timeoutMs` elapses, it throws `IOException`.
 
-> Note: an older server (TeeBox < 1.17.0) captures only the first match even for `firstOnly=false` rules — continuous rules need a 1.17.0+ server.
+> Note: servers older than 1.18.0 ignore `taskIndex`, publish the legacy shape (no `key.values`/`key.count`), and — before 1.17.0 — capture only the first match. Multi-capture rules need a 1.18.0+ server.
 
 ---
 
@@ -795,9 +785,8 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `getActiveScript(scriptId)` | `Map` | Detail (`versions[]` reduced to the active version only) |
 | `getScriptContent(scriptId)` | `String` | Active version source |
 | `getScriptContent(scriptId, version)` | `String` | Specific version source |
-| `static outputRule(publishKey, pattern)` | `Map` | Output capture rule builder (stdout, first match, group 1) |
-| `static outputRule(publishKey, pattern, stream, captureGroup, firstOnly)` | `Map` | Output capture rule builder (full spec) |
-| `static continuousOutputRule(publishKey, pattern, stream, captureGroup, taskKey, maxCaptures)` | `Map` | Continuous (repeated-capture) rule builder — every match until the task ends or `maxCaptures` (0 = unlimited); `taskKey` targets the task tagged with env `TEEBOX_TASK_KEY` (null = first task). See §8.4. Requires TeeBox >= 1.17.0 |
+| `static outputRule(publishKey, pattern)` | `Map` | Output capture rule builder (stdout first match, group 1, first task) |
+| `static outputRule(publishKey, pattern, stream, captureGroup, taskIndex, maxCaptures)` | `Map` | Full-spec rule builder — `taskIndex` targets a task by `SHELL()` execution order (0 = first); `maxCaptures` is the capture knob (1 = first match only, 0 = unlimited, N = up to N). See §8.4. taskIndex/multi-capture need TeeBox >= 1.18.0 |
 
 ### Execution / tracking — §7·§8
 | Method | Returns | Description |
@@ -824,7 +813,7 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `runAndWait(scriptId, version, props, timeoutMs)` `[, userId]` | `Map`(result) | Submit→wait→result. `IOException` on non-`COMPLETED`/timeout. Optional trailing `userId` (nullable) = the `X-TeeBox-User` submitter id |
 | `runAndStream(scriptId, version, props, OutputStream, timeoutMs)` `[, userId]` | `long`(bytes) | `STREAM_FILE` scripts only: submit→wait→stream in one call. Failures after submit are `RunStreamException` (recover runId via `getRunId()`). Optional trailing `userId` (nullable) = the `X-TeeBox-User` submitter id |
 | `waitForPublished(runId, key, timeoutMs)` | `Object` | Poll until `published[key]` appears and return that value (§8) |
-| `waitForPublishedCount(runId, key, minCount, timeoutMs)` | `List<Object>` | Poll until a continuous capture's `published[key.count]` reaches `minCount`, then return `published[key.values]` (§8.4). `IOException` if the run terminates first or on timeout. Requires TeeBox >= 1.17.0 |
+| `waitForPublishedCount(runId, key, minCount, timeoutMs)` | `List<Object>` | Poll until `published[key.count]` reaches `minCount`, then return `published[key.values]` (§8.4). `IOException` if the run terminates first or on timeout. Requires TeeBox >= 1.18.0 |
 
 ### JSON utilities (optional)
 | Method | Returns | Description |

@@ -58,12 +58,12 @@ curl -X POST $HOST/api/publisher/scripts \
       "pattern": "Job <(\\d+)> is submitted",
       "captureGroup": 1,
       "publishKey": "jobId",
-      "firstOnly": true
+      "maxCaptures": 1
     }]
   }'
 ```
 
-**연속 캡처 (1.17.0+)** — `firstOnly: false` 는 매치될 때마다 캡처합니다(`maxCaptures` 개까지, `0` = 무제한). `taskKey` 를 지정하면 첫 task 대신 env `TEEBOX_TASK_KEY` 가 그 값인 task 를 감시합니다:
+**반복 캡처 (1.18.0+)** — `maxCaptures` 가 캡처 knob 입니다: `1`(기본) = 첫 매치만, `0` = 무제한(task 종료까지 전부), `N` = 최대 N개. `taskIndex` 는 run 내 `SHELL()` 실행 순서로 감시할 task 를 지정합니다(`0` = 첫 번째, `1` = 두 번째, …). (1.18 이전의 `firstOnly` boolean 은 deprecated 별칭으로만 유지):
 
 ```bash
 curl -X POST $HOST/api/publisher/scripts \
@@ -71,14 +71,13 @@ curl -X POST $HOST/api/publisher/scripts \
   -d '{
     "scriptId": "worker",
     "version": "v1",
-    "content": "r = SHELL(\"./work.sh\", {\"env\": {\"TEEBOX_TASK_KEY\": \"worker1\"}})\n",
+    "content": "r1 = SHELL(\"./setup.sh\")\nr2 = SHELL(\"./work.sh\")\n",
     "activate": true,
     "outputRules": [{
       "stream": "stdout",
       "pattern": "item:\\s*(\\S+)",
       "publishKey": "item",
-      "firstOnly": false,
-      "taskKey": "worker1",
+      "taskIndex": 1,
       "maxCaptures": 0
     }]
   }'
@@ -572,7 +571,7 @@ curl -X POST $HOST/api/publisher/scripts \
       "pattern": "Job <(\\d+)> is submitted",
       "captureGroup": 1,
       "publishKey": "jobId",
-      "firstOnly": true
+      "maxCaptures": 1
     }]
   }'
 

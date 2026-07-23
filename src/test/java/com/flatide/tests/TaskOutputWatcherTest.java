@@ -18,8 +18,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Unit tests for TaskOutputWatcher's capture modes: legacy firstOnly, continuous
- * (firstOnly=false) with and without a maxCaptures cap, and the final-scan drain.
+ * Unit tests for TaskOutputWatcher's single capture knob: maxCaptures 1 (first match
+ * only, the default), 0 (unlimited), N (cap), and the final-scan drain.
  */
 public class TaskOutputWatcherTest {
 
@@ -37,11 +37,10 @@ public class TaskOutputWatcherTest {
         }
     }
 
-    private OutputPublishRule rule(String key, String pattern, boolean firstOnly, int maxCaptures) {
+    private OutputPublishRule rule(String key, String pattern, int maxCaptures) {
         OutputPublishRule r = new OutputPublishRule();
         r.publishKey = key;
         r.pattern = pattern;
-        r.firstOnly = firstOnly;
         r.maxCaptures = maxCaptures;
         return r;
     }
@@ -52,25 +51,23 @@ public class TaskOutputWatcherTest {
     }
 
     @Test
-    public void firstOnlyCapturesASingleValueAndCompletes() throws Exception {
-        TaskOutputWatcher w = watcher(rule("id", "id:\\s*(\\S+)", true, 0));
+    public void maxCapturesOneTakesTheFirstMatchAndCompletes() throws Exception {
+        TaskOutputWatcher w = watcher(rule("id", "id:\\s*(\\S+)", 1));
         writeStdout("id: first\nid: second\n", false);
 
         Map<String, List<String>> matches = w.scan();
         Assert.assertEquals(Arrays.asList("first"), matches.get("id"));
-        Assert.assertTrue("firstOnly rule matched -> watcher complete", w.isAllMatched());
-        Assert.assertFalse("firstOnly key is not continuous", w.isContinuousKey("id"));
+        Assert.assertTrue("cap of 1 reached -> watcher complete", w.isAllMatched());
     }
 
     @Test
     public void continuousCapturesEveryMatchInAChunk() throws Exception {
-        TaskOutputWatcher w = watcher(rule("item", "item:\\s*(\\S+)", false, 0));
+        TaskOutputWatcher w = watcher(rule("item", "item:\\s*(\\S+)", 0));
         writeStdout("item: a1\nnoise\nitem: a2\nitem: a3\n", false);
 
         Map<String, List<String>> matches = w.scan();
         Assert.assertEquals(Arrays.asList("a1", "a2", "a3"), matches.get("item"));
-        Assert.assertTrue(w.isContinuousKey("item"));
-        Assert.assertFalse("unlimited continuous rule never completes on its own", w.isAllMatched());
+        Assert.assertFalse("unlimited rule never completes on its own", w.isAllMatched());
 
         // Later output keeps getting captured
         writeStdout("item: a4\n", true);
@@ -79,7 +76,7 @@ public class TaskOutputWatcherTest {
 
     @Test
     public void maxCapturesStopsTheRuleAtTheCap() throws Exception {
-        TaskOutputWatcher w = watcher(rule("item", "item:\\s*(\\S+)", false, 2));
+        TaskOutputWatcher w = watcher(rule("item", "item:\\s*(\\S+)", 2));
         writeStdout("item: a1\nitem: a2\nitem: a3\n", false);
 
         Map<String, List<String>> matches = w.scan();
@@ -90,7 +87,7 @@ public class TaskOutputWatcherTest {
 
     @Test
     public void maxCapturesSpansMultipleScans() throws Exception {
-        TaskOutputWatcher w = watcher(rule("item", "item:\\s*(\\S+)", false, 3));
+        TaskOutputWatcher w = watcher(rule("item", "item:\\s*(\\S+)", 3));
         writeStdout("item: a1\nitem: a2\n", false);
         Assert.assertEquals(Arrays.asList("a1", "a2"), w.scan().get("item"));
         Assert.assertFalse(w.isAllMatched());
@@ -101,21 +98,21 @@ public class TaskOutputWatcherTest {
     }
 
     @Test
-    public void firstOnlyAndContinuousRulesCoexist() throws Exception {
+    public void cappedAndUnlimitedRulesCoexist() throws Exception {
         TaskOutputWatcher w = watcher(
-            rule("id", "id:\\s*(\\S+)", true, 0),
-            rule("progress", "progress:\\s*(\\S+)", false, 0));
+            rule("id", "id:\\s*(\\S+)", 1),
+            rule("progress", "progress:\\s*(\\S+)", 0));
         writeStdout("id: job-9\nprogress: 10\nid: ignored\nprogress: 20\n", false);
 
         Map<String, List<String>> matches = w.scan();
         Assert.assertEquals(Arrays.asList("job-9"), matches.get("id"));
         Assert.assertEquals(Arrays.asList("10", "20"), matches.get("progress"));
-        Assert.assertFalse("continuous rule keeps the watcher alive", w.isAllMatched());
+        Assert.assertFalse("the unlimited rule keeps the watcher alive", w.isAllMatched());
     }
 
     @Test
     public void finalScanDrainsBeyondThePerTickBudgetAndFlushesRemainder() throws Exception {
-        TaskOutputWatcher w = watcher(rule("item", "item:\\s*(\\S+)", false, 0));
+        TaskOutputWatcher w = watcher(rule("item", "item:\\s*(\\S+)", 0));
 
         // ~2MB of noise (above the 1MB per-tick budget), then matches near EOF, then an
         // unterminated final line (remainder path).
@@ -135,7 +132,7 @@ public class TaskOutputWatcherTest {
 
     @Test
     public void stderrRulesReadTheStderrStream() throws Exception {
-        OutputPublishRule stderrRule = rule("err2", "err:\\s*(\\S+)", false, 0);
+        OutputPublishRule stderrRule = rule("err2", "err:\\s*(\\S+)", 0);
         stderrRule.stream = "stderr";
         taskDir = tmp.newFolder();
         TaskOutputWatcher w = new TaskOutputWatcher("task-2", "run-2", taskDir,

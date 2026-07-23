@@ -1275,16 +1275,27 @@ public class TeeBoxServer {
                 if (captureGroup instanceof Number) rule.captureGroup = ((Number) captureGroup).intValue();
                 Object publishKey = ruleMap.get("publishKey");
                 if (publishKey instanceof String) rule.publishKey = (String) publishKey;
-                Object firstOnly = ruleMap.get("firstOnly");
-                if (firstOnly instanceof Boolean) rule.firstOnly = ((Boolean) firstOnly).booleanValue();
-                Object taskKey = ruleMap.get("taskKey");
-                if (taskKey instanceof String && ((String) taskKey).trim().length() > 0) {
-                    rule.taskKey = ((String) taskKey).trim();
+                Object taskIndex = ruleMap.get("taskIndex");
+                if (taskIndex instanceof Number) {
+                    rule.taskIndex = ((Number) taskIndex).intValue();
                 }
                 Object maxCaptures = ruleMap.get("maxCaptures");
-                if (maxCaptures instanceof Number) {
-                    rule.maxCaptures = Math.max(0, ((Number) maxCaptures).intValue());
+                boolean maxCapturesPresent = maxCaptures instanceof Number;
+                if (maxCapturesPresent) {
+                    rule.maxCaptures = ((Number) maxCaptures).intValue();
                 }
+                // Deprecated pre-1.18 input alias (old client jars still send it):
+                // firstOnly=true => single capture; firstOnly=false with no explicit
+                // maxCaptures => unlimited (the 1.17.x continuous default).
+                Object firstOnly = ruleMap.get("firstOnly");
+                if (firstOnly instanceof Boolean) {
+                    if (((Boolean) firstOnly).booleanValue()) {
+                        rule.maxCaptures = 1;
+                    } else if (!maxCapturesPresent) {
+                        rule.maxCaptures = 0;
+                    }
+                }
+                rule.normalize();
                 request.outputRules.add(rule);
             }
             // Validate regex patterns at registration time
@@ -1331,13 +1342,15 @@ public class TeeBoxServer {
         if (captureGroup != null && captureGroup.trim().length() > 0) {
             try { rule.captureGroup = Integer.parseInt(captureGroup.trim()); } catch (NumberFormatException ignore) {}
         }
-        if ("continuous".equals(form.get("publishMode"))) rule.firstOnly = false;
-        String taskKey = form.get("taskKey");
-        if (taskKey != null && taskKey.trim().length() > 0) rule.taskKey = taskKey.trim();
+        String taskIndex = form.get("taskIndex");
+        if (taskIndex != null && taskIndex.trim().length() > 0) {
+            try { rule.taskIndex = Integer.parseInt(taskIndex.trim()); } catch (NumberFormatException ignore) {}
+        }
         String maxCaptures = form.get("maxCaptures");
         if (maxCaptures != null && maxCaptures.trim().length() > 0) {
-            try { rule.maxCaptures = Math.max(0, Integer.parseInt(maxCaptures.trim())); } catch (NumberFormatException ignore) {}
+            try { rule.maxCaptures = Integer.parseInt(maxCaptures.trim()); } catch (NumberFormatException ignore) {}
         }
+        rule.normalize();
         List<OutputPublishRule> rules = new ArrayList<OutputPublishRule>();
         rules.add(rule);
         return rules;

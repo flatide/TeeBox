@@ -1234,7 +1234,6 @@ public class TeeBoxServerTest {
             rule.put("stream", "stdout");
             rule.put("pattern", "item:\\s*(\\S+)");
             rule.put("publishKey", "item");
-            rule.put("firstOnly", Boolean.FALSE);
             rule.put("maxCaptures", Double.valueOf(0));
             rules.add(rule);
             registerPayload.put("outputRules", rules);
@@ -1282,7 +1281,6 @@ public class TeeBoxServerTest {
             rule.put("stream", "stdout");
             rule.put("pattern", "item:\\s*(\\S+)");
             rule.put("publishKey", "item");
-            rule.put("firstOnly", Boolean.FALSE);
             rule.put("maxCaptures", Double.valueOf(3));
             rules.add(rule);
             registerPayload.put("outputRules", rules);
@@ -1313,25 +1311,23 @@ public class TeeBoxServerTest {
     }
 
     @Test
-    public void taskKeyRuleShouldWatchTheKeyedTaskNotTheFirst() throws Exception {
+    public void deprecatedFirstOnlyFalseInputMapsToUnlimitedCapture() throws Exception {
+        // Pre-1.18 clients send firstOnly=false with no maxCaptures to mean "continuous,
+        // unlimited" — the deprecated-alias mapping must preserve that.
         TestServer testServer = createServer();
         try {
-            // First task has no key and no match; the keyed rule must capture from the
-            // second task, which carries TEEBOX_TASK_KEY=worker1.
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
-            registerPayload.put("scriptId", "task_key_capture");
+            registerPayload.put("scriptId", "legacy_continuous");
             registerPayload.put("version", "v1");
             registerPayload.put("content",
-                "r1 = SHELL(\"echo 'jobid: WRONG'\")\n" +
-                "r2 = SHELL(\"echo 'jobid: RIGHT'\", {\"env\": {\"TEEBOX_TASK_KEY\": \"worker1\"}})\n");
+                "result = SHELL(\"for i in 1 2 3 4 5; do echo item: a$i; done\")\n");
             registerPayload.put("activate", Boolean.TRUE);
             List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
             Map<String, Object> rule = new LinkedHashMap<String, Object>();
             rule.put("stream", "stdout");
-            rule.put("pattern", "jobid:\\s*(\\S+)");
-            rule.put("publishKey", "jobId");
-            rule.put("firstOnly", Boolean.TRUE);
-            rule.put("taskKey", "worker1");
+            rule.put("pattern", "item:\\s*(\\S+)");
+            rule.put("publishKey", "item");
+            rule.put("firstOnly", Boolean.FALSE);
             rules.add(rule);
             registerPayload.put("outputRules", rules);
             postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
@@ -1339,7 +1335,7 @@ public class TeeBoxServerTest {
             Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
             runPayload.put("props", new LinkedHashMap<String, Object>());
             Map<String, Object> submitResult = postJson(
-                testServer.baseUrl + "/api/client/scripts/task_key_capture/runs", runPayload, 202);
+                testServer.baseUrl + "/api/client/scripts/legacy_continuous/runs", runPayload, 202);
             String runId = (String) submitResult.get("runId");
 
             waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
@@ -1349,7 +1345,51 @@ public class TeeBoxServerTest {
             @SuppressWarnings("unchecked")
             Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
             Assert.assertNotNull("published should exist", published);
-            Assert.assertEquals("keyed rule captured from the keyed task, not the first",
+            Assert.assertEquals("firstOnly=false with no maxCaptures = unlimited", 5,
+                ((Number) published.get("item.count")).intValue());
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void taskIndexRuleShouldWatchTheNthTaskNotTheFirst() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            // Three sequential SHELLs all emit a matching line; the rule with taskIndex=1
+            // must capture from the SECOND task only.
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "task_index_capture");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content",
+                "r1 = SHELL(\"echo 'jobid: WRONG0'\")\n" +
+                "r2 = SHELL(\"echo 'jobid: RIGHT'\")\n" +
+                "r3 = SHELL(\"echo 'jobid: WRONG2'\")\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "jobid:\\s*(\\S+)");
+            rule.put("publishKey", "jobId");
+            rule.put("taskIndex", Double.valueOf(1));
+            rules.add(rule);
+            registerPayload.put("outputRules", rules);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> submitResult = postJson(
+                testServer.baseUrl + "/api/client/scripts/task_index_capture/runs", runPayload, 202);
+            String runId = (String) submitResult.get("runId");
+
+            waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
+
+            Map<String, Object> clientRun = getJsonMap(
+                testServer.baseUrl + "/api/client/runs/" + runId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
+            Assert.assertNotNull("published should exist", published);
+            Assert.assertEquals("taskIndex=1 rule captured from the second task",
                 "RIGHT", published.get("jobId"));
         } finally {
             testServer.close();
@@ -1401,7 +1441,6 @@ public class TeeBoxServerTest {
             rule.put("pattern", "jobid:\\s*(\\S+)");
             rule.put("captureGroup", Double.valueOf(1));
             rule.put("publishKey", "jobId");
-            rule.put("firstOnly", Boolean.TRUE);
             rules.add(rule);
             registerPayload.put("outputRules", rules);
             postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);

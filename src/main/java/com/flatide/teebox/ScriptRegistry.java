@@ -75,6 +75,7 @@ public class ScriptRegistry {
             }
             markActiveVersion(info);
             sortVersions(info);
+            normalizeOutputRules(info);
             return info;
         } catch (IOException e) {
             return null;
@@ -537,6 +538,16 @@ public class ScriptRegistry {
         }
         for (ScriptVersionInfo version : info.versions) {
             version.active = info.activeVersion != null && info.activeVersion.equals(version.version);
+        }
+    }
+
+    /** Migrate persisted rules: fold the deprecated pre-1.18 firstOnly flag into maxCaptures. */
+    private void normalizeOutputRules(ScriptInfo info) {
+        for (ScriptVersionInfo version : info.versions) {
+            if (version.outputRules == null) continue;
+            for (OutputPublishRule rule : version.outputRules) {
+                rule.normalize();
+            }
         }
     }
 

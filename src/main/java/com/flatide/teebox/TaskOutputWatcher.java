@@ -10,11 +10,10 @@ import java.util.regex.Pattern;
  * Incrementally reads a task's stdout/stderr file and matches regex patterns.
  * On match, publishes captured values to the parent run's metadata.
  *
- * Two rule modes:
- * - firstOnly=true (default): the rule completes on its first match; one value per key.
- * - firstOnly=false (continuous): every match is captured (all matches in a chunk, not
- *   just the first), until the rule's maxCaptures is reached (0 = unlimited, i.e. until
- *   the task terminates).
+ * A rule captures up to its maxCaptures matches (1 = the first match only — the default,
+ * 0 = unlimited, i.e. every match until the task terminates). All matches in a chunk are
+ * taken, not just the first, up to the remaining cap. Rules must be normalize()d before
+ * reaching the watcher.
  */
 public class TaskOutputWatcher {
     private final String taskId;
@@ -23,7 +22,6 @@ public class TaskOutputWatcher {
     private final File stderrFile;
     private final List<CompiledRule> stdoutRules = new ArrayList<CompiledRule>();
     private final List<CompiledRule> stderrRules = new ArrayList<CompiledRule>();
-    private final Set<String> continuousKeys = new HashSet<String>();
     private long stdoutOffset = 0;
     private long stderrOffset = 0;
     private String stdoutRemainder = "";
@@ -45,7 +43,6 @@ public class TaskOutputWatcher {
         }
 
         boolean isComplete() {
-            if (rule.firstOnly) return captureCount > 0;
             return rule.maxCaptures > 0 && captureCount >= rule.maxCaptures;
         }
     }
@@ -76,9 +73,6 @@ public class TaskOutputWatcher {
             } else {
                 stdoutRules.add(cr);
             }
-            if (!rule.firstOnly) {
-                continuousKeys.add(rule.publishKey);
-            }
         }
     }
 
@@ -100,17 +94,11 @@ public class TaskOutputWatcher {
         return runId;
     }
 
-    /** True when every rule is complete (firstOnly matched / maxCaptures reached) —
-     *  the watcher has nothing left to capture. Continuous rules with maxCaptures=0
-     *  never complete, so a watcher holding one lives until its task terminates. */
+    /** True when every rule is complete (maxCaptures reached) — the watcher has nothing
+     *  left to capture. Rules with maxCaptures=0 never complete, so a watcher holding one
+     *  lives until its task terminates. */
     public boolean isAllMatched() {
         return allComplete;
-    }
-
-    /** True if this key belongs to a continuous (firstOnly=false) rule — the publish
-     *  layer overwrites/accumulates these instead of first-wins. */
-    public boolean isContinuousKey(String key) {
-        return continuousKeys.contains(key);
     }
 
     /**
@@ -212,7 +200,7 @@ public class TaskOutputWatcher {
                     values.add(value);
                     cr.captureCount++;
                 }
-                if (cr.rule.firstOnly || cr.isComplete()) {
+                if (cr.isComplete()) {
                     break;
                 }
             }

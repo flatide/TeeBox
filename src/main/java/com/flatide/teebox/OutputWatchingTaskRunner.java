@@ -5,29 +5,25 @@ import com.flatide.propertee2.task.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * TaskRunner wrapper that registers output watchers when tasks are created.
  * Delegates all operations to the underlying ManagedTaskEngine.
  *
- * Rule-to-task binding: rules with no taskKey watch the run's FIRST task (legacy
- * behavior); rules with a taskKey watch the first task launched with a matching
- * TEEBOX_TASK_KEY env value (set by the script: SHELL(cmd, {"env": {"TEEBOX_TASK_KEY":
- * "worker1"}})). "First" is CAS-guarded per binding so parallel/multi blocks invoking
- * execute() from multiple threads register exactly one watcher per binding.
+ * Rule-to-task binding is by SHELL() execution order within the run: each successfully
+ * created task gets the next index (0, 1, 2, ...) and a rule watches the task whose index
+ * equals its taskIndex (default 0 = the run's first task, the legacy behavior). The counter
+ * is atomic so parallel/multi blocks invoking execute() from multiple threads assign each
+ * index exactly once — but note that under parallel SHELLs the creation ORDER itself is
+ * scheduling-dependent, so order-based targeting is only deterministic for sequential calls.
  */
 class OutputWatchingTaskRunner implements TaskRunner {
-    /** Reserved env var a script sets on SHELL to tag the task for output-capture rules. */
-    static final String TASK_KEY_ENV = "TEEBOX_TASK_KEY";
-
     private final ManagedTaskEngine delegate;
     private final String runId;
     private final List<OutputPublishRule> outputRules;
     private final RunManager runManager;
-    private final AtomicBoolean firstTaskRegistered = new AtomicBoolean(false);
-    private final ConcurrentHashMap<String, Boolean> registeredTaskKeys = new ConcurrentHashMap<String, Boolean>();
+    private final AtomicInteger taskCounter = new AtomicInteger(0);
 
     OutputWatchingTaskRunner(ManagedTaskEngine delegate, String runId,
                              List<OutputPublishRule> outputRules, RunManager runManager) {
@@ -40,41 +36,19 @@ class OutputWatchingTaskRunner implements TaskRunner {
     @Override
     public Task execute(TaskRequest request) {
         Task task = delegate.execute(request);
+        // Index counts successfully created tasks only (a CommandGuard rejection throws
+        // above and never consumes an index).
+        int index = taskCounter.getAndIncrement();
         List<OutputPublishRule> rulesForTask = new ArrayList<OutputPublishRule>();
-
-        // Legacy binding: keyless rules attach to the run's first task.
-        if (hasKeylessRules() && firstTaskRegistered.compareAndSet(false, true)) {
-            for (OutputPublishRule rule : outputRules) {
-                if (rule.taskKey == null || rule.taskKey.length() == 0) {
-                    rulesForTask.add(rule);
-                }
+        for (OutputPublishRule rule : outputRules) {
+            if (rule.taskIndex == index) {
+                rulesForTask.add(rule);
             }
         }
-
-        // Keyed binding: rules whose taskKey matches this task's TEEBOX_TASK_KEY env value.
-        String taskKey = request.env != null ? request.env.get(TASK_KEY_ENV) : null;
-        if (taskKey != null && taskKey.length() > 0
-                && registeredTaskKeys.putIfAbsent(taskKey, Boolean.TRUE) == null) {
-            for (OutputPublishRule rule : outputRules) {
-                if (taskKey.equals(rule.taskKey)) {
-                    rulesForTask.add(rule);
-                }
-            }
-        }
-
         if (!rulesForTask.isEmpty()) {
             runManager.registerOutputWatcher(task.taskId, runId, delegate.getTaskDir(task.taskId), rulesForTask);
         }
         return task;
-    }
-
-    private boolean hasKeylessRules() {
-        for (OutputPublishRule rule : outputRules) {
-            if (rule.taskKey == null || rule.taskKey.length() == 0) {
-                return true;
-            }
-        }
-        return false;
     }
 
     @Override public Task getTask(String taskId) { return delegate.getTask(taskId); }
