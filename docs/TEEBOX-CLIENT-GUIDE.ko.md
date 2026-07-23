@@ -35,7 +35,7 @@ import com.flatide.teebox.client.TeeBoxClient;
 TeeBox 저장소에서 jar 를 빌드합니다.
 
 ```bash
-./gradlew clientJar          # → build/libs/teebox-client-<버전>.jar  (예: teebox-client-1.17.0.jar)
+./gradlew clientJar          # → build/libs/teebox-client-<버전>.jar  (예: teebox-client-1.17.1.jar)
 ./gradlew clientSourcesJar   # (선택) IDE 소스 첨부용 sources jar
 ```
 
@@ -49,7 +49,7 @@ TeeBox 저장소에서 jar 를 빌드합니다.
 ```groovy
 // Gradle
 dependencies {
-    implementation files('libs/teebox-client-1.17.0.jar')
+    implementation files('libs/teebox-client-1.17.1.jar')
 }
 ```
 
@@ -58,7 +58,7 @@ dependencies {
 <dependency>
   <groupId>com.flatide</groupId>
   <artifactId>teebox-client</artifactId>
-  <version>1.17.0</version>
+  <version>1.17.1</version>
 </dependency>
 ```
 

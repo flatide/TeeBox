@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.17.1
 
 - **Editor: pressing Enter on a horizontally scrolled long line no longer leaves the text flush
   against the line-number gutter.** The 12px gap left of the code was `padding-left` inside the
@@ -12,6 +12,8 @@ All notable changes to TeeBox are documented here.
   always sits 12px from the gutter, scrolled or not. Ported from the same fix in the ProperTee
   playground (propertee-js e4a3236); the companion horizontal scroll-sync fix (3aabe34) was
   already present in the TeeBox port.
+
+## 1.17.0
 
 Output capture learns to keep capturing. Continuous rules existed in name only (`firstOnly:
 false` was accepted but dead): a stream with only continuous rules was never even read, at most
