@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.18.0
 
 - **Output-capture rules now target a task by `SHELL()` execution order, not by key.** The
   1.17.0 `taskKey` mechanism (tagging a task via the `TEEBOX_TASK_KEY` env var) proved
