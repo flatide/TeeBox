@@ -2,6 +2,18 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.17.0** (spec v0.17.0): scripts gain the literal
+  position-search builtins **`FIND(s, sub)`** (all 1-based positions, ascending, overlapping
+  included; `[]` if absent), **`FIND_FIRST(s, sub)`** and **`FIND_LAST(s, sub)`** (first/last
+  position, `0` if absent). The editor picks them up across all three layers: the server lint
+  and the injected `PT_KNOWN` set enumerate them from the runtime automatically, the inlined
+  browser bundle is refreshed from propertee-js v0.17.0 (client-side `checkScript` parses
+  them), and the syntax highlighter + built-in reference panel gained their entries (ported
+  verbatim from the playground). Minimum engine for building TeeBox stays 0.16.0 — the new
+  builtins are additive and TeeBox itself does not call them.
+
 ## 1.18.0
 
 - **Output-capture rules now target a task by `SHELL()` execution order, not by key.** The
