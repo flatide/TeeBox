@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.19.0
 
 - **Embedded engine upgraded to propertee2 0.17.0** (spec v0.17.0): scripts gain the literal
   position-search builtins **`FIND(s, sub)`** (all 1-based positions, ascending, overlapping
