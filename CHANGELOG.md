@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.20.0
 
 - **Editor synced to the propertee2 0.20.0 engine builtins** (spec v0.18.0): **`READ_FILE`**
   (whole file as one string), **`READ_JSON_FILE`** (read + JSON-parse in one call, BOM-
