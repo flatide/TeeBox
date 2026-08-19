@@ -2,6 +2,18 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Editor synced to the propertee2 0.20.0 engine builtins** (spec v0.18.0): **`READ_FILE`**
+  (whole file as one string), **`READ_JSON_FILE`** (read + JSON-parse in one call, BOM-
+  tolerant — replaces the READ_LINES + JOIN + JSON_PARSE idiom) and **`WRITE_JSON_FILE`**
+  (JSON_FORMAT output + trailing newline; lossless round-trip, null included). The server
+  lint / `PT_KNOWN` enumerate them from the runtime automatically; refreshed the two static
+  assets: the inlined browser bundle (verbatim from propertee-js v0.18.0-spec build) and
+  `propertee-editor.js` (highlighter name list + reference-panel catalog entries, ported
+  verbatim from the playground). The next dist build embeds engine 0.20.0 (0.19.0's
+  SimpleTaskRunner CLI change does not affect TeeBox — it ships its own runners).
+
 ## 1.19.0
 
 - **Embedded engine upgraded to propertee2 0.17.0** (spec v0.17.0): scripts gain the literal
