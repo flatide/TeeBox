@@ -25,7 +25,7 @@
         // TeeBox host builtins (registered by ScriptExecutor) — NOT part of the playground list above;
         // keep them on this separate line so the verbatim line stays diffable against the playground.
         builtins += '|STREAM_FILE|THUMBNAIL';
-        var keywords = 'if|then|elseif|else|end|loop|in|do|infinite|break|continue|return|debug|function|thread|multi|monitor|and|or|not';
+        var keywords = 'if|then|elseif|else|end|loop|in|do|infinite|limit|break|continue|return|debug|function|thread|multi|monitor|and|or|not';
         var pattern = new RegExp(
             '(\\/\\*[\\s\\S]*?\\*\\/)'                         // block comments
             + '|(\\/\\/[^\\n]*)'                               // line comments
