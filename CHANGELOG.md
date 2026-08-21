@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.23.0
 
 Hardening round from a code review — five high findings plus five medium, all confirmed and fixed:
 
