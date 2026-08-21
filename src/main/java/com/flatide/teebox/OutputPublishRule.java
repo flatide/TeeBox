@@ -30,6 +30,9 @@ public class OutputPublishRule {
         }
         if (maxCaptures < 0) maxCaptures = 0;
         if (taskIndex < 0) taskIndex = 0;
+        // A negative group would make matcher.group(g) throw on every match — and a throwing
+        // watcher used to wedge the run's terminal transition. 0 = the full match.
+        if (captureGroup < 0) captureGroup = 0;
     }
 
     public OutputPublishRule copy() {

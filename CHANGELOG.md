@@ -2,6 +2,113 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+Hardening round from a code review — five high findings plus five medium, all confirmed and fixed:
+
+- **Account takeover window closed (first-login provisioning).** Adding a user and resetting a
+  password used to leave the account claimable by whoever logged in first with any password.
+  Now the admin can set an **initial/temporary password** at add and reset time (recorded
+  immediately — no claimable window; blank keeps the legacy first-login flow as an explicit
+  choice), and every logged-in user gets a **self-service password change page**
+  (`/admin/password`, top-right Password button: current + new + confirm; the user's *other*
+  sessions are logged out on change, the changing one stays). First-login provisioning itself
+  is now **atomic** (check-and-set under one lock — two concurrent first logins can no longer
+  both win), and a **corrupt `credentials.json` fails closed**: all UI logins are refused until
+  the operator repairs or consciously removes the file (it used to silently start empty,
+  putting every account back into the claimable state).
+- **Negative `captureGroup` no longer wedges a run.** The API/form accepted negative groups,
+  `matcher.group(-1)` threw on every match, and the completion flush re-threw from the error
+  path — the run never reached a terminal state (permanently RUNNING). `normalize()` now
+  clamps `captureGroup` to >= 0 (0 = full match), and the watcher flushes are **isolated**:
+  a throwing watcher is logged and dropped, never blocking the run's terminal transition or
+  the shared 2s flush tick.
+- **Output watcher end-of-run race fixed.** The periodic scan (maintenance thread) and the
+  run-completion flush (run executor thread) could hit the same watcher concurrently — its
+  offsets/remainders/capture counts are plain mutable state, so captures could duplicate or
+  overrun `maxCaptures`. `scan()`/`finalScan()` are now serialized per watcher.
+- **Remaining persistence writes made atomic** (temp + rename): `script.json`, version `.tee`
+  sources (an in-place Save could destroy the existing source on a crash/full disk), and task
+  `meta.json`/`archive.json` (a truncated meta loses the running process's tracking record
+  across a restart). New shared `AtomicFiles` helper; RunStore/UserStore already had it.
+- **Embedded engine is now traceable.** The composite build embeds whatever `../propertee2-java`
+  has checked out, so a TeeBox commit alone doesn't pin the engine. Every build now stamps the
+  engine version + git commit (with a `-dirty` suffix for local changes) into
+  `teebox-version.properties`; it shows in the startup banner and the admin nav
+  ("TeeBox v… · engine …"). Release procedure: record the stamped engine version/commit in the
+  release notes — reproducing a jar means checking out that engine commit.
+
+Medium findings:
+
+- **Shutdown order fixed**: `RunManager.shutdown()` used to clear watchers and tear down the
+  shared task engine *before* awaiting the run executors — an in-flight `SHELL()` died with
+  "Unknown task" and its final captures were lost. Now: stop accepting runs → await the
+  executors (flush/timeout schedulers stay alive during the drain) → then schedulers, webhooks,
+  watchers, registry flush, and the task engine last.
+- **Hand-edited roster changes apply to live sessions**: session resolution now revalidates
+  against the current `users.json` on every request. The roster parse is cached by the file's
+  **content bytes** (not mtime/length, which can miss a same-length edit within the timestamp
+  granularity — and this is the permission revocation path; the file is tiny, so the
+  per-request read is cheap). A user removed by hand loses their session on the next request
+  instead of riding out the 8h window; a hand-edited role change takes effect immediately —
+  pinned with a deliberately same-byte-length role swap.
+- **Renderer viewer identity is per-request again**: `AdminPageRenderer` kept the viewer's
+  name/role in singleton fields while the HTTP pool renders concurrently, so one user's page
+  could show another's identity and buttons (display-only — every POST is server-gated — but a
+  leak). The viewer context is now a thread-local set at handler entry and per request.
+- **Request bodies are capped at 10MB** (`/api` and `/admin`, the pre-auth login POST included):
+  a declared oversize is rejected from the Content-Length header before buffering, and the
+  streaming read enforces the cap regardless (chunked bodies carry no header).
+- **UTF-8 characters split across the watcher's 64KB read boundary survive**: the undecoded
+  tail is now kept as bytes and decoding stops at a newline (a hard character boundary), so a
+  multi-byte character straddling two reads no longer decodes into replacement characters and
+  Unicode captures are no longer missed.
+
+Follow-up high findings on the fixes above:
+
+- **Watcher capture ORDERING race closed for real**: serializing `scan()`/`finalScan()` alone
+  still allowed the periodic tick to read older content, lose the CPU, and apply it to the
+  run's published map AFTER the completion flush applied newer content — captures out of order
+  and the "latest" value rolled back. The scan and its apply now run under the watcher monitor
+  as one unit at both call sites.
+- **Shutdown no longer strands per-script PENDING runs as QUEUED**: a run finishing during the
+  executor drain triggered `dequeueNextRun`, which promoted the pending run to QUEUED and
+  submitted it into the already-closed executor (`RejectedExecutionException`, run stuck in a
+  non-terminal QUEUED). `dequeueNextRun` now honors `shutdownRequested` (the run stays PENDING
+  — startup recovery reports it honestly as SERVER_RESTARTED), with a defensive
+  revert-to-PENDING if the submit still races the flag; `submit()` rejects during shutdown
+  like it does while draining; and after a forced `shutdownNow()` the executors are awaited
+  again so interrupted runs finish unwinding before the watchers and the task engine are torn
+  down. Pinned by a live test: 1 RUNNING + 1 PENDING at `stop()` — the active run completes
+  during the drain and the pending run ends PENDING, never QUEUED.
+
+- **Submit vs shutdown TOCTOU closed**: a submit that passed the entry check could still park a
+  PENDING run or hit the already-closed executor after shutdown began (stranding a QUEUED run).
+  The shutdown flag flip + executor close and submit's final park/submit decision now serialize
+  under one lifecycle lock with an authoritative re-check (a run caught by it is marked FAILED
+  "Server is shutting down" and the caller gets the same rejection as the entry check). Lock
+  order lifecycleLock → per-script count → run monitor, taken nowhere in reverse.
+- **`startDraining()` joins the same lifecycle lock**: it used to flip `draining` under the
+  `this` monitor, so a submit holding the lifecycle lock could pass the draining check while the
+  drain thread — seeing nothing enqueued yet — declared the drain complete and exited the JVM
+  under a freshly accepted run. The flag check-and-set now happens under `lifecycleLock`:
+  submit-first means the drain poll counts the enqueued run; drain-first means submit's
+  authoritative re-check rejects.
+- When the post-interrupt grace also fails (a run ignoring interrupts), the teardown proceeds —
+  an embedded `stop()` cannot wait forever — but now logs an ERROR naming the still-active run
+  IDs and the voided assumption (their captures may be partial; their SHELL calls die once the
+  engine closes). Standalone process exit is unaffected.
+
+Low findings:
+
+- **`activeRuns` no longer leaks a completed Future for very fast runs**: the entry was put
+  *after* `executor.submit()`, so a run that finished before the put re-inserted its already
+  completed Future, which lingered until run purge. The put and the worker's cleanup-remove now
+  order themselves through the shared run monitor.
+- **Gradle 10 readiness**: the last Groovy space-assignment (`testLogging` events /
+  exceptionFormat) converted to explicit `=` assignment — `--warning-mode all` is deprecation-
+  clean.
+
 ## 1.22.0
 
 - **Admin UI: user management** (`/admin/users`) — a logged-in **admin** gets a **Users** menu

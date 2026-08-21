@@ -191,6 +191,10 @@ public class TeeBoxServer {
             String method = exchange.getRequestMethod();
             String path = exchange.getRequestURI().getPath();
             try {
+                // Reset the renderer's thread-local viewer before anything renders: the pool reuses
+                // threads, and the pre-auth pages (login, early errors) would otherwise render with
+                // the previous request's identity.
+                pageRenderer.setSession(null, sessionManager.isLoginRequired());
                 // Login page
                 if ("GET".equals(method) && "/admin/login".equals(path)) {
                     writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderLoginPage(null));
@@ -404,6 +408,42 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin");
                     return;
                 }
+                // ---- Self-service password change (any logged-in user, roster mode) ----
+                if ("/admin/password".equals(path) && ("GET".equals(method) || "POST".equals(method))) {
+                    if (!sessionManager.isLoginRequired() || session == null) {
+                        throw new IllegalStateException(
+                                "Password change requires a logged-in user (the UI is running in open mode)");
+                    }
+                    if ("GET".equals(method)) {
+                        Map<String, String> query = parseQuery(exchange);
+                        writeHtml(exchange, HttpURLConnection.HTTP_OK,
+                                pageRenderer.renderPasswordPage(query.get("ok"), null));
+                        return;
+                    }
+                    Map<String, String> form = parseForm(exchange);
+                    String current = form.get("currentPassword");
+                    String next = form.get("newPassword");
+                    String confirm = form.get("confirmPassword");
+                    String error = null;
+                    if (next == null || next.length() == 0) {
+                        error = "New password is required";
+                    } else if (!next.equals(confirm)) {
+                        error = "New password and confirmation do not match";
+                    } else if (!userStore.verifyPassword(session.username, current)) {
+                        error = "Current password is incorrect";
+                    }
+                    if (error != null) {
+                        writeHtml(exchange, HttpURLConnection.HTTP_OK,
+                                pageRenderer.renderPasswordPage(null, error));
+                        return;
+                    }
+                    userStore.setPassword(session.username, next);
+                    // Other sessions of this user die (a stolen cookie stops working); the session
+                    // that just proved the current password stays alive.
+                    sessionManager.invalidateUserExcept(session.username, getSessionToken(exchange));
+                    redirect(exchange, "/admin/password?ok=" + urlParam("Password changed"));
+                    return;
+                }
                 // ---- User management (roster mode + admin session only) ----
                 if (("GET".equals(method) && "/admin/users".equals(path))
                         || ("POST".equals(method) && path.startsWith("/admin/users/"))) {
@@ -428,9 +468,13 @@ public class TeeBoxServer {
                     String username = form.get("username");
                     try {
                         if ("add".equals(action)) {
-                            userStore.addUser(username, form.get("role"));
+                            String initialPassword = form.get("password");
+                            userStore.addUser(username, form.get("role"), initialPassword);
+                            boolean withPassword = initialPassword != null && initialPassword.length() > 0;
                             redirect(exchange, "/admin/users?ok=" + urlParam("User added: " + username.trim()
-                                    + " (password is set on their first login)"));
+                                    + (withPassword
+                                        ? " (initial password set — they should change it after logging in)"
+                                        : " (password is set on their first login)")));
                         } else if ("delete".equals(action)) {
                             userStore.removeUser(username);
                             sessionManager.invalidateUser(username.trim());
@@ -443,10 +487,15 @@ public class TeeBoxServer {
                             redirect(exchange, "/admin/users?ok=" + urlParam("Role updated: " + username.trim()
                                     + " (they must log in again)"));
                         } else if ("reset-password".equals(action)) {
-                            userStore.clearPassword(username);
+                            String tempPassword = form.get("password");
+                            userStore.resetPassword(username, tempPassword);
                             sessionManager.invalidateUser(username.trim());
-                            redirect(exchange, "/admin/users?ok=" + urlParam("Password reset: " + username.trim()
-                                    + " sets a new password on their next login"));
+                            boolean withTemp = tempPassword != null && tempPassword.length() > 0;
+                            redirect(exchange, "/admin/users?ok=" + urlParam(withTemp
+                                    ? "Temporary password set for " + username.trim()
+                                        + " (they should change it after logging in)"
+                                    : "Password reset: " + username.trim()
+                                        + " sets a new password on their next login"));
                         } else {
                             throw new IllegalArgumentException("Unknown user action: " + action);
                         }
@@ -1913,13 +1962,37 @@ public class TeeBoxServer {
         thread.start();
     }
 
+    /** Request-body ceiling for every /api and /admin POST — script sources and rule payloads are
+     *  at most tens of KB in practice; 10MB leaves huge headroom while capping what a pre-auth
+     *  client (e.g. hammering /admin/login) can force onto the heap per request. */
+    private static final long MAX_REQUEST_BODY_BYTES = 10L * 1024 * 1024;
+
     private String readBody(HttpExchange exchange) throws IOException {
+        // Reject early on a declared oversize; enforce while streaming regardless (the header
+        // is client-controlled and chunked requests carry none).
+        String declared = exchange.getRequestHeaders().getFirst("Content-Length");
+        if (declared != null) {
+            try {
+                if (Long.parseLong(declared.trim()) > MAX_REQUEST_BODY_BYTES) {
+                    throw new IllegalArgumentException("Request body too large (limit "
+                            + MAX_REQUEST_BODY_BYTES + " bytes)");
+                }
+            } catch (NumberFormatException ignore) {
+                // unparseable header: fall through to the streaming cap
+            }
+        }
         InputStream input = exchange.getRequestBody();
         try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             byte[] buffer = new byte[4096];
             int len;
+            long total = 0;
             while ((len = input.read(buffer)) != -1) {
+                total += len;
+                if (total > MAX_REQUEST_BODY_BYTES) {
+                    throw new IllegalArgumentException("Request body too large (limit "
+                            + MAX_REQUEST_BODY_BYTES + " bytes)");
+                }
                 baos.write(buffer, 0, len);
             }
             return baos.toString("UTF-8");

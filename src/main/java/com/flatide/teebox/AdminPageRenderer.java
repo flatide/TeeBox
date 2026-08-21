@@ -13,10 +13,29 @@ public class AdminPageRenderer {
     private final TeeBoxConfig config;
     private final RunManager runManager;
     private final Gson gson;
-    private boolean loggedIn = true;
-    private boolean loginRequired = false;
-    private String currentUser = null;
-    private String currentRole = null;
+    /**
+     * Per-request viewer identity. Thread-local, NOT instance fields: the HTTP server handles
+     * requests on a concurrent pool through this shared renderer, and singleton fields let one
+     * user's page render with another user's name/role/buttons (display only — the server gates
+     * every POST — but still a leak). Render calls happen synchronously on the handling thread,
+     * so a thread-local set by the server before rendering is race-free.
+     */
+    private static final class Viewer {
+        final boolean loggedIn;
+        final boolean loginRequired;
+        final String username;
+        final String role;
+
+        Viewer(boolean loggedIn, boolean loginRequired, String username, String role) {
+            this.loggedIn = loggedIn;
+            this.loginRequired = loginRequired;
+            this.username = username;
+            this.role = role;
+        }
+    }
+
+    private static final Viewer OPEN_MODE = new Viewer(true, false, null, null);
+    private static final ThreadLocal<Viewer> VIEWER = ThreadLocal.withInitial(() -> OPEN_MODE);
 
     /** ProperTee code-editor assets (ported from the ProperTee playground), loaded once from the
      *  classpath and inlined into admin pages (TeeBox serves no static assets, and the login gate
@@ -54,28 +73,43 @@ public class AdminPageRenderer {
 
     /**
      * Per-request identity, set by the server before each render. Drives read-only mode and per-owner
-     * button visibility. A null session means either open mode (loginRequired false) or not-logged-in.
+     * button visibility. A null session means either open mode (loginRequired() false) or not-logged-in.
      */
     public void setSession(AdminSessionManager.Session session, boolean loginRequired) {
-        this.loginRequired = loginRequired;
-        this.loggedIn = !loginRequired || session != null;
-        this.currentUser = session != null ? session.username : null;
-        this.currentRole = session != null ? session.role : null;
+        VIEWER.set(new Viewer(!loginRequired || session != null, loginRequired,
+                session != null ? session.username : null,
+                session != null ? session.role : null));
+    }
+
+    private boolean loggedIn() {
+        return VIEWER.get().loggedIn;
+    }
+
+    private boolean loginRequired() {
+        return VIEWER.get().loginRequired;
+    }
+
+    private String currentUser() {
+        return VIEWER.get().username;
+    }
+
+    private String currentRole() {
+        return VIEWER.get().role;
     }
 
     private boolean isReadOnly() {
-        return loginRequired && !loggedIn;
+        return loginRequired() && !loggedIn();
     }
 
     /** Open mode or an admin session. */
     private boolean isAdmin() {
-        return !loginRequired || UserStore.ROLE_ADMIN.equals(currentRole);
+        return !loginRequired() || UserStore.ROLE_ADMIN.equals(currentRole());
     }
 
     /** A logged-in admin in roster mode — the only viewer who sees/uses user management. Open mode
      *  deliberately does NOT count: it has no users to manage. */
     private boolean isRosterAdmin() {
-        return loginRequired && UserStore.ROLE_ADMIN.equals(currentRole);
+        return loginRequired() && UserStore.ROLE_ADMIN.equals(currentRole());
     }
 
     /** Whether the current viewer may mutate/run this script (open mode, admin, or owner). */
@@ -86,7 +120,7 @@ public class AdminPageRenderer {
         if (isAdmin()) {
             return true;
         }
-        return script != null && script.owner != null && currentUser != null && script.owner.equals(currentUser);
+        return script != null && script.owner != null && currentUser() != null && script.owner.equals(currentUser());
     }
 
     /** Ownership check when only a scriptId is on hand (runs/tasks); loads the script to read its owner. */
@@ -131,8 +165,10 @@ public class AdminPageRenderer {
     private String renderTopNav(String activePage) {
         StringBuilder sb = new StringBuilder();
         sb.append("<div class='top-nav'>");
-        sb.append("<a href='/admin' class='top-nav-brand'>TeeBox <span class='dim'>v")
-          .append(escape(TeeBoxVersion.get())).append("</span></a>");
+        sb.append("<a href='/admin' class='top-nav-brand' title='engine ")
+          .append(escape(TeeBoxVersion.engineVersion())).append(" @").append(escape(TeeBoxVersion.engineCommit()))
+          .append("'>TeeBox <span class='dim'>v").append(escape(TeeBoxVersion.get()))
+          .append(" &middot; engine ").append(escape(TeeBoxVersion.engineVersion())).append("</span></a>");
         sb.append("<div class='top-nav-links'>");
         sb.append("<a href='/admin' class='top-nav-link").append("dashboard".equals(activePage) ? " active" : "").append("'>Dashboard</a>");
         sb.append("<a href='/admin/scripts' class='top-nav-link").append("scripts".equals(activePage) ? " active" : "").append("'>Scripts</a>");
@@ -148,16 +184,17 @@ public class AdminPageRenderer {
         sb.append("<span class='tag tag-nav'>queued ").append(runManager.getQueuedCount()).append("</span>");
         sb.append("</div>");
         sb.append("<label class='auto-toggle'><input type='checkbox' id='auto-refresh-toggle'/> Auto-refresh</label>");
-        if (loginRequired) {
-            if (loggedIn) {
-                if (currentUser != null) {
+        if (loginRequired()) {
+            if (loggedIn()) {
+                if (currentUser() != null) {
                     sb.append("<span class='dim' style='margin-left:8px;font-size:11px;'>")
-                      .append(escape(currentUser));
-                    if (UserStore.ROLE_ADMIN.equals(currentRole)) {
+                      .append(escape(currentUser()));
+                    if (UserStore.ROLE_ADMIN.equals(currentRole())) {
                         sb.append(" <span class='tag tag-nav'>admin</span>");
                     }
                     sb.append("</span>");
                 }
+                sb.append("<a href='/admin/password' class='btn btn-sm' style='margin-left:8px;font-size:11px;' title='Change my password'>Password</a>");
                 sb.append("<form method='post' action='/admin/logout' style='margin-left:8px;display:inline;'>");
                 sb.append("<button type='submit' class='btn btn-sm' style='font-size:11px;'>Logout</button></form>");
             } else {
@@ -1280,7 +1317,7 @@ public class AdminPageRenderer {
         sb.append("<div class='card'><h2>Users (").append(users.size()).append(")</h2>");
         sb.append("<table class='data-table'><thead><tr><th>Username</th><th>Role</th><th>Password</th><th>Actions</th></tr></thead><tbody>");
         for (UserStore.User user : users) {
-            boolean self = user.username.equals(currentUser);
+            boolean self = user.username.equals(currentUser());
             sb.append("<tr><td class='mono'>").append(escape(user.username));
             if (self) {
                 sb.append(" <span class='dim'>(you)</span>");
@@ -1303,11 +1340,13 @@ public class AdminPageRenderer {
             sb.append("</select> ");
             sb.append("<button type='submit' class='btn btn-sm'>Set role</button>");
             sb.append("</form>");
-            // Password reset (drops the credential; next login records a new password)
+            // Password reset: with a temp password it is set immediately (no claimable window);
+            // left blank, the credential is dropped and the next login records a new one.
             sb.append("<form method='post' action='/admin/users/reset-password' style='display:inline;' onsubmit='return confirm(\"Reset password for ")
               .append(escape(user.username).replace("'", "\\'"))
-              .append("? Their sessions end now and the next login sets a new password.\")'>");
+              .append("? Their sessions end now.\")'>");
             sb.append("<input type='hidden' name='username' value='").append(escape(user.username)).append("'/>");
+            sb.append("<input type='password' name='password' placeholder='temp password (blank = first login)' autocomplete='new-password' style='font-size:12px;width:200px;'/> ");
             sb.append("<button type='submit' class='btn btn-sm'>Reset password</button>");
             sb.append("</form>");
             // Delete (roster entry + credential; live sessions are invalidated)
@@ -1334,11 +1373,42 @@ public class AdminPageRenderer {
         sb.append("<option value='user' selected>user</option>");
         sb.append("<option value='admin'>admin</option>");
         sb.append("</select></div>");
+        sb.append("<div class='form-row'><label>Initial password <span class='dim'>(optional)</span></label>");
+        sb.append("<input type='password' name='password' autocomplete='new-password' placeholder='blank = user sets it on first login'/></div>");
         sb.append("<div class='form-row-inline'><button type='submit'>Add user</button></div>");
         sb.append("</form>");
-        sb.append("<p class='dim' style='font-size:12px;margin-top:10px;'>No password is set here - the user registers their own password on first login.</p>");
+        sb.append("<p class='dim' style='font-size:12px;margin-top:10px;'>With an initial password there is no claimable first-login window - tell the user to change it after logging in (top-right Password button). Left blank, the user registers their own password on first login.</p>");
         sb.append("</div>");
 
+        sb.append(pageEnd());
+        return sb.toString();
+    }
+
+    /** Self-service password change (any logged-in user). Verifies the current password server-side. */
+    public String renderPasswordPage(String ok, String error) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(pageStart("Change Password - TeeBox Admin"));
+        sb.append(renderTopNav(""));
+        sb.append("<div class='nav'><span>Change Password</span>");
+        if (currentUser() != null) {
+            sb.append("<span class='nav-sep'>/</span><span class='mono'>").append(escape(currentUser())).append("</span>");
+        }
+        sb.append("</div>");
+        if (ok != null && ok.length() > 0) {
+            sb.append("<div class='callout callout-ok'>").append(escape(ok)).append("</div>");
+        }
+        if (error != null && error.length() > 0) {
+            sb.append("<div class='callout callout-err'>").append(escape(error)).append("</div>");
+        }
+        sb.append("<div class='card' style='max-width:420px;'><h2>Change Password</h2>");
+        sb.append("<form method='post' action='/admin/password' class='form-grid'>");
+        sb.append("<div class='form-row'><label>Current password</label><input type='password' name='currentPassword' autocomplete='current-password' required autofocus/></div>");
+        sb.append("<div class='form-row'><label>New password</label><input type='password' name='newPassword' autocomplete='new-password' required/></div>");
+        sb.append("<div class='form-row'><label>Confirm new password</label><input type='password' name='confirmPassword' autocomplete='new-password' required/></div>");
+        sb.append("<div class='form-row-inline'><button type='submit'>Change password</button></div>");
+        sb.append("</form>");
+        sb.append("<p class='dim' style='font-size:12px;margin-top:10px;'>Your other sessions are logged out when the password changes; this one stays.</p>");
+        sb.append("</div>");
         sb.append(pageEnd());
         return sb.toString();
     }

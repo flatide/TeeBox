@@ -919,16 +919,14 @@ public class ManagedTaskEngine implements TaskRunner {
         if (lc != null && lc.isTerminal() && !lc.isPersisted()) {
             lc.markPersisted();
         }
-        Writer writer = null;
         try {
-            writer = new OutputStreamWriter(new FileOutputStream(task.metaFile), "UTF-8");
             JsonObject obj = gson.toJsonTree(task).getAsJsonObject();
             if (lc != null) lc.writeToJson(obj);
-            gson.toJson(obj, writer);
+            // Atomic: a truncated meta.json would lose the running process's tracking record
+            // (pid/startInstant) across a restart.
+            AtomicFiles.write(task.metaFile, gson.toJson(obj));
         } catch (IOException e) {
             throw new RuntimeException("Failed to write task metadata: " + e.getMessage(), e);
-        } finally {
-            closeQuietly(writer);
         }
         updateTaskIndex(task);
     }
@@ -1188,17 +1186,13 @@ public class ManagedTaskEngine implements TaskRunner {
         task.stdoutTail = tailLines(readFileTail(task.stdoutFile, 256 * 1024), 50);
         task.stderrTail = tailLines(readFileTail(task.stderrFile, 256 * 1024), 20);
 
-        Writer writer = null;
         try {
-            writer = new OutputStreamWriter(new FileOutputStream(task.archiveFile), "UTF-8");
             JsonObject obj = gson.toJsonTree(task).getAsJsonObject();
             TaskLifecycle lc = lifecycles.get(task.taskId);
             if (lc != null) lc.writeToJson(obj);
-            gson.toJson(obj, writer);
+            AtomicFiles.write(task.archiveFile, gson.toJson(obj));
         } catch (IOException e) {
             throw new RuntimeException("Failed to archive task " + task.taskId + ": " + e.getMessage(), e);
-        } finally {
-            closeQuietly(writer);
         }
 
         deleteQuietly(task.metaFile);

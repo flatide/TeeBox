@@ -1397,6 +1397,132 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void negativeCaptureGroupDoesNotWedgeTheRun() throws Exception {
+        // Pre-1.23: matcher.group(-1) threw on every match, the completion flush re-threw from the
+        // catch path, and the run never reached a terminal state (permanently RUNNING).
+        TestServer testServer = createServer();
+        try {
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "neg_group");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content", "result = SHELL(\"echo 'jobid: 777'\")\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
+            Map<String, Object> rule = new LinkedHashMap<String, Object>();
+            rule.put("stream", "stdout");
+            rule.put("pattern", "jobid:\\s*\\S+");
+            rule.put("captureGroup", Double.valueOf(-1));
+            rule.put("publishKey", "jobId");
+            rules.add(rule);
+            registerPayload.put("outputRules", rules);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            Map<String, Object> submitResult = postJson(
+                testServer.baseUrl + "/api/client/scripts/neg_group/runs", runPayload, 202);
+            String runId = (String) submitResult.get("runId");
+
+            // The run MUST reach a terminal state (the wedge was: stuck RUNNING forever).
+            waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 10000L);
+
+            Map<String, Object> clientRun = getJsonMap(
+                testServer.baseUrl + "/api/client/runs/" + runId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> published = (Map<String, Object>) clientRun.get("published");
+            Assert.assertNotNull("published should exist", published);
+            Assert.assertEquals("negative group clamps to 0 = the full match",
+                "jobid: 777", published.get("jobId"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void oversizedRequestBodyIsRejectedEarly() throws Exception {
+        // Pre-auth heap-exhaustion guard: a declared Content-Length over the 10MB cap is rejected
+        // from the header, before any body bytes are buffered. Raw socket so we control framing.
+        TestServer testServer = createServer();
+        try {
+            java.net.URL url = new java.net.URL(testServer.baseUrl);
+            java.net.Socket socket = new java.net.Socket(url.getHost(), url.getPort());
+            try {
+                socket.setSoTimeout(10000);
+                java.io.OutputStream out = socket.getOutputStream();
+                out.write(("POST /admin/login HTTP/1.1\r\n"
+                        + "Host: " + url.getHost() + "\r\n"
+                        + "Content-Type: application/x-www-form-urlencoded\r\n"
+                        + "Content-Length: 20000000\r\n"
+                        + "\r\n").getBytes("UTF-8"));
+                out.flush();
+                java.io.BufferedReader in = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(socket.getInputStream(), "UTF-8"));
+                String statusLine = in.readLine();
+                Assert.assertNotNull("server must answer without waiting for the 20MB body", statusLine);
+                Assert.assertTrue("expected 400, got: " + statusLine, statusLine.contains("400"));
+            } finally {
+                socket.close();
+            }
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void shutdownDoesNotStrandPendingRunsAsQueued() throws Exception {
+        // Shutdown while a script has 1 RUNNING + 1 PENDING run: the active run finishes during
+        // the executor drain and triggers dequeueNextRun, which used to promote the pending run
+        // to QUEUED and submit it into the already-closed executor (RejectedExecutionException,
+        // run stranded in a non-terminal QUEUED). It must stay PENDING, which startup recovery
+        // reports honestly as SERVER_RESTARTED.
+        TestServer testServer = createServer();
+        String pendingRunId;
+        String activeRunId;
+        File dataDir = testServer.dataDir;
+        try {
+            Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
+            registerPayload.put("scriptId", "shutdown_pending");
+            registerPayload.put("version", "v1");
+            registerPayload.put("content", "result = SHELL(\"sleep 2\")\n");
+            registerPayload.put("activate", Boolean.TRUE);
+            postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
+            Map<String, Object> settings = new LinkedHashMap<String, Object>();
+            settings.put("maxConcurrentRuns", Double.valueOf(1));
+            assertStatus(testServer.baseUrl + "/api/publisher/scripts/shutdown_pending/settings", "PUT", settings, null, 200);
+
+            Map<String, Object> runPayload = new LinkedHashMap<String, Object>();
+            runPayload.put("props", new LinkedHashMap<String, Object>());
+            activeRunId = (String) postJson(
+                testServer.baseUrl + "/api/client/scripts/shutdown_pending/runs", runPayload, 202).get("runId");
+            waitForRunStatus(testServer.baseUrl, activeRunId, "RUNNING", 10000L);
+            Map<String, Object> second = postJson(
+                testServer.baseUrl + "/api/client/scripts/shutdown_pending/runs", runPayload, 202);
+            pendingRunId = (String) second.get("runId");
+            Assert.assertEquals("second run parks behind the per-script limit",
+                "PENDING", second.get("status"));
+        } finally {
+            // stop() awaits the executors: the active run completes (~2s) DURING the shutdown.
+            testServer.close();
+        }
+
+        String activeJson = new String(Files.readAllBytes(
+            new File(new File(dataDir, "runs"), activeRunId + ".json").toPath()), "UTF-8");
+        Assert.assertTrue("active run finished during the drain, got: " + firstStatus(activeJson),
+            activeJson.contains("\"status\": \"COMPLETED\""));
+        String pendingJson = new String(Files.readAllBytes(
+            new File(new File(dataDir, "runs"), pendingRunId + ".json").toPath()), "UTF-8");
+        Assert.assertFalse("pending run must NOT be stranded as QUEUED",
+            pendingJson.contains("\"status\": \"QUEUED\""));
+        Assert.assertTrue("pending run stays PENDING for honest restart recovery, got: "
+            + firstStatus(pendingJson), pendingJson.contains("\"status\": \"PENDING\""));
+    }
+
+    private static String firstStatus(String runJson) {
+        int i = runJson.indexOf("\"status\"");
+        return i >= 0 ? runJson.substring(i, Math.min(runJson.length(), i + 40)) : "(no status)";
+    }
+
+    @Test
     public void outputPublishShouldRejectInvalidRegex() throws Exception {
         TestServer testServer = createServer();
         try {

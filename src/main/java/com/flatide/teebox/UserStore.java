@@ -79,6 +79,11 @@ public class UserStore {
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     /** In-memory credential cache, persisted to credentials.json on change. Guarded by {@code this}. */
     private final Map<String, Credential> credentials;
+    /** True when credentials.json exists but could not be parsed. FAIL-CLOSED: every verify fails and
+     *  no password may be provisioned or changed until the operator repairs (or consciously deletes)
+     *  the file — starting empty instead would put every account back into the claimable
+     *  first-login state. */
+    private final boolean credentialsCorrupt;
 
     public UserStore(File dataDir) {
         this.usersDir = new File(dataDir, "users");
@@ -87,7 +92,29 @@ public class UserStore {
         }
         this.rosterFile = new File(usersDir, "users.json");
         this.credentialsFile = new File(usersDir, "credentials.json");
-        this.credentials = loadCredentials();
+        Map<String, Credential> loaded = new LinkedHashMap<String, Credential>();
+        boolean corrupt = false;
+        try {
+            loaded = loadCredentials();
+        } catch (RuntimeException e) {
+            corrupt = true;
+            TeeBoxLog.error("UserStore", "credentials.json is corrupt — ALL UI logins are disabled until the "
+                    + "operator repairs or removes it: " + credentialsFile.getAbsolutePath(), e);
+        }
+        this.credentials = loaded;
+        this.credentialsCorrupt = corrupt;
+    }
+
+    /** True when credentials.json exists but is unparseable (all credential operations refuse). */
+    public synchronized boolean isCredentialsCorrupt() {
+        return credentialsCorrupt;
+    }
+
+    private void requireCredentialsUsable() {
+        if (credentialsCorrupt) {
+            throw new IllegalStateException("credentials.json is corrupt — repair or remove "
+                    + credentialsFile.getAbsolutePath() + " (logins are disabled until then)");
+        }
     }
 
     // ---- Roster (users.json, operator-managed, read fresh) ----
@@ -97,13 +124,40 @@ public class UserStore {
         return rosterFile.exists();
     }
 
-    /** All valid roster entries (empty if the file is missing or unparseable). Read fresh from disk. */
+    /** Parse cache over users.json, keyed by the file's CONTENT bytes — not mtime/length, which
+     *  can miss a same-length edit within the timestamp granularity, and this is the permission
+     *  REVOCATION path. The file is tiny, so reading it per resolution is cheap; only the parse
+     *  is skipped on a hit. Invalidated by saveRoster and by any content change (hand-edits). */
+    private List<User> rosterCache;
+    private byte[] rosterCacheContent;
+
+    /** All valid roster entries (empty if the file is missing or unparseable). Always reflects the
+     *  file's current on-disk content; returns fresh copies — safe to mutate. */
     public synchronized List<User> listUsers() {
         if (!rosterFile.exists()) {
             return new ArrayList<User>();
         }
+        byte[] content;
         try {
-            String json = readFile(rosterFile);
+            content = java.nio.file.Files.readAllBytes(rosterFile.toPath());
+        } catch (IOException e) {
+            // Unreadable roster: fail closed (no valid users), same as the unparseable case.
+            TeeBoxLog.warn("UserStore", "Failed to read users.json (treating as no valid users): " + e.getMessage());
+            return new ArrayList<User>();
+        }
+        if (rosterCache == null || !java.util.Arrays.equals(content, rosterCacheContent)) {
+            rosterCache = loadRoster(new String(content, java.nio.charset.StandardCharsets.UTF_8));
+            rosterCacheContent = content;
+        }
+        List<User> copy = new ArrayList<User>();
+        for (User u : rosterCache) {
+            copy.add(new User(u.username, u.role));
+        }
+        return copy;
+    }
+
+    private List<User> loadRoster(String json) {
+        try {
             List<User> raw = gson.fromJson(json, new TypeToken<List<User>>() {
             }.getType());
             List<User> out = new ArrayList<User>();
@@ -122,6 +176,11 @@ public class UserStore {
             TeeBoxLog.warn("UserStore", "Failed to parse users.json (treating as no valid users): " + e.getMessage());
             return new ArrayList<User>();
         }
+    }
+
+    private synchronized void invalidateRosterCache() {
+        rosterCache = null;
+        rosterCacheContent = null;
     }
 
     /** Look up a roster entry by exact username, or null. */
@@ -173,6 +232,19 @@ public class UserStore {
 
     /** Add a roster entry. Fails on a duplicate or an invalid username; role normalizes to user. */
     public synchronized void addUser(String username, String role) {
+        addUser(username, role, null);
+    }
+
+    /**
+     * Add a roster entry, optionally with an admin-chosen initial password (recorded immediately, so
+     * there is no claimable first-login window). A null/empty password keeps the legacy flow: the
+     * user sets their own on first login.
+     */
+    public synchronized void addUser(String username, String role, String initialPassword) {
+        boolean withPassword = initialPassword != null && initialPassword.length() > 0;
+        if (withPassword) {
+            requireCredentialsUsable();
+        }
         String user = validateUsername(username);
         List<User> users = listUsers();
         for (User u : users) {
@@ -182,7 +254,30 @@ public class UserStore {
         }
         users.add(new User(user, normalizeRole(role)));
         saveRoster(users);
-        TeeBoxLog.info("UserStore", "User added: " + user + " (" + normalizeRole(role) + ")");
+        if (withPassword) {
+            setPassword(user, initialPassword);
+        }
+        TeeBoxLog.info("UserStore", "User added: " + user + " (" + normalizeRole(role)
+                + (withPassword ? ", initial password set" : ", password on first login") + ")");
+    }
+
+    /**
+     * Reset a user's password: with a non-empty {@code tempPassword} the admin-chosen value is
+     * recorded immediately (no claimable window — the user should change it after logging in);
+     * with null/empty the credential is dropped and the next login records a new one.
+     */
+    public synchronized void resetPassword(String username, String tempPassword) {
+        requireCredentialsUsable();
+        String user = validateUsername(username);
+        if (findUser(user) == null) {
+            throw new IllegalArgumentException("Unknown user: " + user);
+        }
+        if (tempPassword != null && tempPassword.length() > 0) {
+            setPassword(user, tempPassword);
+            TeeBoxLog.info("UserStore", "Temporary password set for user: " + user);
+        } else {
+            clearPassword(user);
+        }
     }
 
     /**
@@ -241,6 +336,7 @@ public class UserStore {
 
     /** Drop a user's stored credential so their next login sets a new password (first-login flow). */
     public synchronized void clearPassword(String username) {
+        requireCredentialsUsable();
         String user = validateUsername(username);
         if (credentials.remove(user) != null) {
             saveCredentials();
@@ -281,8 +377,23 @@ public class UserStore {
         return username != null && credentials.containsKey(username);
     }
 
-    /** Hash and persist a new password for the user (first-login provisioning or reset). */
+    /**
+     * Atomically record a password for a user that has none yet (first-login provisioning). Returns
+     * false when a credential already exists — the caller must then verify instead. Check-and-set in
+     * one synchronized method: two concurrent first logins can no longer both provision and both win.
+     */
+    public synchronized boolean provisionPasswordIfAbsent(String username, String plain) {
+        requireCredentialsUsable();
+        if (username == null || credentials.containsKey(username)) {
+            return false;
+        }
+        setPassword(username, plain);
+        return true;
+    }
+
+    /** Hash and persist a new password for the user (admin-set temp password or self-service change). */
     public synchronized void setPassword(String username, String plain) {
+        requireCredentialsUsable();
         if (username == null || username.length() == 0) {
             throw new IllegalArgumentException("username is required");
         }
@@ -301,9 +412,10 @@ public class UserStore {
         saveCredentials();
     }
 
-    /** Constant-time verify of a plaintext password against the stored hash. False if no credential. */
+    /** Constant-time verify of a plaintext password against the stored hash. False if no credential
+     *  and always false while credentials.json is corrupt (fail-closed). */
     public synchronized boolean verifyPassword(String username, String plain) {
-        if (plain == null) {
+        if (credentialsCorrupt || plain == null) {
             return false;
         }
         Credential c = credentials.get(username);
@@ -335,6 +447,7 @@ public class UserStore {
         }
     }
 
+    /** @throws RuntimeException when the file exists but cannot be parsed (caller fails closed). */
     private Map<String, Credential> loadCredentials() {
         Map<String, Credential> map = new LinkedHashMap<String, Credential>();
         if (!credentialsFile.exists()) {
@@ -348,10 +461,10 @@ public class UserStore {
             if (loaded != null) {
                 map.putAll(loaded);
             }
+            return map;
         } catch (Exception e) {
-            TeeBoxLog.warn("UserStore", "Failed to parse credentials.json (starting empty): " + e.getMessage());
+            throw new RuntimeException("Failed to parse credentials.json: " + e.getMessage(), e);
         }
-        return map;
     }
 
     private void saveCredentials() {
@@ -361,6 +474,7 @@ public class UserStore {
 
     private void saveRoster(List<User> users) {
         writeFile(rosterFile, gson.toJson(users));
+        invalidateRosterCache();
     }
 
     // ---- file helpers ----

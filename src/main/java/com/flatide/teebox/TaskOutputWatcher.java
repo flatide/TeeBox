@@ -24,9 +24,15 @@ public class TaskOutputWatcher {
     private final List<CompiledRule> stderrRules = new ArrayList<CompiledRule>();
     private long stdoutOffset = 0;
     private long stderrOffset = 0;
-    private String stdoutRemainder = "";
-    private String stderrRemainder = "";
+    /** Undecoded bytes after the last newline seen. Kept as BYTES, not String: chunks end at
+     *  arbitrary 64KB boundaries, and decoding a chunk that splits a multi-byte UTF-8 character
+     *  would corrupt it into replacement characters (missing Unicode captures). Decoding happens
+     *  only up to a newline — a hard character boundary in UTF-8. */
+    private byte[] stdoutRemainder = EMPTY;
+    private byte[] stderrRemainder = EMPTY;
     private boolean allComplete = false;
+
+    private static final byte[] EMPTY = new byte[0];
 
     /** Byte budget per scan() tick, so one chatty task can't monopolize the shared flush
      *  thread. finalScan() ignores it and drains to EOF — completion must not lose matches. */
@@ -49,10 +55,10 @@ public class TaskOutputWatcher {
 
     private static class ReadResult {
         final long newOffset;
-        final String content;
-        final String remainder;
+        final String content;      // decoded complete lines (ends at a newline — safe to decode)
+        final byte[] remainder;    // undecoded bytes after the last newline
 
-        ReadResult(long newOffset, String content, String remainder) {
+        ReadResult(long newOffset, String content, byte[] remainder) {
             this.newOffset = newOffset;
             this.content = content;
             this.remainder = remainder;
@@ -105,8 +111,13 @@ public class TaskOutputWatcher {
      * Scan for new output and return any matches found, in capture order per key.
      * Each stream is read once (up to the per-tick byte budget), then all rules for
      * that stream are applied.
+     *
+     * <p>Synchronized (as is {@link #finalScan()}): the periodic flush tick (maintenance scheduler
+     * thread) and the run-completion flush (run executor thread) can hit the same watcher
+     * concurrently, and offsets/remainders/capture counts are plain mutable state — unserialized,
+     * captures could duplicate or overrun maxCaptures.
      */
-    public Map<String, List<String>> scan() {
+    public synchronized Map<String, List<String>> scan() {
         return scan(SCAN_BYTES_PER_TICK);
     }
 
@@ -156,20 +167,28 @@ public class TaskOutputWatcher {
      * the incremental scan may be behind a fast writer, and completion is the last chance
      * to see the tail.
      */
-    public Map<String, List<String>> finalScan() {
+    public synchronized Map<String, List<String>> finalScan() {
         Map<String, List<String>> matches = new LinkedHashMap<String, List<String>>(scan(Long.MAX_VALUE));
 
-        if (stdoutRemainder.length() > 0 && !stdoutRules.isEmpty()) {
-            matchRules(stdoutRules, stdoutRemainder, matches);
-            stdoutRemainder = "";
+        if (stdoutRemainder.length > 0 && !stdoutRules.isEmpty()) {
+            matchRules(stdoutRules, decodeUtf8(stdoutRemainder), matches);
+            stdoutRemainder = EMPTY;
         }
 
-        if (stderrRemainder.length() > 0 && !stderrRules.isEmpty()) {
-            matchRules(stderrRules, stderrRemainder, matches);
-            stderrRemainder = "";
+        if (stderrRemainder.length > 0 && !stderrRules.isEmpty()) {
+            matchRules(stderrRules, decodeUtf8(stderrRemainder), matches);
+            stderrRemainder = EMPTY;
         }
 
         return matches;
+    }
+
+    private static String decodeUtf8(byte[] bytes) {
+        try {
+            return new String(bytes, "UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            throw new IllegalStateException(e);   // UTF-8 is always present
+        }
     }
 
     /** Returns true if any rule on this stream still has captures left to make. */
@@ -211,7 +230,7 @@ public class TaskOutputWatcher {
      *  as a "long line" — matched as-is then cleared to prevent unbounded growth. */
     private static final int MAX_REMAINDER_BYTES = 1024 * 1024;
 
-    private static ReadResult readIncremental(File file, long offset, String remainder) {
+    private static ReadResult readIncremental(File file, long offset, byte[] remainder) {
         if (!file.exists() || file.length() <= offset) {
             return new ReadResult(offset, "", remainder);
         }
@@ -230,17 +249,29 @@ public class TaskOutputWatcher {
                 return new ReadResult(offset, "", remainder);
             }
             long newOffset = offset + read;
-            String chunk = remainder + new String(buf, 0, read, "UTF-8");
+            byte[] chunk = new byte[remainder.length + read];
+            System.arraycopy(remainder, 0, chunk, 0, remainder.length);
+            System.arraycopy(buf, 0, chunk, remainder.length, read);
 
-            // Split into complete lines + remainder
-            int lastNewline = chunk.lastIndexOf('\n');
+            // Split at the last newline — 0x0A is never part of a multi-byte UTF-8 sequence, so
+            // everything before it decodes cleanly even when the raw read ended mid-character.
+            int lastNewline = -1;
+            for (int i = chunk.length - 1; i >= 0; i--) {
+                if (chunk[i] == (byte) '\n') {
+                    lastNewline = i;
+                    break;
+                }
+            }
             if (lastNewline >= 0) {
-                return new ReadResult(newOffset, chunk.substring(0, lastNewline + 1), chunk.substring(lastNewline + 1));
+                String content = new String(chunk, 0, lastNewline + 1, "UTF-8");
+                byte[] rest = new byte[chunk.length - lastNewline - 1];
+                System.arraycopy(chunk, lastNewline + 1, rest, 0, rest.length);
+                return new ReadResult(newOffset, content, rest);
             }
             // No complete line yet — keep as remainder, but cap to prevent unbounded growth
-            if (chunk.length() > MAX_REMAINDER_BYTES) {
+            if (chunk.length > MAX_REMAINDER_BYTES) {
                 // Treat oversized buffer as content (flush) and drop remainder
-                return new ReadResult(newOffset, chunk, "");
+                return new ReadResult(newOffset, new String(chunk, "UTF-8"), EMPTY);
             }
             return new ReadResult(newOffset, "", chunk);
         } catch (Exception e) {

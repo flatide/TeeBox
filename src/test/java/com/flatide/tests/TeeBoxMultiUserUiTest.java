@@ -454,6 +454,192 @@ public class TeeBoxMultiUserUiTest {
     }
 
     @Test
+    public void initialAndTempPasswordsCloseTheFirstLoginWindow() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-temppw").toFile();
+        writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String admin = login(base, "admin", "admin-pw");
+            Assert.assertNotNull(admin);
+
+            // Add with an initial password: the account is NOT claimable by first login.
+            assertRedirect("add bob with initial password", postForm(base, "/admin/users/add",
+                    "username=bob&role=user&password=" + enc("bob-initial"), admin));
+            Assert.assertNull("a different password must not claim the account",
+                    login(base, "bob", "attacker-pw"));
+            String bob = login(base, "bob", "bob-initial");
+            Assert.assertNotNull("the admin-chosen initial password logs in", bob);
+
+            // Reset WITH a temp password: old fails, temp works, no claimable window.
+            assertRedirect("reset bob with temp password", postForm(base, "/admin/users/reset-password",
+                    "username=bob&password=" + enc("bob-temp"), admin));
+            Assert.assertNull("old password rejected after reset", login(base, "bob", "bob-initial"));
+            Assert.assertNull("arbitrary password must not claim after temp reset",
+                    login(base, "bob", "attacker-pw"));
+            Assert.assertNotNull("temp password logs in", login(base, "bob", "bob-temp"));
+
+            // Reset BLANK: legacy first-login flow returns (documented, operator's choice).
+            assertRedirect("blank reset", postForm(base, "/admin/users/reset-password",
+                    "username=bob", admin));
+            Assert.assertNotNull("first login provisions again after blank reset",
+                    login(base, "bob", "fresh-pw"));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    public void selfServicePasswordChangeRoute() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-selfpw").toFile();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "old-pw");
+            String aliceOther = login(base, "alice", "old-pw");   // a second live session
+            Assert.assertNotNull(alice);
+            Assert.assertNotNull(aliceOther);
+
+            Assert.assertEquals("password page reachable for a regular user",
+                    200, get(base, "/admin/password", alice));
+            Assert.assertTrue("nav offers the password link",
+                    getBody(base, "/admin", alice).contains("href='/admin/password'"));
+
+            String[] wrongCurrent = postFormWithBody(base, "/admin/password",
+                    "currentPassword=nope&newPassword=x1&confirmPassword=x1", alice);
+            Assert.assertEquals("200", wrongCurrent[0]);
+            Assert.assertTrue(wrongCurrent[1].contains("Current password is incorrect"));
+
+            String[] mismatch = postFormWithBody(base, "/admin/password",
+                    "currentPassword=" + enc("old-pw") + "&newPassword=x1&confirmPassword=x2", alice);
+            Assert.assertEquals("200", mismatch[0]);
+            Assert.assertTrue(mismatch[1].contains("do not match"));
+
+            assertRedirect("valid change", postForm(base, "/admin/password",
+                    "currentPassword=" + enc("old-pw") + "&newPassword=" + enc("new-pw")
+                    + "&confirmPassword=" + enc("new-pw"), alice));
+            Assert.assertNull("old password rejected", login(base, "alice", "old-pw"));
+            Assert.assertNotNull("new password accepted", login(base, "alice", "new-pw"));
+            Assert.assertEquals("the changing session stays alive", 200, get(base, "/admin", alice));
+            assertRedirect("the user's OTHER session is logged out", get(base, "/admin", aliceOther));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    public void corruptCredentialsRefuseAllLogins() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-corruptcreds").toFile();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        File usersDir = new File(dataDir, "users");
+        Writer w = new OutputStreamWriter(new FileOutputStream(new File(usersDir, "credentials.json")), "UTF-8");
+        try {
+            w.write("{ not json ]");
+        } finally {
+            w.close();
+        }
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            // Fail-closed: before this, a corrupt credentials file silently emptied the credential
+            // store and every account fell back into the claimable first-login state.
+            Assert.assertNull("login must be refused while credentials.json is corrupt",
+                    login(base, "alice", "any-password"));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    public void handEditedRosterChangesApplyToLiveSessions() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-handedit").toFile();
+        writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"},"
+                + "{\"username\":\"alice\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String admin = login(base, "admin", "admin-pw");
+            Assert.assertEquals("admin session opens user management", 200, get(base, "/admin/users", admin));
+
+            // Hand-demote the admin in users.json (documented operator path — no UI involved).
+            // Deliberately the SAME byte length as the original roster (admin demoted -1 char,
+            // alice promoted +1 char) and written within the same timestamp tick: an mtime/length
+            // cache would miss this revocation — the cache must compare content.
+            writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"user\"},"
+                    + "{\"username\":\"alice\",\"role\":\"admin\"}]");
+            assertForbidden("demoted-by-hand admin loses admin powers on the next request",
+                    get(base, "/admin/users", admin));
+            Assert.assertEquals("but stays logged in as a regular user", 200, get(base, "/admin", admin));
+
+            // Hand-REMOVE the user entirely: the session dies on the next request.
+            writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"admin\"}]");
+            assertRedirect("removed-by-hand user's session is gone", get(base, "/admin", admin));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    public void concurrentViewersNeverSeeEachOthersIdentity() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-viewer-race").toFile();
+        writeRoster(dataDir, "[{\"username\":\"aaa_alice\",\"role\":\"user\"},"
+                + "{\"username\":\"zzz_bob\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        final String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            final String alice = login(base, "aaa_alice", "a-pw");
+            final String bob = login(base, "zzz_bob", "b-pw");
+            Assert.assertNotNull(alice);
+            Assert.assertNotNull(bob);
+
+            // The renderer used to keep the viewer identity in singleton fields; under the server's
+            // concurrent pool, one user's page could render with the other's name/role. Hammer the
+            // dashboard from both sessions in parallel and assert no cross-contamination (with no
+            // scripts/runs, the only username on the page is the viewer's own, in the nav).
+            final java.util.concurrent.atomic.AtomicReference<String> failure =
+                    new java.util.concurrent.atomic.AtomicReference<String>();
+            Thread ta = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        for (int i = 0; i < 30 && failure.get() == null; i++) {
+                            String body = getBody(base, "/admin", alice);
+                            if (!body.contains("aaa_alice") || body.contains("zzz_bob")) {
+                                failure.compareAndSet(null, "alice's page rendered with bob's identity");
+                            }
+                        }
+                    } catch (IOException e) {
+                        failure.compareAndSet(null, "alice request failed: " + e.getMessage());
+                    }
+                }
+            });
+            Thread tb = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        for (int i = 0; i < 30 && failure.get() == null; i++) {
+                            String body = getBody(base, "/admin", bob);
+                            if (!body.contains("zzz_bob") || body.contains("aaa_alice")) {
+                                failure.compareAndSet(null, "bob's page rendered with alice's identity");
+                            }
+                        }
+                    } catch (IOException e) {
+                        failure.compareAndSet(null, "bob request failed: " + e.getMessage());
+                    }
+                }
+            });
+            ta.start();
+            tb.start();
+            ta.join(30000);
+            tb.join(30000);
+            Assert.assertNull(String.valueOf(failure.get()), failure.get());
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
     public void openModeHasNoUserManagement() throws Exception {
         File dataDir = Files.createTempDirectory("teebox-usermgmt-open").toFile();
         TeeBoxServer server = startServer(dataDir);   // no roster: UI fully open

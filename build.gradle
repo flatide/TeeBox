@@ -48,12 +48,38 @@ sourceSets {
 
 // Bake the build version into a classpath resource so the running server can display it (startup log,
 // admin UI, system API). Scoped to just this file so token expansion never touches log4j2.xml's ${sys:...}.
+// Engine traceability: the composite build embeds whatever ../propertee2-java has checked out, so a
+// TeeBox commit alone does not pin the engine. Stamp the engine version + git commit (+ '-dirty'
+// when the sibling tree has local changes) into teebox-version.properties so every jar records
+// exactly which engine it embeds (surfaced at startup and in the admin UI).
+def engineInfo = {
+    def dir = file('../propertee2-java')
+    def version = 'unknown'
+    def commit = 'unknown'
+    try {
+        def m = new File(dir, 'build.gradle').text =~ /version\s*=\s*'([^']+)'/
+        if (m.find()) version = m.group(1)
+    } catch (Exception ignored) { }
+    try {
+        commit = providers.exec {
+            commandLine 'git', '-C', dir.absolutePath, 'rev-parse', '--short=12', 'HEAD'
+        }.standardOutput.asText.get().trim()
+        def dirty = providers.exec {
+            commandLine 'git', '-C', dir.absolutePath, 'status', '--porcelain'
+        }.standardOutput.asText.get().trim()
+        if (!dirty.isEmpty()) commit += '-dirty'
+    } catch (Exception ignored) { }
+    [version: version, commit: commit]
+}()
+
 processResources {
     // project.version drives the expand token but isn't otherwise a tracked input, so a version bump
     // alone would leave processResources UP-TO-DATE and bake a stale version. Register it explicitly.
     inputs.property('version', project.version)
+    inputs.property('engineVersion', engineInfo.version)
+    inputs.property('engineCommit', engineInfo.commit)
     filesMatching('teebox-version.properties') {
-        expand(version: project.version)
+        expand(version: project.version, engineVersion: engineInfo.version, engineCommit: engineInfo.commit)
     }
 }
 
@@ -131,8 +157,9 @@ run {
 
 tasks.withType(Test).configureEach {
     testLogging {
-        events "passed", "failed", "skipped"
-        exceptionFormat "full"
+        // Explicit assignment: the Groovy space-assignment syntax is removed in Gradle 10.
+        events = ["passed", "failed", "skipped"]
+        exceptionFormat = 'full'
     }
 }
 

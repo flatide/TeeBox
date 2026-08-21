@@ -131,6 +131,42 @@ public class TaskOutputWatcherTest {
     }
 
     @Test
+    public void negativeCaptureGroupNormalizesToFullMatch() throws Exception {
+        // A raw negative group would make matcher.group(g) throw on every match — and a throwing
+        // watcher used to wedge the run's terminal transition. normalize() clamps it to 0.
+        OutputPublishRule r = rule("id", "id:\\s*\\S+", 1);
+        r.captureGroup = -1;
+        r.normalize();
+        Assert.assertEquals(0, r.captureGroup);
+
+        TaskOutputWatcher w = watcher(r);
+        writeStdout("id: abc\n", false);
+        Map<String, List<String>> matches = w.scan();
+        Assert.assertEquals("group 0 captures the full match", Arrays.asList("id: abc"), matches.get("id"));
+    }
+
+    @Test
+    public void multiByteCharacterStraddlingTheReadBoundarySurvives() throws Exception {
+        // Reads end at arbitrary 64KB byte boundaries. The remainder is kept as BYTES and decoding
+        // stops at a newline, so a UTF-8 character split across two reads must decode intact —
+        // the old String remainder corrupted it into replacement characters.
+        TaskOutputWatcher w = watcher(rule("val", "키:\\s*(\\S+)", 0));
+
+        // Position the line so the 3-byte '한' straddles byte offset 65536 (the first read size).
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i < 65529; i++) {
+            prefix.append('x');
+        }
+        prefix.append('\n');                       // newline at byte 65529
+        String line = "키: 한글값\n";   // "키: 한글값" — '한' spans bytes 65535..65537
+        writeStdout(prefix + line, false);
+
+        Map<String, List<String>> matches = w.scan();
+        Assert.assertEquals("split multi-byte character must decode intact",
+            Arrays.asList("한글값"), matches.get("val"));
+    }
+
+    @Test
     public void stderrRulesReadTheStderrStream() throws Exception {
         OutputPublishRule stderrRule = rule("err2", "err:\\s*(\\S+)", 0);
         stderrRule.stream = "stderr";

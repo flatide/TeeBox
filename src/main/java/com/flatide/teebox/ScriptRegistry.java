@@ -460,18 +460,16 @@ public class ScriptRegistry {
     }
 
     private void saveScript(ScriptInfo info) {
-        Writer writer = null;
         try {
             File dir = scriptDir(info.scriptId);
             if (!dir.exists()) {
                 dir.mkdirs();
             }
-            writer = new OutputStreamWriter(new FileOutputStream(scriptMetaFile(info.scriptId)), "UTF-8");
-            gson.toJson(info, writer);
+            // Atomic (temp+rename): an in-place write truncates first, so a crash/full disk
+            // mid-write would destroy the previous good script.json.
+            AtomicFiles.write(scriptMetaFile(info.scriptId), gson.toJson(info));
         } catch (IOException e) {
             throw new RuntimeException("Failed to save script metadata for " + info.scriptId + ": " + e.getMessage(), e);
-        } finally {
-            closeQuietly(writer);
         }
     }
 
@@ -628,14 +626,12 @@ public class ScriptRegistry {
     }
 
     private void writeFile(File file, String content) {
-        Writer writer = null;
+        // Atomic: the in-place Save overwrites a version's .tee in place — truncation on a
+        // crash/full disk would lose the existing source.
         try {
-            writer = new OutputStreamWriter(new FileOutputStream(file), "UTF-8");
-            writer.write(content);
+            AtomicFiles.write(file, content);
         } catch (IOException e) {
             throw new RuntimeException("Failed to write file: " + file.getAbsolutePath(), e);
-        } finally {
-            closeQuietly(writer);
         }
     }
 

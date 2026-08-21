@@ -85,15 +85,20 @@ The `/admin` HTML UI has its own cookie/session login, **independent of the API 
   "admin"|"user"}`. Manage it from the admin UI (see below) or edit the file by hand; it is read
   fresh on every login, so hand-edits apply without a restart. Setting `adminUser` (and optionally
   `adminPassword`) seeds the roster with one admin at startup when it is missing/empty.
-- **Passwords** — a user sets their password on **first login** (stored as a PBKDF2 hash in the
-  TeeBox-managed `dataDir/users/credentials.json`; plaintext is never stored). To reset a password,
-  use the admin UI's Reset password action (or remove that user's entry from `credentials.json`) —
-  the next login sets a new one.
+- **Passwords** — stored as PBKDF2 hashes in the TeeBox-managed `dataDir/users/credentials.json`
+  (plaintext never stored). The admin chooses per user: set an **initial/temporary password** when
+  adding or resetting (recorded immediately — nobody else can claim the account), or leave it blank
+  so the user sets their own on **first login** (note: until that first login, anyone who knows the
+  username can claim the account — prefer initial passwords outside fully trusted networks). Every
+  logged-in user can change their own password via the top-right **Password** button
+  (`/admin/password`); their other sessions are logged out on change. A **corrupt
+  `credentials.json` disables all UI logins** (fail-closed) until the operator repairs or removes
+  the file — removal is a conscious full reset to first-login provisioning.
 - **User management UI** — a logged-in **admin** gets a **Users** menu (`/admin/users`): add users
-  (role `user` or `admin`; no password is entered — the new user sets it on first login), change
-  roles, reset passwords, and delete users. Role changes, resets and deletions **end the target's
-  live sessions immediately** (they log in again). The **last remaining admin cannot be deleted or
-  demoted**. The menu and routes exist only in roster mode — open mode has no users to manage.
+  (role `user` or `admin`, optional initial password), change roles, reset passwords (optional temp
+  password), and delete users. Role changes, resets and deletions **end the target's live sessions
+  immediately** (they log in again). The **last remaining admin cannot be deleted or demoted**. The
+  menu and routes exist only in roster mode — open mode has no users to manage.
 - **What login gates** — the **entire `/admin` UI**, GET pages included (only the login page stays
   reachable), so script source and run/task output never leak to unauthenticated clients. Regular
   (`user` role) accounts may only modify/run scripts they own (registered themselves); `admin`

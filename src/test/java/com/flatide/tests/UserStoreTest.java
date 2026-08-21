@@ -147,4 +147,75 @@ public class UserStoreTest {
         Assert.assertTrue(store.isEmpty());
         Assert.assertNull(store.findUser("alice"));
     }
+
+    @Test
+    public void corruptCredentialsFailClosed() throws Exception {
+        File dataDir = newDataDir();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        File usersDir = new File(dataDir, "users");
+        Writer w = new OutputStreamWriter(new FileOutputStream(new File(usersDir, "credentials.json")), "UTF-8");
+        try {
+            w.write("{ definitely not json ]");
+        } finally {
+            w.close();
+        }
+        UserStore store = new UserStore(dataDir);
+        Assert.assertTrue(store.isCredentialsCorrupt());
+        // Fail-closed: no verification succeeds, and — critically — no password may be
+        // (re)provisioned over the lost hashes. Starting empty instead would put every
+        // account back into the claimable first-login state.
+        Assert.assertFalse(store.verifyPassword("alice", "anything"));
+        try {
+            store.provisionPasswordIfAbsent("alice", "claimed");
+            Assert.fail("provisioning must refuse while credentials.json is corrupt");
+        } catch (IllegalStateException expected) {
+        }
+        try {
+            store.setPassword("alice", "new-pw");
+            Assert.fail("setPassword must refuse while credentials.json is corrupt");
+        } catch (IllegalStateException expected) {
+        }
+    }
+
+    @Test
+    public void provisionPasswordIfAbsentIsFirstWriterWins() throws Exception {
+        File dataDir = newDataDir();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        UserStore store = new UserStore(dataDir);
+        Assert.assertTrue("first provision wins", store.provisionPasswordIfAbsent("alice", "first-pw"));
+        Assert.assertFalse("second provision refused", store.provisionPasswordIfAbsent("alice", "other-pw"));
+        Assert.assertTrue(store.verifyPassword("alice", "first-pw"));
+        Assert.assertFalse("the losing password must not verify", store.verifyPassword("alice", "other-pw"));
+    }
+
+    @Test
+    public void addUserWithInitialPasswordClosesTheFirstLoginWindow() throws Exception {
+        File dataDir = newDataDir();
+        writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"}]");
+        UserStore store = new UserStore(dataDir);
+        store.addUser("bob", "user", "temp-pw");
+        Assert.assertTrue(store.hasPassword("bob"));
+        Assert.assertTrue(store.verifyPassword("bob", "temp-pw"));
+        // No claimable window: a third party's "first login" attempt cannot provision.
+        Assert.assertFalse(store.provisionPasswordIfAbsent("bob", "attacker-pw"));
+        Assert.assertFalse(store.verifyPassword("bob", "attacker-pw"));
+    }
+
+    @Test
+    public void resetPasswordWithTempSetsItAndBlankClears() throws Exception {
+        File dataDir = newDataDir();
+        writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"}]");
+        UserStore store = new UserStore(dataDir);
+        store.addUser("bob", "user", "old-pw");
+        store.resetPassword("bob", "temp-pw");
+        Assert.assertFalse(store.verifyPassword("bob", "old-pw"));
+        Assert.assertTrue(store.verifyPassword("bob", "temp-pw"));
+        store.resetPassword("bob", null);
+        Assert.assertFalse("blank reset drops the credential", store.hasPassword("bob"));
+        try {
+            store.resetPassword("nobody", "x");
+            Assert.fail("reset for a non-roster user must fail");
+        } catch (IllegalArgumentException expected) {
+        }
+    }
 }

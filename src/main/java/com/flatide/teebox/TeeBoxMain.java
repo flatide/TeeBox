@@ -19,8 +19,9 @@ public class TeeBoxMain {
             }
         }, "propertee-teebox-shutdown"));
 
-        String banner = "TeeBox " + TeeBoxVersion.get() + " listening on http://"
-                + config.bindAddress + ":" + server.getPort() + "/admin";
+        String banner = "TeeBox " + TeeBoxVersion.get()
+                + " (engine " + TeeBoxVersion.engineVersion() + " @" + TeeBoxVersion.engineCommit() + ")"
+                + " listening on http://" + config.bindAddress + ":" + server.getPort() + "/admin";
         TeeBoxLog.info("TeeBox", banner);
         System.out.println(banner);
         while (true) {

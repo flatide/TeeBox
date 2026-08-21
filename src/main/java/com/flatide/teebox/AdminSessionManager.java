@@ -71,14 +71,21 @@ public class AdminSessionManager {
         if (found == null) {
             return null;
         }
-        if (userStore.hasPassword(found.username)) {
-            if (!userStore.verifyPassword(found.username, password)) {
-                return null;
-            }
-        } else {
-            // First login: capture and store the password.
-            userStore.setPassword(found.username, password);
+        // First login provisions the typed password atomically (check-and-set in one UserStore
+        // lock): of two concurrent first logins, exactly one provisions — the other falls through
+        // to verify and fails unless it raced with the same password. Throws (-> login refused)
+        // while credentials.json is corrupt: fail-closed, no re-provisioning over lost hashes.
+        boolean provisioned;
+        try {
+            provisioned = userStore.provisionPasswordIfAbsent(found.username, password);
+        } catch (IllegalStateException e) {
+            TeeBoxLog.warn("AdminUI", "Login refused for '" + found.username + "': " + e.getMessage());
+            return null;
+        }
+        if (provisioned) {
             TeeBoxLog.info("AdminUI", "First login: password set for user '" + found.username + "'");
+        } else if (!userStore.verifyPassword(found.username, password)) {
+            return null;
         }
         String token = generateToken();
         sessions.put(token, new Session(found.username, found.role, System.currentTimeMillis() + sessionTimeoutMs));
@@ -92,7 +99,13 @@ public class AdminSessionManager {
         }
     }
 
-    /** Resolve a session token to its (non-expired) session, or null. */
+    /**
+     * Resolve a session token to its (non-expired) session, or null. Revalidates against the
+     * CURRENT roster on every resolution (cheap — the roster read is mtime-cached): a user removed
+     * from users.json by hand loses their session on the next request instead of riding out the 8h
+     * window, and a hand-edited role change takes effect immediately. UI-driven changes already
+     * invalidate sessions explicitly; this covers the documented hand-edit path.
+     */
     public Session getSession(String token) {
         if (token == null) {
             return null;
@@ -104,6 +117,15 @@ public class AdminSessionManager {
         if (System.currentTimeMillis() > session.expiry) {
             sessions.remove(token);
             return null;
+        }
+        UserStore.User current = userStore.findUser(session.username);
+        if (current == null) {
+            sessions.remove(token);
+            return null;
+        }
+        if (!current.role.equals(session.role)) {
+            session = new Session(session.username, current.role, session.expiry);
+            sessions.put(token, session);
         }
         return session;
     }
@@ -119,12 +141,19 @@ public class AdminSessionManager {
      * stay valid for up to the session timeout, and a role change would not take effect until then.
      */
     public void invalidateUser(String username) {
+        invalidateUserExcept(username, null);
+    }
+
+    /** invalidateUser, but keep one token alive — used by self-service password change so the
+     *  user's other sessions die while the session that changed the password survives. */
+    public void invalidateUserExcept(String username, String keepToken) {
         if (username == null) {
             return;
         }
         Iterator<Map.Entry<String, Session>> it = sessions.entrySet().iterator();
         while (it.hasNext()) {
-            if (username.equals(it.next().getValue().username)) {
+            Map.Entry<String, Session> entry = it.next();
+            if (username.equals(entry.getValue().username) && !entry.getKey().equals(keepToken)) {
                 it.remove();
             }
         }

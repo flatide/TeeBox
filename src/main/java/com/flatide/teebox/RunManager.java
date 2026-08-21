@@ -63,6 +63,11 @@ public class RunManager {
     private final ThreadPoolExecutor immediateExecutor;
     private final long startTimeMs = System.currentTimeMillis();
     private volatile boolean shutdownRequested = false;
+    /** Serializes the shutdown flag flip + executor close against submit()'s final enqueue/park
+     *  decision: without it, a submit that passed the entry check could park a PENDING run or hit
+     *  a closed executor after shutdown began (TOCTOU). Lock order: lifecycleLock -> per-script
+     *  count monitor -> run monitor; nothing takes them in reverse. */
+    private final Object lifecycleLock = new Object();
     private volatile boolean draining = false;
     private volatile long drainStartedAt = 0;
 
@@ -160,8 +165,8 @@ public class RunManager {
     }
 
     public RunInfo submit(final RunRequest request) {
-        if (draining) {
-            throw new IllegalStateException("Server is draining for shutdown; new runs are rejected");
+        if (draining || shutdownRequested) {
+            throw new IllegalStateException("Server is shutting down; new runs are rejected");
         }
         final ResolvedRunTarget target = resolveRunTarget(request);
         final RunInfo run = new RunInfo();
@@ -188,36 +193,52 @@ public class RunManager {
         run.immediate = isImmediate;
         runRegistry.register(run);
 
-        // Check per-script concurrency limit (applies to both immediate and normal)
-        if (maxPerScript > 0) {
-            java.util.concurrent.atomic.AtomicInteger count = getScriptActiveCount(target.scriptId);
-            synchronized (count) {
-                int current = count.get();
-                if (current >= maxPerScript) {
-                    // Mark as PENDING and enqueue for later
-                    runRegistry.markPending(run);
-                    getPendingQueue(target.scriptId).add(new PendingRun(run, target.scriptFile, isImmediate));
-                    TeeBoxLog.info("RunManager", "Pending run " + run.runId + " for " + target.scriptId
-                        + " (active=" + current + " max=" + maxPerScript + ")");
-                    return run.copy();
-                }
-                count.incrementAndGet();
+        // The park/submit decision runs under the lifecycle lock with an authoritative re-check:
+        // shutdown() flips the flag and closes the executors under the same lock, so a submit
+        // that passed the entry check can neither park a PENDING run after shutdown began nor
+        // reach a closed executor (which would strand the run in a non-terminal QUEUED).
+        synchronized (lifecycleLock) {
+            if (shutdownRequested || draining) {
+                runRegistry.markFailed(run, "Server is shutting down; run rejected before start");
+                throw new IllegalStateException("Server is shutting down; new runs are rejected");
             }
-        }
+            // Check per-script concurrency limit (applies to both immediate and normal)
+            if (maxPerScript > 0) {
+                java.util.concurrent.atomic.AtomicInteger count = getScriptActiveCount(target.scriptId);
+                synchronized (count) {
+                    int current = count.get();
+                    if (current >= maxPerScript) {
+                        // Mark as PENDING and enqueue for later
+                        runRegistry.markPending(run);
+                        getPendingQueue(target.scriptId).add(new PendingRun(run, target.scriptFile, isImmediate));
+                        TeeBoxLog.info("RunManager", "Pending run " + run.runId + " for " + target.scriptId
+                            + " (active=" + current + " max=" + maxPerScript + ")");
+                        return run.copy();
+                    }
+                    count.incrementAndGet();
+                }
+            }
 
-        // Immediate scripts bypass global queue; normal scripts use global executor
-        submitToExecutor(run, target.scriptFile, isImmediate ? immediateExecutor : runExecutor);
+            // Immediate scripts bypass global queue; normal scripts use global executor
+            submitToExecutor(run, target.scriptFile, isImmediate ? immediateExecutor : runExecutor);
+        }
         return run.copy();
     }
 
     private void submitToExecutor(final RunInfo run, final File scriptFile, ThreadPoolExecutor executor) {
-        Future<?> future = executor.submit(new Runnable() {
-            @Override
-            public void run() {
-                executeRun(run, scriptFile);
-            }
-        });
-        activeRuns.put(run.runId, future);
+        // The worker's cleanup removes this entry when the run finishes. A very fast run could
+        // finish (and remove) BEFORE the put, re-inserting a completed Future that lingers until
+        // purge. The shared run monitor orders the two: the worker's remove blocks until the put
+        // has completed (executeRun's cleanup takes the same lock).
+        synchronized (run) {
+            Future<?> future = executor.submit(new Runnable() {
+                @Override
+                public void run() {
+                    executeRun(run, scriptFile);
+                }
+            });
+            activeRuns.put(run.runId, future);
+        }
     }
 
     private java.util.concurrent.atomic.AtomicInteger getScriptActiveCount(String scriptId) {
@@ -668,10 +689,18 @@ public class RunManager {
      *
      * @param maxWaitMs timeout after which shutdown is forced even if runs are still pending
      */
-    public synchronized void startDraining(final long maxWaitMs) {
-        if (draining) return;
-        draining = true;
-        drainStartedAt = System.currentTimeMillis();
+    public void startDraining(final long maxWaitMs) {
+        // Flag check-and-set under the SAME lifecycle lock submit() re-checks under (this method
+        // used to synchronize on `this` — a different monitor, so a submit holding lifecycleLock
+        // could see draining=false while the drain thread, seeing nothing enqueued yet, declared
+        // the drain complete and exited). Linearized: a submit that got the lock first finishes
+        // its enqueue before the flag flips (the drain poll then counts it); a drain that got
+        // the lock first is seen by submit's authoritative re-check, which rejects.
+        synchronized (lifecycleLock) {
+            if (draining) return;
+            draining = true;
+            drainStartedAt = System.currentTimeMillis();
+        }
         TeeBoxLog.info("RunManager", "Draining started — new runs will be rejected");
 
         Thread drainThread = new Thread(new Runnable() {
@@ -727,25 +756,48 @@ public class RunManager {
     }
 
     public void shutdown() {
-        shutdownRequested = true;
-        outputWatchers.clear();
+        // Flag flip + executor close under the lifecycle lock: submit()'s final enqueue re-checks
+        // the flag under the same lock, so no run parks or submits after this block.
+        synchronized (lifecycleLock) {
+            shutdownRequested = true;
+            // Order matters: let in-flight runs finish BEFORE tearing anything down. The task engine
+            // shutdown clears the shared runner's task map, so a still-running SHELL() would die with
+            // "Unknown task"; and clearing watchers early loses the runs' final output captures. The
+            // flush/maintenance and timeout schedulers stay alive while we wait (periodic capture scans
+            // and run timeouts keep working during the drain).
+            runExecutor.shutdown();
+            immediateExecutor.shutdown();
+        }
+        awaitExecutorTermination(runExecutor, 30);
+        awaitExecutorTermination(immediateExecutor, 30);
+        // Runs are terminal (or force-interrupted): their completion flushes have run. Now stop the
+        // background machinery and tear down the engine last.
+        maintenanceScheduler.shutdownNow();
+        timeoutScheduler.shutdownNow();
         if (webhookDispatcher != null) {
             webhookDispatcher.shutdown();
         }
-        maintenanceScheduler.shutdownNow();
-        timeoutScheduler.shutdownNow();
+        outputWatchers.clear();
         runRegistry.flushDirty();
         managedTaskEngine.shutdown();
-        runExecutor.shutdown();
-        immediateExecutor.shutdown();
-        awaitExecutorTermination(runExecutor, 30);
-        awaitExecutorTermination(immediateExecutor, 30);
     }
 
     private void awaitExecutorTermination(ThreadPoolExecutor executor, long seconds) {
         try {
             if (!executor.awaitTermination(seconds, TimeUnit.SECONDS)) {
                 executor.shutdownNow();
+                // Wait for the interrupted runs to actually unwind: the callers tear down the
+                // watchers and the shared task engine next, and an unwinding run still uses both.
+                if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                    // A run is ignoring the interrupt (e.g. spinning in native/blocking code the
+                    // engine cannot preempt). The teardown proceeds — an embedded stop() cannot
+                    // wait forever — so the "all completion flushes ran" assumption is void for
+                    // these runs: their captures may be partial and their SHELL tasks die with
+                    // "Unknown task" once the engine closes. Standalone exit is unaffected (the
+                    // JVM ends the threads); embedded callers see this error with the run IDs.
+                    TeeBoxLog.error("RunManager", "Executor did not terminate after interrupt; "
+                            + "proceeding with teardown. Still-active runs: " + activeRuns.keySet());
+                }
             }
         } catch (InterruptedException e) {
             executor.shutdownNow();
@@ -883,7 +935,11 @@ public class RunManager {
             if (webhookDispatcher != null) {
                 webhookDispatcher.onRunTerminal(run);
             }
-            activeRuns.remove(run.runId);
+            // Same lock as submitToExecutor's put: guarantees the put happened before this
+            // remove, so a fast run can never re-insert its own completed Future.
+            synchronized (run) {
+                activeRuns.remove(run.runId);
+            }
             dequeueNextRun(run.scriptId);
         }
     }
@@ -895,13 +951,27 @@ public class RunManager {
         if (count == null) return;
 
         synchronized (count) {
+            // No promotions while shutting down: the executors are closing, the submit would be
+            // rejected, and the run would strand in a non-terminal QUEUED. Left PENDING, startup
+            // recovery reports it honestly as SERVER_RESTARTED.
+            if (shutdownRequested) {
+                return;
+            }
             java.util.concurrent.ConcurrentLinkedQueue<PendingRun> queue = scriptPendingQueue.get(scriptId);
             PendingRun next = queue != null ? queue.poll() : null;
             if (next != null) {
                 // Slot transferred to pending run — count stays the same
                 TeeBoxLog.info("RunManager", "Dequeuing run " + next.run.runId + " for " + scriptId);
                 runRegistry.markQueued(next.run);
-                submitToExecutor(next.run, next.scriptFile, next.immediate ? immediateExecutor : runExecutor);
+                try {
+                    submitToExecutor(next.run, next.scriptFile, next.immediate ? immediateExecutor : runExecutor);
+                } catch (java.util.concurrent.RejectedExecutionException e) {
+                    // Raced the shutdown flag: revert so the run is not stuck QUEUED.
+                    runRegistry.markPending(next.run);
+                    queue.add(next);
+                    TeeBoxLog.warn("RunManager", "Dequeue rejected during shutdown; run "
+                            + next.run.runId + " stays PENDING");
+                }
             } else {
                 // No pending runs — release slot (never go below 0)
                 int current = count.get();
@@ -1142,14 +1212,30 @@ public class RunManager {
         TeeBoxLog.info("OutputWatcher", "Registered watcher for task=" + taskId + " run=" + runId + " rules=" + rules.size());
     }
 
-    /** Immediately flush all watchers belonging to a run. Called when run completes. */
+    /**
+     * Immediately flush all watchers belonging to a run. Called when run completes — on BOTH the
+     * normal and the error path, so it must never throw: a watcher failure here used to re-throw
+     * from the catch block and leave the run permanently RUNNING (no terminal transition). Each
+     * watcher is isolated and always removed (completion is its last chance regardless).
+     */
     private void flushWatchersForRun(String runId) {
         List<String> toRemove = new ArrayList<String>();
         for (Map.Entry<String, TaskOutputWatcher> entry : outputWatchers.entrySet()) {
             TaskOutputWatcher watcher = entry.getValue();
             if (runId.equals(watcher.getRunId())) {
-                Map<String, List<String>> finalMatches = watcher.finalScan();
-                applyWatcherMatches(watcher, finalMatches);
+                try {
+                    // scan + apply under the watcher monitor as ONE unit: with only the scans
+                    // serialized, the periodic tick could read older content, lose the CPU, and
+                    // apply it AFTER this final flush applied newer content — captures out of
+                    // order and the "latest" value rolled back.
+                    synchronized (watcher) {
+                        Map<String, List<String>> finalMatches = watcher.finalScan();
+                        applyWatcherMatches(watcher, finalMatches);
+                    }
+                } catch (RuntimeException e) {
+                    TeeBoxLog.warn("OutputWatcher", "Final flush failed for task=" + entry.getKey()
+                            + " run=" + runId + ": " + e.getMessage());
+                }
                 toRemove.add(entry.getKey());
             }
         }
@@ -1162,20 +1248,33 @@ public class RunManager {
         List<String> toRemove = new ArrayList<String>();
         for (Map.Entry<String, TaskOutputWatcher> entry : outputWatchers.entrySet()) {
             TaskOutputWatcher watcher = entry.getValue();
-            Map<String, List<String>> matches = watcher.scan();
-            applyWatcherMatches(watcher, matches);
-
-            // Remove if all rules matched or task is no longer alive
-            if (watcher.isAllMatched()) {
-                toRemove.add(entry.getKey());
-            } else {
-                TaskObservation obs = managedTaskEngine.observe(entry.getKey());
-                if (obs == null || !obs.alive) {
-                    // Task terminated — flush remainder and do final match
-                    Map<String, List<String>> finalMatches = watcher.finalScan();
-                    applyWatcherMatches(watcher, finalMatches);
-                    toRemove.add(entry.getKey());
+            try {
+                // Same one-unit locking as flushWatchersForRun (see there for the ordering race).
+                synchronized (watcher) {
+                    Map<String, List<String>> matches = watcher.scan();
+                    applyWatcherMatches(watcher, matches);
                 }
+
+                // Remove if all rules matched or task is no longer alive
+                if (watcher.isAllMatched()) {
+                    toRemove.add(entry.getKey());
+                } else {
+                    TaskObservation obs = managedTaskEngine.observe(entry.getKey());
+                    if (obs == null || !obs.alive) {
+                        // Task terminated — flush remainder and do final match
+                        synchronized (watcher) {
+                            Map<String, List<String>> finalMatches = watcher.finalScan();
+                            applyWatcherMatches(watcher, finalMatches);
+                        }
+                        toRemove.add(entry.getKey());
+                    }
+                }
+            } catch (RuntimeException e) {
+                // One failing watcher must not kill the shared flush tick for every other run —
+                // and retrying a deterministic failure every 2s is noise. Drop the watcher.
+                TeeBoxLog.warn("OutputWatcher", "Scan failed for task=" + entry.getKey()
+                        + " run=" + watcher.getRunId() + " (watcher removed): " + e.getMessage());
+                toRemove.add(entry.getKey());
             }
         }
         for (String taskId : toRemove) {
