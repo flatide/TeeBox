@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.22.0
 
 - **Admin UI: user management** (`/admin/users`) — a logged-in **admin** gets a **Users** menu
   for the roster: add users (role `user`/`admin`; no password entered — the new user sets it on
