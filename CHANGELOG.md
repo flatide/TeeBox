@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.21.0
 
 - **Editor syntax check catches up to spec v0.19.0 (`multi ... limit K`)**: the inlined
   browser bundle driving the client-side Check syntax / save interception was still the
