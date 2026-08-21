@@ -2,7 +2,7 @@
  *
  * Ported from the ProperTee playground (propertee-js/docs/index.html). The syntax highlighter
  * (highlightSyntax/escapeHtml) and the builtin catalog (RESULT_NOTE/BUILTIN_DOCS) are copied VERBATIM
- * (last synced: spec v0.18.0 — READ_FILE/READ_JSON_FILE/WRITE_JSON_FILE). When the language gains
+ * (last synced: spec v0.19.0 — multi ... limit K; keyword list + v0.18.0 file builtins). When the language gains
  * builtins, re-diff against the playground and sync; playground-only annotations ("in-memory FS",
  * mocked SHELL/HTTP notes) are intentionally NOT carried over. TeeBox-only host builtins
  * (STREAM_FILE/THUMBNAIL) are kept on separate, clearly-marked lines/categories so the verbatim parts

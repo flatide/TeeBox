@@ -2,6 +2,16 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Editor syntax check catches up to spec v0.19.0 (`multi ... limit K`)**: the inlined
+  browser bundle driving the client-side Check syntax / save interception was still the
+  v0.18.0-spec build, so it rejected the new concurrency-cap clause with "missing 'do' at
+  'limit'" even though the engine accepts it. Refreshed verbatim from the propertee-js
+  v0.19.0-spec build (the `limit` keyword highlight landed separately). The next dist build
+  embeds engine 0.21.0, so the server-side validate/save parser and actual runs accept the
+  new grammar too.
+
 ## 1.20.0
 
 - **Editor synced to the propertee2 0.20.0 engine builtins** (spec v0.18.0): **`READ_FILE`**
