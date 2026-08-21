@@ -1637,7 +1637,11 @@ public class AdminPageRenderer {
         sb.append("ptCheckSyntax(function(ok){");
         sb.append("if(!ok)return;");
         sb.append("form.dataset.syntaxOk='1';");
-        sb.append("if(submitter){submitter.click();}else{form.submit();}");
+        // The client-side check is synchronous, so this callback still runs INSIDE the submit
+        // event dispatch — a re-entrant submitter.click() here is silently dropped by the
+        // browser's firing-submission-events guard (the bug: first Save only checked, second
+        // Save saved). Defer the resubmit out of the current dispatch.
+        sb.append("setTimeout(function(){if(submitter){submitter.click();}else{form.submit();}},0);");
         sb.append("});");
         sb.append("});");
         sb.append("})();");

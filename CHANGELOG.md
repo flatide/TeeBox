@@ -2,6 +2,21 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Editor: one click on Save saves — it no longer takes two.** The save interception runs the
+  syntax check and then resubmits the form, but the client-side check (the primary path since
+  it moved into the browser) is synchronous, so the resubmitting `submitter.click()` still ran
+  *inside* the original submit event dispatch — and the browser's firing-submission-events
+  guard silently drops a re-entrant submission. Result: the first Save only rendered "No
+  syntax errors." and armed the pass-through flag; only the second Save actually saved. The
+  resubmit is now deferred out of the dispatch (`setTimeout 0`), which also keeps the async
+  server-fallback path working. Both submit buttons ride the same handler and both were
+  affected. Verified in a real browser against 1.21.0 (one click checked but did not save)
+  and against the fix: one click on **Save** overwrites and lands back on `?version=<v>`,
+  one click on **Save as new version** creates the next version and lands on it (no
+  auto-activate, as designed).
+
 ## 1.21.0
 
 - **Editor syntax check catches up to spec v0.19.0 (`multi ... limit K`)**: the inlined
