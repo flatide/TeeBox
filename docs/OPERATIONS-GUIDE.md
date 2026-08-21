@@ -81,18 +81,24 @@ The `/admin` HTML UI has its own cookie/session login, **independent of the API 
 - **No roster ⇒ fully open.** With no user roster (and no `adminUser` to seed one), the admin UI
   requires no login — the closed-network default. Likewise, an API namespace with no token stays
   unauthenticated. Review this posture before exposing TeeBox beyond a trusted network.
-- **Roster** — `dataDir/users/users.json`, an **operator-managed** JSON array of
-  `{"username": ..., "role": "admin"|"user"}`. Add/remove users by editing the file; it is read
-  fresh on every login, so edits apply without a restart. Setting `adminUser` (and optionally
+- **Roster** — `dataDir/users/users.json`, a JSON array of `{"username": ..., "role":
+  "admin"|"user"}`. Manage it from the admin UI (see below) or edit the file by hand; it is read
+  fresh on every login, so hand-edits apply without a restart. Setting `adminUser` (and optionally
   `adminPassword`) seeds the roster with one admin at startup when it is missing/empty.
 - **Passwords** — a user sets their password on **first login** (stored as a PBKDF2 hash in the
   TeeBox-managed `dataDir/users/credentials.json`; plaintext is never stored). To reset a password,
-  remove that user's entry from `credentials.json` — the next login sets a new one.
-- **What login gates** — only mutating admin-UI actions (register/edit/run/kill/settings/shutdown).
-  All GET pages stay viewable read-only without a session. Regular (`user` role) accounts may only
-  modify/run scripts they own (registered themselves); `admin` accounts may act on everything, and
-  server shutdown is admin-only. The `/api/*` namespaces are unaffected (token-gated, no ownership
-  checks).
+  use the admin UI's Reset password action (or remove that user's entry from `credentials.json`) —
+  the next login sets a new one.
+- **User management UI** — a logged-in **admin** gets a **Users** menu (`/admin/users`): add users
+  (role `user` or `admin`; no password is entered — the new user sets it on first login), change
+  roles, reset passwords, and delete users. Role changes, resets and deletions **end the target's
+  live sessions immediately** (they log in again). The **last remaining admin cannot be deleted or
+  demoted**. The menu and routes exist only in roster mode — open mode has no users to manage.
+- **What login gates** — the **entire `/admin` UI**, GET pages included (only the login page stays
+  reachable), so script source and run/task output never leak to unauthenticated clients. Regular
+  (`user` role) accounts may only modify/run scripts they own (registered themselves); `admin`
+  accounts may act on everything; server shutdown and user management are admin-only. The `/api/*`
+  namespaces are unaffected (token-gated, no ownership checks).
 
 ### Running
 

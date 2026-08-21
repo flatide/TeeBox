@@ -165,6 +165,115 @@ public class UserStore {
         TeeBoxLog.info("UserStore", "Seeded admin user '" + user + "' into roster");
     }
 
+    // ---- Roster management (admin-UI user administration) ----
+
+    /** Username shape for UI-created users. Hand-edited users.json entries are not re-validated. */
+    private static final java.util.regex.Pattern USERNAME_PATTERN =
+            java.util.regex.Pattern.compile("[A-Za-z0-9._-]{1,64}");
+
+    /** Add a roster entry. Fails on a duplicate or an invalid username; role normalizes to user. */
+    public synchronized void addUser(String username, String role) {
+        String user = validateUsername(username);
+        List<User> users = listUsers();
+        for (User u : users) {
+            if (u.username.equals(user)) {
+                throw new IllegalArgumentException("User already exists: " + user);
+            }
+        }
+        users.add(new User(user, normalizeRole(role)));
+        saveRoster(users);
+        TeeBoxLog.info("UserStore", "User added: " + user + " (" + normalizeRole(role) + ")");
+    }
+
+    /**
+     * Remove a roster entry and its stored credential. The last remaining admin cannot be removed —
+     * a roster without an admin would leave no one able to manage users from the UI.
+     */
+    public synchronized void removeUser(String username) {
+        String user = validateUsername(username);
+        List<User> users = listUsers();
+        User target = null;
+        for (User u : users) {
+            if (u.username.equals(user)) {
+                target = u;
+                break;
+            }
+        }
+        if (target == null) {
+            throw new IllegalArgumentException("Unknown user: " + user);
+        }
+        if (target.isAdmin() && countAdmins(users) <= 1) {
+            throw new IllegalArgumentException("Cannot delete the last admin: " + user);
+        }
+        users.remove(target);
+        saveRoster(users);
+        if (credentials.remove(user) != null) {
+            saveCredentials();
+        }
+        TeeBoxLog.info("UserStore", "User removed: " + user);
+    }
+
+    /** Change a user's role. Demoting the last remaining admin is rejected (see removeUser). */
+    public synchronized void setRole(String username, String role) {
+        String user = validateUsername(username);
+        String newRole = normalizeRole(role);
+        List<User> users = listUsers();
+        User target = null;
+        for (User u : users) {
+            if (u.username.equals(user)) {
+                target = u;
+                break;
+            }
+        }
+        if (target == null) {
+            throw new IllegalArgumentException("Unknown user: " + user);
+        }
+        if (newRole.equals(target.role)) {
+            return;
+        }
+        if (target.isAdmin() && countAdmins(users) <= 1) {
+            throw new IllegalArgumentException("Cannot demote the last admin: " + user);
+        }
+        target.role = newRole;
+        saveRoster(users);
+        TeeBoxLog.info("UserStore", "Role changed: " + user + " -> " + newRole);
+    }
+
+    /** Drop a user's stored credential so their next login sets a new password (first-login flow). */
+    public synchronized void clearPassword(String username) {
+        String user = validateUsername(username);
+        if (credentials.remove(user) != null) {
+            saveCredentials();
+            TeeBoxLog.info("UserStore", "Password cleared for user: " + user + " (set on next login)");
+        }
+    }
+
+    private static String normalizeRole(String role) {
+        return ROLE_ADMIN.equals(role) ? ROLE_ADMIN : ROLE_USER;
+    }
+
+    private static int countAdmins(List<User> users) {
+        int n = 0;
+        for (User u : users) {
+            if (u.isAdmin()) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private static String validateUsername(String username) {
+        String user = username != null ? username.trim() : "";
+        if (user.length() == 0) {
+            throw new IllegalArgumentException("Username is required");
+        }
+        if (!USERNAME_PATTERN.matcher(user).matches()) {
+            throw new IllegalArgumentException(
+                    "Invalid username (allowed: letters, digits, '.', '_', '-'; max 64 chars): " + user);
+        }
+        return user;
+    }
+
     // ---- Credentials (credentials.json, TeeBox-managed) ----
 
     /** True when a password hash has been recorded for this user. */
@@ -277,11 +386,26 @@ public class UserStore {
         }
     }
 
+    /**
+     * Atomic write (temp file + rename): a crash mid-write must never leave a truncated users.json —
+     * the roster parser fails closed (no valid users), which would lock every operator out of the UI.
+     */
     private void writeFile(File file, String content) {
+        File temp = new File(file.getParentFile(), file.getName() + ".tmp");
         Writer writer = null;
         try {
-            writer = new OutputStreamWriter(new FileOutputStream(file), "UTF-8");
+            writer = new OutputStreamWriter(new FileOutputStream(temp), "UTF-8");
             writer.write(content);
+            writer.close();
+            writer = null;
+            try {
+                java.nio.file.Files.move(temp.toPath(), file.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                java.nio.file.Files.move(temp.toPath(), file.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             throw new RuntimeException("Failed to write file: " + file.getAbsolutePath(), e);
         } finally {
@@ -290,6 +414,9 @@ public class UserStore {
                     writer.close();
                 } catch (IOException ignore) {
                 }
+            }
+            if (temp.exists() && !temp.delete()) {
+                temp.deleteOnExit();
             }
         }
     }

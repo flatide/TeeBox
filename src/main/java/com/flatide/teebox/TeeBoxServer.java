@@ -404,6 +404,59 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin");
                     return;
                 }
+                // ---- User management (roster mode + admin session only) ----
+                if (("GET".equals(method) && "/admin/users".equals(path))
+                        || ("POST".equals(method) && path.startsWith("/admin/users/"))) {
+                    if (!sessionManager.isLoginRequired()) {
+                        // Open mode has no users to manage; the roster is seeded via the adminUser
+                        // config or by creating dataDir/users/users.json (see the operations guide).
+                        throw new IllegalStateException(
+                                "User management requires a user roster (the UI is running in open mode)");
+                    }
+                    if (!isAdmin(session)) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    if ("GET".equals(method)) {
+                        Map<String, String> query = parseQuery(exchange);
+                        writeHtml(exchange, HttpURLConnection.HTTP_OK,
+                                pageRenderer.renderUsersPage(userStore, query.get("ok"), query.get("error")));
+                        return;
+                    }
+                    String action = path.substring("/admin/users/".length());
+                    Map<String, String> form = parseForm(exchange);
+                    String username = form.get("username");
+                    try {
+                        if ("add".equals(action)) {
+                            userStore.addUser(username, form.get("role"));
+                            redirect(exchange, "/admin/users?ok=" + urlParam("User added: " + username.trim()
+                                    + " (password is set on their first login)"));
+                        } else if ("delete".equals(action)) {
+                            userStore.removeUser(username);
+                            sessionManager.invalidateUser(username.trim());
+                            redirect(exchange, "/admin/users?ok=" + urlParam("User deleted: " + username.trim()));
+                        } else if ("role".equals(action)) {
+                            userStore.setRole(username, form.get("role"));
+                            // The new role takes effect at next login — kill live sessions now so a
+                            // demoted admin doesn't keep an admin session for up to 8h.
+                            sessionManager.invalidateUser(username.trim());
+                            redirect(exchange, "/admin/users?ok=" + urlParam("Role updated: " + username.trim()
+                                    + " (they must log in again)"));
+                        } else if ("reset-password".equals(action)) {
+                            userStore.clearPassword(username);
+                            sessionManager.invalidateUser(username.trim());
+                            redirect(exchange, "/admin/users?ok=" + urlParam("Password reset: " + username.trim()
+                                    + " sets a new password on their next login"));
+                        } else {
+                            throw new IllegalArgumentException("Unknown user action: " + action);
+                        }
+                    } catch (IllegalArgumentException e) {
+                        // Validation errors (duplicate, unknown user, last-admin guard) land back on
+                        // the users page as a callout instead of a bare error page.
+                        redirect(exchange, "/admin/users?error=" + urlParam(e.getMessage()));
+                    }
+                    return;
+                }
                 if ("POST".equals(method) && path.startsWith("/admin/scripts/restore/")) {
                     String scriptId = path.substring("/admin/scripts/restore/".length());
                     if (scriptId.length() == 0) {

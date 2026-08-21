@@ -113,6 +113,23 @@ public class AdminSessionManager {
         return getSession(token) != null;
     }
 
+    /**
+     * Invalidate every live session belonging to a username. Called when an admin deletes a user,
+     * changes their role, or resets their password — without this, a deleted user's cookie would
+     * stay valid for up to the session timeout, and a role change would not take effect until then.
+     */
+    public void invalidateUser(String username) {
+        if (username == null) {
+            return;
+        }
+        Iterator<Map.Entry<String, Session>> it = sessions.entrySet().iterator();
+        while (it.hasNext()) {
+            if (username.equals(it.next().getValue().username)) {
+                it.remove();
+            }
+        }
+    }
+
     /** Remove expired sessions (called periodically). */
     public void cleanExpired() {
         long now = System.currentTimeMillis();

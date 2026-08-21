@@ -366,6 +366,110 @@ public class TeeBoxMultiUserUiTest {
     // ---- helpers ----
 
     /** GET returning the response body (authed). */
+    @Test
+    public void userManagementIsAdminOnlyAndDrivesTheFullLifecycle() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-usermgmt").toFile();
+        writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"},"
+                + "{\"username\":\"alice\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            // --- regular user: no menu, no page, no actions ---
+            String alice = login(base, "alice", "alice-pw");
+            Assert.assertNotNull(alice);
+            Assert.assertFalse("regular user must not see the Users menu",
+                    getBody(base, "/admin", alice).contains("href='/admin/users'"));
+            assertForbidden("regular user GET /admin/users", get(base, "/admin/users", alice));
+            assertForbidden("regular user POST add", postForm(base, "/admin/users/add",
+                    "username=mallory&role=admin", alice));
+
+            // --- admin: menu + page ---
+            String admin = login(base, "admin", "admin-pw");
+            Assert.assertNotNull(admin);
+            Assert.assertTrue("admin sees the Users menu",
+                    getBody(base, "/admin", admin).contains("href='/admin/users'"));
+            String page = getBody(base, "/admin/users", admin);
+            Assert.assertTrue("users page lists alice", page.contains("alice"));
+
+            // --- add: new user can log in (password set on first login) ---
+            assertRedirect("admin adds bob", postForm(base, "/admin/users/add",
+                    "username=bob&role=user", admin));
+            Assert.assertTrue("users page lists bob",
+                    getBody(base, "/admin/users", admin).contains("bob"));
+            String bob = login(base, "bob", "bob-pw");
+            Assert.assertNotNull("added user logs in (first login)", bob);
+
+            // Validation errors land back on the page as ?error=
+            String dup = postFormLocation(base, "/admin/users/add", "username=bob&role=user", admin);
+            Assert.assertTrue("duplicate add -> error callout, got " + dup,
+                    dup != null && dup.startsWith("/admin/users?error="));
+            String badName = postFormLocation(base, "/admin/users/add", "username=" + enc("no spaces!") + "&role=user", admin);
+            Assert.assertTrue("invalid username -> error callout, got " + badName,
+                    badName != null && badName.startsWith("/admin/users?error="));
+
+            // --- last-admin guard: sole admin can be neither deleted nor demoted ---
+            String delGuard = postFormLocation(base, "/admin/users/delete", "username=admin", admin);
+            Assert.assertTrue("deleting the last admin is rejected, got " + delGuard,
+                    delGuard != null && delGuard.startsWith("/admin/users?error="));
+            String demoteGuard = postFormLocation(base, "/admin/users/role", "username=admin&role=user", admin);
+            Assert.assertTrue("demoting the last admin is rejected, got " + demoteGuard,
+                    demoteGuard != null && demoteGuard.startsWith("/admin/users?error="));
+            Assert.assertEquals("admin session still valid after rejected self-demote",
+                    200, get(base, "/admin/users", admin));
+
+            // --- role change: promotion invalidates live sessions, takes effect on re-login ---
+            assertRedirect("admin promotes bob", postForm(base, "/admin/users/role",
+                    "username=bob&role=admin", admin));
+            assertRedirect("bob's old session is dead after role change", get(base, "/admin", bob));
+            bob = login(base, "bob", "bob-pw");
+            Assert.assertNotNull("bob re-login after promotion", bob);
+            Assert.assertEquals("bob is now an admin (can open user management)",
+                    200, get(base, "/admin/users", bob));
+
+            // --- password reset: credential dropped, next login sets a new one ---
+            assertRedirect("admin resets alice's password", postForm(base, "/admin/users/reset-password",
+                    "username=alice", admin));
+            assertRedirect("alice's old session is dead after reset", get(base, "/admin", alice));
+            Assert.assertNotNull("alice logs in with a NEW password (first-login again)",
+                    login(base, "alice", "brand-new-pw"));
+
+            // --- delete: roster entry + credential gone, sessions dead ---
+            assertRedirect("admin deletes alice", postForm(base, "/admin/users/delete",
+                    "username=alice", admin));
+            Assert.assertNull("deleted user cannot log in", login(base, "alice", "brand-new-pw"));
+            Assert.assertFalse("users page no longer lists alice",
+                    getBody(base, "/admin/users", admin).contains("alice"));
+
+            // --- self-delete is allowed when another admin remains ---
+            assertRedirect("admin deletes their own account (bob is admin)",
+                    postForm(base, "/admin/users/delete", "username=admin", admin));
+            assertRedirect("admin's session is dead after self-delete", get(base, "/admin", admin));
+            Assert.assertNull("deleted admin cannot log in", login(base, "admin", "admin-pw"));
+            String finalPage = getBody(base, "/admin/users", bob);
+            Assert.assertTrue("bob (sole remaining admin) still manages users", finalPage.contains("bob"));
+            Assert.assertFalse(finalPage.contains("admin ("));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    public void openModeHasNoUserManagement() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-usermgmt-open").toFile();
+        TeeBoxServer server = startServer(dataDir);   // no roster: UI fully open
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            Assert.assertFalse("open mode shows no Users menu",
+                    getBody(base, "/admin", null).contains("href='/admin/users'"));
+            Assert.assertEquals("open mode GET /admin/users is unavailable",
+                    409, get(base, "/admin/users", null));
+            Assert.assertEquals("open mode POST add is unavailable",
+                    409, postForm(base, "/admin/users/add", "username=x&role=admin", null));
+        } finally {
+            server.stop();
+        }
+    }
+
     private String getBody(String base, String path, String cookie) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(base + path).openConnection();
         conn.setInstanceFollowRedirects(false);

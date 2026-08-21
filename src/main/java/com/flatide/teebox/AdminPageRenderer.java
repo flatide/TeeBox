@@ -72,6 +72,12 @@ public class AdminPageRenderer {
         return !loginRequired || UserStore.ROLE_ADMIN.equals(currentRole);
     }
 
+    /** A logged-in admin in roster mode — the only viewer who sees/uses user management. Open mode
+     *  deliberately does NOT count: it has no users to manage. */
+    private boolean isRosterAdmin() {
+        return loginRequired && UserStore.ROLE_ADMIN.equals(currentRole);
+    }
+
     /** Whether the current viewer may mutate/run this script (open mode, admin, or owner). */
     private boolean canModify(ScriptInfo script) {
         if (isReadOnly()) {
@@ -131,6 +137,11 @@ public class AdminPageRenderer {
         sb.append("<a href='/admin' class='top-nav-link").append("dashboard".equals(activePage) ? " active" : "").append("'>Dashboard</a>");
         sb.append("<a href='/admin/scripts' class='top-nav-link").append("scripts".equals(activePage) ? " active" : "").append("'>Scripts</a>");
         sb.append("<a href='/admin/runs' class='top-nav-link").append("runs".equals(activePage) ? " active" : "").append("'>Runs</a>");
+        // Admin-only user management — shown only to a logged-in admin in roster mode (open mode has
+        // no users; the server gates the routes the same way, this is display only).
+        if (isRosterAdmin()) {
+            sb.append("<a href='/admin/users' class='top-nav-link").append("users".equals(activePage) ? " active" : "").append("'>Users</a>");
+        }
         sb.append("</div>");
         sb.append("<div class='top-nav-meta' id='nav-counts'>");
         sb.append("<span class='tag tag-nav'>active ").append(runManager.getActiveCount()).append("</span> ");
@@ -1249,6 +1260,89 @@ public class AdminPageRenderer {
         return sb.toString();
     }
 
+    /**
+     * Admin-only user management: roster listing with role/reset/delete actions plus an add-user
+     * form. Reached only via the server's roster-mode + admin gate; renders live UserStore state.
+     */
+    public String renderUsersPage(UserStore userStore, String ok, String error) {
+        List<UserStore.User> users = userStore.listUsers();
+        StringBuilder sb = new StringBuilder();
+        sb.append(pageStart("Users - TeeBox Admin"));
+        sb.append(renderTopNav("users"));
+        sb.append("<div class='nav'><span>User Management</span></div>");
+        if (ok != null && ok.length() > 0) {
+            sb.append("<div class='callout callout-ok'>").append(escape(ok)).append("</div>");
+        }
+        if (error != null && error.length() > 0) {
+            sb.append("<div class='callout callout-err'>").append(escape(error)).append("</div>");
+        }
+
+        sb.append("<div class='card'><h2>Users (").append(users.size()).append(")</h2>");
+        sb.append("<table class='data-table'><thead><tr><th>Username</th><th>Role</th><th>Password</th><th>Actions</th></tr></thead><tbody>");
+        for (UserStore.User user : users) {
+            boolean self = user.username.equals(currentUser);
+            sb.append("<tr><td class='mono'>").append(escape(user.username));
+            if (self) {
+                sb.append(" <span class='dim'>(you)</span>");
+            }
+            sb.append("</td>");
+            sb.append("<td>").append(user.isAdmin() ? "<span class='tag tag-nav'>admin</span>" : "user").append("</td>");
+            sb.append("<td>").append(userStore.hasPassword(user.username)
+                    ? "set" : "<span class='dim'>set on first login</span>").append("</td>");
+            sb.append("<td><div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap;'>");
+            // Role change (select + submit in one small form)
+            sb.append("<form method='post' action='/admin/users/role' style='display:inline;'");
+            if (self) {
+                sb.append(" onsubmit='return confirm(\"Change your OWN role? You will be logged out immediately.\")'");
+            }
+            sb.append(">");
+            sb.append("<input type='hidden' name='username' value='").append(escape(user.username)).append("'/>");
+            sb.append("<select name='role' style='font-size:12px;'>");
+            sb.append("<option value='user'").append(!user.isAdmin() ? " selected" : "").append(">user</option>");
+            sb.append("<option value='admin'").append(user.isAdmin() ? " selected" : "").append(">admin</option>");
+            sb.append("</select> ");
+            sb.append("<button type='submit' class='btn btn-sm'>Set role</button>");
+            sb.append("</form>");
+            // Password reset (drops the credential; next login records a new password)
+            sb.append("<form method='post' action='/admin/users/reset-password' style='display:inline;' onsubmit='return confirm(\"Reset password for ")
+              .append(escape(user.username).replace("'", "\\'"))
+              .append("? Their sessions end now and the next login sets a new password.\")'>");
+            sb.append("<input type='hidden' name='username' value='").append(escape(user.username)).append("'/>");
+            sb.append("<button type='submit' class='btn btn-sm'>Reset password</button>");
+            sb.append("</form>");
+            // Delete (roster entry + credential; live sessions are invalidated)
+            sb.append("<form method='post' action='/admin/users/delete' style='display:inline;' onsubmit='return confirm(\"Delete user ")
+              .append(escape(user.username).replace("'", "\\'"))
+              .append(self ? "? This is YOUR account - you will be logged out." : "?")
+              .append("\")'>");
+            sb.append("<input type='hidden' name='username' value='").append(escape(user.username)).append("'/>");
+            sb.append("<button type='submit' class='btn-danger btn-sm'>Delete</button>");
+            sb.append("</form>");
+            sb.append("</div></td></tr>");
+        }
+        sb.append("</tbody></table>");
+        sb.append("<p class='dim' style='font-size:12px;margin-top:10px;'>Role changes, password resets and deletions end the user's live sessions immediately. ");
+        sb.append("The last remaining admin cannot be deleted or demoted. ");
+        sb.append("Hand-edits to <span class='mono'>users.json</span> keep working and are picked up live.</p>");
+        sb.append("</div>");
+
+        sb.append("<div class='card'><h2>Add User</h2>");
+        sb.append("<form method='post' action='/admin/users/add' class='form-grid' style='max-width:420px;'>");
+        sb.append("<div class='form-row'><label>Username <span class='dim'>(letters, digits, . _ -)</span></label>");
+        sb.append("<input type='text' name='username' required pattern='[A-Za-z0-9._-]{1,64}'/></div>");
+        sb.append("<div class='form-row'><label>Role</label><select name='role'>");
+        sb.append("<option value='user' selected>user</option>");
+        sb.append("<option value='admin'>admin</option>");
+        sb.append("</select></div>");
+        sb.append("<div class='form-row-inline'><button type='submit'>Add user</button></div>");
+        sb.append("</form>");
+        sb.append("<p class='dim' style='font-size:12px;margin-top:10px;'>No password is set here - the user registers their own password on first login.</p>");
+        sb.append("</div>");
+
+        sb.append(pageEnd());
+        return sb.toString();
+    }
+
     public String renderErrorPage(String title, String message) {
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart(title));
@@ -1518,6 +1612,8 @@ public class AdminPageRenderer {
         sb.append(".syntax-ok{margin:8px 0 0;padding:10px 12px;border-radius:6px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-size:13px;white-space:pre-wrap;} ");
         sb.append(".syntax-err{margin:8px 0 0;padding:10px 12px;border-radius:6px;background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;} ");
         sb.append(".callout-warn{background:#fff7ed;border-color:#fdba74;color:#9a3412;} ");
+        sb.append(".callout-ok{background:#f0fdf4;border-color:#86efac;color:#166534;} ");
+        sb.append(".callout-err{background:#fef2f2;border-color:#fca5a5;color:#b91c1c;} ");
         sb.append(".nav{display:flex;gap:12px;align-items:center;margin-bottom:16px;font-size:13px;} ");
         sb.append(".nav-sep{color:#cbd5e1;} ");
         sb.append("pre{background:#1e293b;color:#e2e8f0;padding:16px;border-radius:6px;overflow-x:auto;overflow-y:auto;max-height:600px;font-size:12px;");

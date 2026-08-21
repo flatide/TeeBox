@@ -4,6 +4,22 @@ All notable changes to TeeBox are documented here.
 
 ## Unreleased
 
+- **Admin UI: user management** (`/admin/users`) — a logged-in **admin** gets a **Users** menu
+  for the roster: add users (role `user`/`admin`; no password entered — the new user sets it on
+  first login, per the existing flow), change roles, reset passwords (drops the credential so
+  the next login records a new one), and delete users (roster entry + credential). Role
+  changes, resets and deletions **invalidate the target's live sessions immediately** — a
+  deleted user's cookie no longer rides out the 8h session window, and a demoted admin loses
+  admin powers now, not at next login. The **last remaining admin cannot be deleted or
+  demoted** (UI lockout guard); self-service actions on your own account are allowed (with a
+  confirm) when another admin remains. Server-side gates: roster mode + admin session required
+  on every route (403 for regular users, 409 in open mode — no users to manage); the menu is
+  display-only sugar. Roster/credential writes are now atomic (temp + rename) since the UI
+  writes them — a crash mid-write can no longer truncate `users.json` (whose parser fails
+  closed, which would have locked every operator out). Hand-editing `users.json` keeps working
+  and is picked up live. Ops guides updated (and their stale "GET pages stay viewable without
+  login" claim corrected — the whole `/admin` UI has been login-gated since the multi-user
+  release).
 - **Editor: one click on Save saves — it no longer takes two.** The save interception runs the
   syntax check and then resubmits the form, but the client-side check (the primary path since
   it moved into the browser) is synchronous, so the resubmitting `submitter.click()` still ran
