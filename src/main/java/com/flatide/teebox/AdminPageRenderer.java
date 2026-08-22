@@ -659,6 +659,7 @@ public class AdminPageRenderer {
             sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/debug' ");
             sb.append("style='display:inline;margin-left:6px' ");
             sb.append("onsubmit=\"return confirm('Re-run this run under the debugger? ");
+            sb.append("Runs the CURRENT content of this script version (edits since the failure included). ");
             sb.append("SHELL/HTTP/file side effects will execute again.');\">");
             sb.append("<button type='submit' class='btn btn-sm'>Debug Re-run</button></form>");
         }
@@ -837,7 +838,9 @@ public class AdminPageRenderer {
         sb.append("</div>");
 
         sb.append("<div class='callout callout-warn'>This debug session <b>re-executes the script</b> — ");
-        sb.append("SHELL/HTTP/file side effects happen again. Breaks fire on the main thread only ");
+        sb.append("SHELL/HTTP/file side effects happen again. It runs the <b>current</b> content of the ");
+        sb.append("script version, so edits made after the original failure are included (by design — ");
+        sb.append("fix, then re-debug). Breaks fire on the main thread only ");
         sb.append("(<code>thread</code> worker and <code>monitor</code> bodies do not pause).</div>");
 
         sb.append("<div class='card'>");
@@ -891,7 +894,12 @@ public class AdminPageRenderer {
         sb.append("x.setRequestHeader('Content-Type','application/json');");
         sb.append("x.onreadystatechange=function(){if(x.readyState===4){var r=null;try{r=JSON.parse(x.responseText);}catch(e){}cb(x.status,r);}};");
         sb.append("x.send(JSON.stringify(body));}");
-        sb.append("window.dbgCmd=function(op,source){post(base+'/command',{op:op,source:source||null},function(st,r){");
+        sb.append("window.dbgCmd=function(op,source){");
+        // Disable the resume buttons the moment one is sent: a double-click would queue a second
+        // resume that the server then refuses as superseded — don't even let it be sent.
+        sb.append("if(op!=='eval'){var ops=['continue','stepOver','stepIn','stepOut'];");
+        sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=true;}}");
+        sb.append("post(base+'/command',{op:op,source:source||null},function(st,r){");
         sb.append("if(op==='eval'){logLine('> '+source);");
         sb.append("if(r&&r.error){logLine('! '+r.error);}");
         sb.append("else if(r&&r.timedOut){logLine('… still evaluating (long-running eval keeps the session busy)');}");

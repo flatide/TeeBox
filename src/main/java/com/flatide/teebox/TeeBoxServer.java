@@ -669,7 +669,11 @@ public class TeeBoxServer {
                                 String source = body.get("source") instanceof String ? (String) body.get("source") : null;
                                 result = debugSessionManager.command(sessionId, op, source);
                             } else {
-                                result = debugSessionManager.setBreakpoints(sessionId, toIntList(body.get("lines")));
+                                List<Integer> lines = toIntList(body.get("lines"));
+                                if (lines == null) {
+                                    throw new IllegalArgumentException("lines must be an array of line numbers");
+                                }
+                                result = debugSessionManager.setBreakpoints(sessionId, lines);
                             }
                             writeJson(exchange, HttpURLConnection.HTTP_OK, result);
                         } catch (IllegalArgumentException e) {
@@ -1149,12 +1153,16 @@ public class TeeBoxServer {
                 writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
                 return;
             }
+            // Body is optional ({"breakpoints":[..]} adds to the auto error-line breakpoint) —
+            // but only ABSENCE is optional: this endpoint re-executes a script with real side
+            // effects, so a malformed/oversize body is a 400, never treated as "no body".
+            Map<String, Object> body = parseJsonBodyOptional(exchange);
             List<Integer> breakpoints = null;
-            try {   // body is optional: {"breakpoints":[..]} adds to the auto error-line breakpoint
-                Map<String, Object> body = parseJsonBody(exchange);
+            if (body != null && body.containsKey("breakpoints")) {
                 breakpoints = toIntList(body.get("breakpoints"));
-            } catch (Exception ignore) {
-                // no body — auto breakpoint only
+                if (breakpoints == null) {
+                    throw new IllegalArgumentException("breakpoints must be an array of line numbers");
+                }
             }
             DebugSessionManager.Session session = debugSessionManager.open(runId, "admin", breakpoints);
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, debugSessionManager.statusMap(session));
@@ -1186,8 +1194,25 @@ public class TeeBoxServer {
                     return;
                 }
                 Map<String, Object> body = parseJsonBody(exchange);
+                List<Integer> lines = toIntList(body.get("lines"));
+                if (lines == null) {
+                    throw new IllegalArgumentException("lines must be an array of line numbers");
+                }
                 writeJson(exchange, HttpURLConnection.HTTP_OK,
-                    debugSessionManager.setBreakpoints(sessionId, toIntList(body.get("lines"))));
+                    debugSessionManager.setBreakpoints(sessionId, lines));
+                return;
+            }
+            if ("GET".equals(method) && suffix.contains("/command/")) {
+                // Outcome of a command whose synchronous wait timed out (retrying would double-run it).
+                int idx = suffix.indexOf("/command/");
+                String sessionId = suffix.substring(0, idx);
+                String commandId = suffix.substring(idx + "/command/".length());
+                if (debugSessionManager.find(sessionId) == null) {
+                    writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Debug session not found"));
+                    return;
+                }
+                writeJson(exchange, HttpURLConnection.HTTP_OK,
+                    debugSessionManager.commandResult(sessionId, commandId));
                 return;
             }
             if ("GET".equals(method)) {
@@ -1553,8 +1578,29 @@ public class TeeBoxServer {
         if (body == null || body.trim().length() == 0) {
             throw new IllegalArgumentException("Request body is required");
         }
+        return parseJsonObject(body);
+    }
+
+    /** Like {@link #parseJsonBody} but an EMPTY body is legitimate (returns null); a non-empty
+     *  malformed one is still a client error — never silently treated as "no body". */
+    private Map<String, Object> parseJsonBodyOptional(HttpExchange exchange) throws IOException {
+        String body = readBody(exchange);
+        if (body == null || body.trim().length() == 0) {
+            return null;
+        }
+        return parseJsonObject(body);
+    }
+
+    /** Malformed JSON is the caller's mistake — a 400, not a 500 (Gson's parse exception is a
+     *  RuntimeException that would otherwise fall through to the server-error arm). */
+    private Map<String, Object> parseJsonObject(String body) {
         Type type = new TypeToken<Map<String, Object>>() {}.getType();
-        Map<String, Object> raw = gson.fromJson(body, type);
+        Map<String, Object> raw;
+        try {
+            raw = gson.fromJson(body, type);
+        } catch (com.google.gson.JsonSyntaxException e) {
+            throw new IllegalArgumentException("Invalid JSON body");
+        }
         if (raw == null) {
             throw new IllegalArgumentException("Invalid JSON body");
         }
@@ -2163,16 +2209,18 @@ public class TeeBoxServer {
         }
     }
 
-    /** JSON array of numbers → Integer list (non-numbers skipped); null when not an array. */
+    /** JSON array of numbers → Integer list; null when not an array or any element is not a
+     *  number (callers turn null into a 400 — a malformed list must not half-apply). */
     private static List<Integer> toIntList(Object value) {
         if (!(value instanceof List)) {
             return null;
         }
         List<Integer> result = new ArrayList<Integer>();
         for (Object element : (List<?>) value) {
-            if (element instanceof Number) {
-                result.add(Integer.valueOf(((Number) element).intValue()));
+            if (!(element instanceof Number)) {
+                return null;
             }
+            result.add(Integer.valueOf(((Number) element).intValue()));
         }
         return result;
     }

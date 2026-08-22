@@ -2,6 +2,35 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.25.1
+
+Review hardening of the 1.25.0 debug feature — three fixes plus one documented decision:
+
+- **Documented decision: a debug re-run executes the CURRENT content of the recorded script
+  version.** Editing the version after the failure and then re-debugging is a supported
+  workflow, not a fidelity bug (user decision; the eventual goal is editing the source from
+  within a debug session and re-running). Consequence: the failing-line auto breakpoint assumes
+  the text hasn't moved. Stated in the UI (confirm dialog + console banner) and pinned by test.
+  The related real race IS fixed: the source run's properties/settings are now copied under the
+  same monitor as the archive check, so the maintenance archiver can no longer clear the
+  properties between check and copy (which would have replayed empty inputs).
+- **Duplicate/stale commands can no longer consume a later pause.** Every pause bumps a
+  generation; a command carries the generation it was issued against, and the handler refuses
+  (as `conflict`) any non-quit command from an earlier pause — a double-sent Continue no longer
+  skips the next breakpoint, and a retried eval cannot run in the wrong frame. Every command
+  response now carries a `commandId`; a command whose 15s wait timed out stays queued and its
+  outcome is queryable via `GET /api/admin/debug/{sid}/command/{commandId}` instead of being
+  retried (double-executed). The console UI also disables the resume buttons the moment one is
+  clicked.
+- **open/shutdown race closed.** The shutdown flag flip + debug-executor close now serialize
+  with `open()`'s prepare+submit under the same lock, and a submit that still loses the race
+  terminalizes its already-registered run (CANCELLED) instead of leaving it QUEUED forever.
+- **Malformed debug requests are 400s, never "no body".** The open endpoint used to swallow any
+  body error (broken JSON, wrong `breakpoints` type, oversize) and proceed to execute the
+  script; now only a genuinely empty body means "auto breakpoint only". Breakpoint lists reject
+  non-numeric elements outright (a malformed list must not half-apply), and malformed JSON on
+  any debug endpoint (and `parseJsonBody` users generally) is a 400 rather than a 500.
+
 ## 1.25.0
 
 - **Interactive debug re-runs of finished runs** (requires the propertee2 0.26.0 engine — its

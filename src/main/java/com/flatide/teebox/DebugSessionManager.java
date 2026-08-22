@@ -137,6 +137,9 @@ public class DebugSessionManager {
                 });
             } catch (RejectedExecutionException e) {
                 sessions.remove(session.sessionId);
+                // The run was already registered — terminalize it, or it sits QUEUED forever.
+                runManager.abandonDebugRun(finalTarget.run,
+                    "Server shutting down — debug session rejected before start");
                 throw new IllegalStateException("Server is shutting down; debug sessions are rejected");
             }
             TeeBoxLog.info("DebugSession", "Opened " + session.sessionId + " re-running "
@@ -223,8 +226,13 @@ public class DebugSessionManager {
         if (!Session.PAUSED.equals(session.state)) {
             throw new IllegalStateException("Debug session is not paused (state " + session.state + ")");
         }
-        Command cmd = new Command(kind, source);
+        // Read the generation AFTER the pause check: if the session resumes in between, the
+        // command carries the old generation and the pump refuses it at the next pause instead
+        // of applying it there (duplicate-Continue / retried-eval guard).
+        Command cmd = new Command(kind, source,
+            "c" + session.commandSeq.incrementAndGet(), session.pauseGeneration);
         session.commands.add(cmd);
+        result.put("commandId", cmd.commandId);
         boolean done;
         try {
             done = cmd.done.await(COMMAND_WAIT_MS, TimeUnit.MILLISECONDS);
@@ -235,7 +243,14 @@ public class DebugSessionManager {
         if (!done) {
             result.put("timedOut", Boolean.TRUE);
             result.put("message", "Command not finished after " + COMMAND_WAIT_MS
-                + " ms — it stays queued and executes when the handler reaches it");
+                + " ms — it stays queued; fetch the outcome later via GET .../command/"
+                + cmd.commandId + " instead of retrying");
+            return result;
+        }
+        if (cmd.conflict) {
+            result.put("accepted", Boolean.FALSE);
+            result.put("conflict", Boolean.TRUE);
+            result.put("error", cmd.error);
             return result;
         }
         result.put("accepted", Boolean.TRUE);
@@ -245,6 +260,37 @@ public class DebugSessionManager {
             } else {
                 result.put("result", cmd.result);
             }
+        }
+        return result;
+    }
+
+    /**
+     * The outcome of an earlier command by id — for callers whose {@link #command} wait timed out
+     * (retrying a queued command would double-execute it). {@code done=false} means still queued/
+     * executing, or an unknown id (indistinguishable by design: results are bounded).
+     */
+    public Map<String, Object> commandResult(String sessionId, String commandId) {
+        Session session = find(sessionId);
+        if (session == null) {
+            throw new IllegalArgumentException("Debug session not found: " + sessionId);
+        }
+        session.touch();
+        Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("sessionId", session.sessionId);
+        result.put("commandId", commandId);
+        Command cmd = commandId != null ? session.commandResults.get(commandId) : null;
+        if (cmd == null) {
+            result.put("done", Boolean.FALSE);
+            return result;
+        }
+        result.put("done", Boolean.TRUE);
+        if (cmd.conflict) {
+            result.put("conflict", Boolean.TRUE);
+        }
+        if (cmd.error != null) {
+            result.put("error", cmd.error);
+        } else if (cmd.kind == Command.EVAL) {
+            result.put("result", cmd.result);
         }
         return result;
     }
@@ -304,13 +350,18 @@ public class DebugSessionManager {
     /** Kill every live session and stop the executor. Call BEFORE RunManager.shutdown() — the
      *  unwinding debug runs still use the shared task engine and registries. */
     public void shutdown() {
-        shutdownRequested = true;
+        // Flag flip + executor close under the SAME lock open() holds across prepare+submit:
+        // otherwise an open could pass the flag check, register its run, and then hit the closed
+        // executor — leaving the registered run QUEUED forever (the catch below is belt-and-braces).
+        synchronized (openLock) {
+            shutdownRequested = true;
+            debugExecutor.shutdown();   // already-submitted sessions still run; kills unwind them
+        }
         for (Session session : sessions.values()) {
             if (!Session.ENDED.equals(session.state)) {
                 kill(session.sessionId, "Server shutting down");
             }
         }
-        debugExecutor.shutdown();
         try {
             if (!debugExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
                 debugExecutor.shutdownNow();
@@ -341,8 +392,23 @@ public class DebugSessionManager {
         volatile String state = RUNNING;
         /** Immutable pause description (built on the fiber, replaced wholesale). Null unless paused. */
         volatile Map<String, Object> paused;
+        /** Bumped by the fiber at each pause. A queued command carries the generation it was
+         *  issued against; the pump refuses a command from an earlier pause, so a duplicate
+         *  Continue (or a retried eval) can never silently consume a LATER pause. */
+        volatile long pauseGeneration;
         volatile long lastActivityAt = System.currentTimeMillis();
         volatile long endedAt;
+        final java.util.concurrent.atomic.AtomicLong commandSeq =
+            new java.util.concurrent.atomic.AtomicLong();
+        /** Finished commands by id, oldest evicted — lets a caller whose command() wait timed out
+         *  re-query the eventual outcome instead of retrying (and double-executing) it. */
+        final Map<String, Command> commandResults = java.util.Collections.synchronizedMap(
+            new LinkedHashMap<String, Command>(16, 0.75f, false) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Command> eldest) {
+                    return size() > 64;
+                }
+            });
 
         Session(String sessionId, String runId, String sourceRunId) {
             this.sessionId = sessionId;
@@ -354,9 +420,10 @@ public class DebugSessionManager {
             lastActivityAt = System.currentTimeMillis();
         }
 
-        /** Enqueue a QUIT so a handler blocked at a break unwinds (see class doc, kill semantics). */
+        /** Enqueue a QUIT so a handler blocked at a break unwinds (see class doc, kill semantics).
+         *  Generation-exempt: a kill must land no matter which pause the handler is in. */
         void wakeForCancel() {
-            commands.add(new Command(Command.QUIT, null));
+            commands.add(new Command(Command.QUIT, null, "cancel-" + commandSeq.incrementAndGet(), -1L));
         }
 
         /** The RunManager wiring for this session's run. */
@@ -392,13 +459,19 @@ public class DebugSessionManager {
 
         final int kind;
         final String source;
+        final String commandId;
+        /** The pause this command was issued against ({@link Session#pauseGeneration}; -1 = any). */
+        final long generation;
         final CountDownLatch done = new CountDownLatch(1);
-        volatile String result;   // eval echo in display form (null = no echo)
-        volatile String error;    // eval error message
+        volatile String result;    // eval echo in display form (null = no echo)
+        volatile String error;     // eval/refusal error message
+        volatile boolean conflict; // refused: issued against an earlier pause
 
-        Command(int kind, String source) {
+        Command(int kind, String source, String commandId, long generation) {
             this.kind = kind;
             this.source = source;
+            this.commandId = commandId;
+            this.generation = generation;
         }
     }
 
@@ -412,6 +485,7 @@ public class DebugSessionManager {
 
         @Override
         public void onBreak(DebugFrame frame) {
+            session.pauseGeneration++;   // single writer: only this fiber pauses the session
             session.paused = buildSnapshot(frame);
             session.state = Session.PAUSED;
             while (true) {
@@ -427,6 +501,15 @@ public class DebugSessionManager {
                     return;
                 }
                 session.touch();
+                if (cmd.kind != Command.QUIT && cmd.generation != session.pauseGeneration) {
+                    // Issued against an EARLIER pause (e.g. a duplicate Continue, or a retried
+                    // eval) — executing it here would silently consume this pause / run in the
+                    // wrong frame. Refuse it and keep waiting.
+                    cmd.conflict = true;
+                    cmd.error = "Superseded: the session resumed and paused again after this command was issued";
+                    finishCommand(session, cmd);
+                    continue;
+                }
                 switch (cmd.kind) {
                     case Command.EVAL:
                         try {
@@ -438,7 +521,7 @@ public class DebugSessionManager {
                         }
                         // The eval may have written locals/globals — republish the snapshot.
                         session.paused = buildSnapshot(frame);
-                        cmd.done.countDown();
+                        finishCommand(session, cmd);
                         break;   // stay paused
                     case Command.STEP_OVER:
                         frame.stepOver();
@@ -455,7 +538,7 @@ public class DebugSessionManager {
                     case Command.QUIT:
                         session.state = Session.RUNNING;
                         session.paused = null;
-                        cmd.done.countDown();
+                        finishCommand(session, cmd);
                         frame.quit();   // throws DebugQuit — unwinds the run
                         return;
                     case Command.CONTINUE:
@@ -469,8 +552,15 @@ public class DebugSessionManager {
         private void resume(Command cmd) {
             session.state = Session.RUNNING;
             session.paused = null;
-            cmd.done.countDown();
+            finishCommand(session, cmd);
         }
+    }
+
+    /** Record the finished command for later {@link #commandResult} queries, then release the
+     *  waiter. Record-first: a caller woken by the latch must find the result already stored. */
+    private void finishCommand(Session session, Command cmd) {
+        session.commandResults.put(cmd.commandId, cmd);
+        cmd.done.countDown();
     }
 
     private void finalizeSession(Session session) {
@@ -484,7 +574,7 @@ public class DebugSessionManager {
                 break;
             }
             cmd.error = "Debug session ended";
-            cmd.done.countDown();
+            finishCommand(session, cmd);
         }
         RunInfo run = runManager.getRun(session.runId);
         TeeBoxLog.info("DebugSession", "Session " + session.sessionId + " ended — run "

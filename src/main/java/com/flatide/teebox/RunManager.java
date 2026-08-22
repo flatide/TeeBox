@@ -864,12 +864,19 @@ public class RunManager {
     }
 
     /**
-     * Build and register a debug re-run of a terminal run: same script <b>version</b>, same input
-     * properties, same iteration settings; a fresh runId with {@code debug=true}/{@code debugOf}.
-     * Deliberately exempt from the run timeout (a debug session pauses for as long as the operator
-     * thinks; DebugSessionManager's idle timeout owns abandonment) and from per-script concurrency
-     * (operator investigation must not queue behind production runs — the debug executor's own
-     * small cap bounds it). The caller submits the returned target to the debug executor.
+     * Build and register a debug re-run of a terminal run: the same script <b>version</b>, the
+     * source run's input properties, and its iteration settings; a fresh runId with
+     * {@code debug=true}/{@code debugOf}. The version executes by its <b>current stored
+     * content</b> — deliberately (user decision): editing the version after the failure and
+     * re-debugging the fix is a supported workflow. The trade-off is that the failing-line auto
+     * breakpoint assumes the text has not moved; a future step is editing the source from within
+     * a debug session and re-running it.
+     *
+     * <p>Deliberately exempt from the run timeout (a debug session pauses for as long as the
+     * operator thinks; DebugSessionManager's idle timeout owns abandonment) and from per-script
+     * concurrency (operator investigation must not queue behind production runs — the debug
+     * executor's own small cap bounds it). The caller submits the returned target to the debug
+     * executor.
      *
      * @throws IllegalArgumentException unknown run
      * @throws IllegalStateException    non-terminal or archived source (archiving drops the input
@@ -883,6 +890,9 @@ public class RunManager {
         if (source == null) {
             throw new IllegalArgumentException("Run not found: " + sourceRunId);
         }
+        Map<String, Object> sourceProperties;
+        int sourceMaxIterations;
+        String sourceIterationLimitBehavior;
         synchronized (source) {
             if (source.status == RunStatus.QUEUED || source.status == RunStatus.PENDING
                     || source.status == RunStatus.RUNNING) {
@@ -893,8 +903,14 @@ public class RunManager {
                 throw new IllegalStateException("Run " + sourceRunId + " is archived — its input "
                     + "properties were dropped, so a faithful debug re-run is no longer possible");
             }
+            // Copy the replay inputs under the SAME monitor as the archive check: the maintenance
+            // archiver clears properties under this monitor (RunRegistry.archiveRunLocked), so a
+            // check-then-copy without it could pass and still replay empty inputs.
+            sourceProperties = sanitizeProperties(source.properties);
+            sourceMaxIterations = source.maxIterations;
+            sourceIterationLimitBehavior = source.iterationLimitBehavior;
         }
-        // The failed version, not the active one: the point is to reproduce THAT run.
+        // The failed version, not the active one — but by its current content (see javadoc).
         ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolve(source.scriptId, source.version);
         RunInfo run = new RunInfo();
         run.runId = createRunId();
@@ -904,16 +920,22 @@ public class RunManager {
         run.scriptAbsolutePath = resolved.file.getAbsolutePath();
         run.status = RunStatus.QUEUED;
         run.createdAt = System.currentTimeMillis();
-        run.maxIterations = source.maxIterations;
-        run.iterationLimitBehavior = source.iterationLimitBehavior;
+        run.maxIterations = sourceMaxIterations;
+        run.iterationLimitBehavior = sourceIterationLimitBehavior;
         run.timeoutMs = 0;
-        run.properties = sanitizeProperties(source.properties);
+        run.properties = sourceProperties;
         run.submittedBy = requestedBy;
         run.origin = "debug";
         run.debug = true;
         run.debugOf = sourceRunId;
         runRegistry.register(run);
         return new DebugTarget(run, resolved.file);
+    }
+
+    /** Terminalize a prepared-but-never-started debug run (its submit raced a shutdown): without
+     *  this the registered run would sit QUEUED forever with nothing to ever execute it. */
+    public void abandonDebugRun(RunInfo run, String reason) {
+        runRegistry.markCancelled(run, reason);
     }
 
     /**

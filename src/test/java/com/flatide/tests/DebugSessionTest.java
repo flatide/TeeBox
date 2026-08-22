@@ -267,7 +267,148 @@ public class DebugSessionTest {
         }
     }
 
+    /** User decision (1.25.1): a debug re-run executes the CURRENT content of the recorded script
+     *  version — editing the version after the failure and re-debugging the fix is supported. */
+    @Test
+    public void debugRerunRunsTheVersionsCurrentContentByDesign() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            String sourceRunId = runFailingScript(testServer, "dbg_edit");
+            // Fix the SAME version in place, then debug re-run: the fixed content runs.
+            testServer.server.getRunManager().updateScriptVersionContent("dbg_edit", "v1",
+                "msg = \"hello \" + _PROPS.who\n" +
+                "PRINT(\"fixed\")\n" +
+                "PRINT(msg)\n");
+            Map<String, Object> session = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            String sessionId = (String) session.get("sessionId");
+            // The auto breakpoint (line 2, from the OLD failure) now lands on the edited statement.
+            Map<String, Object> paused = waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            Assert.assertEquals(2.0, pausedLine(paused), 0.0);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> frame = (Map<String, Object>) paused.get("paused");
+            Assert.assertTrue(String.valueOf(frame.get("statement")).contains("fixed"));
+            command(testServer, sessionId, "continue", null, 200);
+            Map<String, Object> ended = waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+            Assert.assertEquals("COMPLETED", ended.get("runStatus"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    /** A duplicate resume queued during one pause must NOT silently consume the next pause: the
+     *  pump refuses commands issued against an earlier pause generation. */
+    @Test
+    public void staleResumeCommandFromAnEarlierPauseIsRefusedNotApplied() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("dbg_stale", "v1",
+                "a = 1\nb = 2\nc = 3\nPRINT(c)\n", "stale", Arrays.asList("test"), true);
+            String sourceRunId = (String) client.submitRun("dbg_stale", null,
+                new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(client, sourceRunId, "COMPLETED", 10000L);
+
+            Map<String, Object> session = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug",
+                "{\"breakpoints\":[2,3]}", 201);
+            final String sessionId = (String) session.get("sessionId");
+            waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+
+            // Occupy the handler with a slow eval so two Continues can be queued in THIS pause.
+            final Map<String, Object>[] evalResult = newResultSlot();
+            final Map<String, Object>[] firstContinue = newResultSlot();
+            Thread evalThread = commandInBackground(testServer, sessionId, "eval", "SLEEP(1200)", evalResult);
+            Thread.sleep(300L);   // the pump is now inside the eval; state stays PAUSED
+            Thread continueThread = commandInBackground(testServer, sessionId, "continue", null, firstContinue);
+            Thread.sleep(100L);
+            // Second Continue: passes the PAUSED check (same pause), queued behind the first.
+            Map<String, Object> second = command(testServer, sessionId, "continue", null, 200);
+            evalThread.join(20000L);
+            continueThread.join(20000L);
+
+            // The first Continue resumed pause #1; the second was refused at pause #2 (line 3)
+            // instead of silently consuming it.
+            Assert.assertEquals(Boolean.TRUE, firstContinue[0].get("accepted"));
+            Assert.assertEquals("stale continue not refused: " + second,
+                Boolean.TRUE, second.get("conflict"));
+            Map<String, Object> paused = waitForPausedAtLine(testServer, sessionId, 3, 10000L);
+            Assert.assertNotNull(paused);
+
+            // The slow eval's outcome is queryable by command id (retry-free recovery from a
+            // command() wait timeout).
+            String evalCommandId = (String) evalResult[0].get("commandId");
+            Map<String, Object> outcome = getJsonMap(testServer.baseUrl
+                + "/api/admin/debug/" + sessionId + "/command/" + evalCommandId, 200);
+            Assert.assertEquals(Boolean.TRUE, outcome.get("done"));
+
+            command(testServer, sessionId, "continue", null, 200);
+            waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    /** The debug-open endpoint re-executes real side effects: only an ABSENT body may default to
+     *  auto-breakpoints — a malformed body must be a 400, never treated as "no body". */
+    @Test
+    public void malformedDebugRequestBodiesAreRejectedNotSilentlyIgnored() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            String sourceRunId = runFailingScript(testServer, "dbg_body");
+            String openUrl = testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug";
+            postJsonExpectingStatus(openUrl, "{broken", 400);
+            postJsonExpectingStatus(openUrl, "{\"breakpoints\":\"x\"}", 400);
+            postJsonExpectingStatus(openUrl, "{\"breakpoints\":[2,\"x\"]}", 400);
+
+            // An empty body IS legitimate (auto breakpoint only).
+            Map<String, Object> session = postJson(openUrl, "", 201);
+            String sessionId = (String) session.get("sessionId");
+            waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+
+            // Same strictness on the live endpoints: bad JSON / bad list shape are 400s and the
+            // session state is untouched.
+            postJsonExpectingStatus(testServer.baseUrl + "/api/admin/debug/" + sessionId + "/command",
+                "{broken", 400);
+            postJsonExpectingStatus(testServer.baseUrl + "/api/admin/debug/" + sessionId + "/breakpoints",
+                "{\"lines\":\"x\"}", 400);
+            Assert.assertEquals("PAUSED",
+                getJsonMap(testServer.baseUrl + "/api/admin/debug/" + sessionId, 200).get("state"));
+
+            command(testServer, sessionId, "quit", null, 200);
+            waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+        } finally {
+            testServer.close();
+        }
+    }
+
     // ===================== helpers =====================
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object>[] newResultSlot() {
+        return (Map<String, Object>[]) new Map[1];
+    }
+
+    /** Fire a command() call on a background thread, capturing its response into {@code slot[0]}. */
+    private Thread commandInBackground(final TestServer testServer, final String sessionId,
+                                       final String op, final String source,
+                                       final Map<String, Object>[] slot) {
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    slot[0] = command(testServer, sessionId, op, source, 200);
+                } catch (Throwable t) {
+                    Map<String, Object> error = new LinkedHashMap<String, Object>();
+                    error.put("threadError", String.valueOf(t));
+                    slot[0] = error;
+                }
+            }
+        });
+        thread.setDaemon(true);
+        thread.start();
+        return thread;
+    }
 
     /** Register + run the failing script (with props) and wait for FAILED; returns the runId. */
     private String runFailingScript(TestServer testServer, String scriptId) throws Exception {
