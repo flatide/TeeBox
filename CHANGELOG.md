@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.24.0
 
 - **Regular-user (`user` role) permissions tightened for runs, with a run origin identifier.**
   Every run now records **`origin`**: `"ui"` (submitted from the TeeBox admin UI) or `"api"`
