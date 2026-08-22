@@ -2,6 +2,21 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Regular-user (`user` role) permissions tightened for runs, with a run origin identifier.**
+  Every run now records **`origin`**: `"ui"` (submitted from the TeeBox admin UI) or `"api"`
+  (external client API); runs persisted before the field read back null and are treated like
+  external. Kill-tasks / Cancel in the admin UI now require, for a regular user, that the run
+  is **their own UI submission** (`origin == "ui"` and `submittedBy` == their username) — an
+  API-submitted run is admin-only in the UI even when it executes the user's own script (the
+  previous rule keyed on script ownership, which let a user kill external callers' runs). The
+  runs list shows a `ui`/`api` tag next to the submitter, the run detail page gains an Origin
+  field, and the run status/summary/result payloads carry `origin` alongside `submittedBy`.
+  Already enforced and unchanged: system functions (shutdown, user management) are admin-only,
+  and running/editing/deleting another user's script is denied by ownership. `/api/*` stays
+  token-gated and unrestricted.
+
 ## 1.23.0
 
 Hardening round from a code review — five high findings plus five medium, all confirmed and fixed:

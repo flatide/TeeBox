@@ -143,7 +143,9 @@ public class AdminPageRenderer {
         return canModify(info);
     }
 
-    /** Ownership check for a run/task, resolved via the run's script owner. */
+    /** Whether the viewer may kill/cancel a run (display only — the server is the gate). Admins:
+     *  any run. Regular users: only runs they submitted from the TeeBox UI themselves; API runs
+     *  (origin "api"/null) are admin-only even on their own scripts. */
     private boolean canModifyRunId(String runId) {
         if (isReadOnly()) {
             return false;
@@ -155,7 +157,7 @@ public class AdminPageRenderer {
         if (run == null) {
             return false;
         }
-        return canModifyScriptId(run.scriptId);
+        return "ui".equals(run.origin) && currentUser() != null && currentUser().equals(run.submittedBy);
     }
 
     private String ownerLabel(String owner) {
@@ -313,12 +315,18 @@ public class AdminPageRenderer {
                 sb.append(" <span class='tag' title='Instant run (immediate script — bypasses the global queue)'>instant</span>");
             }
             sb.append("</td>");
-            // Submitter identity (X-TeeBox-User header on API submits / admin-UI session username).
+            // Submitter identity (X-TeeBox-User header on API submits / admin-UI session username)
+            // + submission origin: ui (TeeBox admin UI) vs api (external client API).
             sb.append("<td class='mono'>");
             if (run.submittedBy != null && run.submittedBy.length() > 0) {
                 sb.append(escape(run.submittedBy));
             } else {
                 sb.append("<span class='dim'>&mdash;</span>");
+            }
+            if ("ui".equals(run.origin)) {
+                sb.append(" <span class='tag' title='Submitted from the TeeBox admin UI'>ui</span>");
+            } else if ("api".equals(run.origin)) {
+                sb.append(" <span class='tag' title='Submitted through the client API'>api</span>");
             }
             sb.append("</td>");
             List<String> taskStatuses = taskStatusesByRun.get(run.runId);
@@ -627,7 +635,7 @@ public class AdminPageRenderer {
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>").append(escape(runId)).append("</h2>");
-        if (canModifyScriptId(run.scriptId)) {
+        if (canModifyRunId(run.runId)) {
             boolean cancellable = run.status == RunStatus.QUEUED || run.status == RunStatus.PENDING
                 || run.status == RunStatus.RUNNING;
             if (cancellable) {
@@ -646,6 +654,9 @@ public class AdminPageRenderer {
             taskStatuses.add(task.status);
         }
         sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(renderRunStatusWithTaskWarnings(run, taskStatuses)).append("</div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Origin</div><div class='detail-value'>")
+          .append("ui".equals(run.origin) ? "TeeBox UI" : ("api".equals(run.origin) ? "Client API" : "<span class='dim'>&mdash;</span>"))
+          .append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Submitted By</div><div class='detail-value'>");
         if (run.submittedBy != null && run.submittedBy.length() > 0) {
             sb.append("<code>").append(escape(run.submittedBy)).append("</code>");

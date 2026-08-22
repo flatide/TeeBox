@@ -257,6 +257,7 @@ public class TeeBoxServer {
                     // Admin-UI submits record the logged-in operator as the submitter (null when the UI
                     // is open / no roster) — same field the API fills from the X-TeeBox-User header.
                     request.userId = session != null ? session.username : null;
+                    request.origin = "ui";
                     request.clientAddress = submitClientAddress(exchange);
                     RunInfo run = runManager.submit(request);
                     redirect(exchange, "/admin/runs/" + urlPath(run.runId));
@@ -698,15 +699,24 @@ public class TeeBoxServer {
     }
 
     /** Whether the session may act on a run's tasks (resolved via the run's script owner). */
+    /**
+     * Whether the session may act on a run (kill-tasks / cancel). Admins (and open mode): any run.
+     * Regular users: ONLY runs they submitted themselves from the TeeBox UI — an API-submitted run
+     * (origin "api", or null on pre-field runs) belongs to an external caller and is admin-only in
+     * the UI, even when it runs the user's own script.
+     */
     private boolean canModifyRun(AdminSessionManager.Session session, String runId) {
         if (isAdmin(session)) {
             return true;
+        }
+        if (session == null) {
+            return false;
         }
         RunInfo run = runId != null ? runManager.getRun(runId) : null;
         if (run == null) {
             return false;
         }
-        return canModifyScript(session, run.scriptId);
+        return "ui".equals(run.origin) && session.username.equals(run.submittedBy);
     }
 
     /** Whether the session may act on a task (resolved via task → run → script owner). */
@@ -1260,6 +1270,7 @@ public class TeeBoxServer {
         parseRunOptions(raw, request);
         request.callback = parseCallback(raw.get("callback"));
         request.userId = sanitizeUserId(exchange.getRequestHeaders().getFirst(USER_HEADER));
+        request.origin = "api";
         request.clientAddress = submitClientAddress(exchange);
         return request;
     }
@@ -1594,6 +1605,7 @@ public class TeeBoxServer {
         status.put("version", run.version);
         status.put("status", run.status != null ? run.status.name() : null);
         status.put("submittedBy", run.submittedBy);
+        status.put("origin", run.origin);
         status.put("createdAt", Long.valueOf(run.createdAt));
         status.put("startedAt", run.startedAt);
         status.put("endedAt", run.endedAt);
@@ -1613,6 +1625,7 @@ public class TeeBoxServer {
         result.put("version", run.version);
         result.put("status", run.status != null ? run.status.name() : null);
         result.put("submittedBy", run.submittedBy);
+        result.put("origin", run.origin);
         result.put("hasExplicitReturn", Boolean.valueOf(run.hasExplicitReturn));
         // A stream-result descriptor carries an internal server path; expose only a redacted hint
         // ({stream, contentType, size}). Clients fetch the bytes via GET .../result-stream.
@@ -1830,6 +1843,7 @@ public class TeeBoxServer {
         summary.put("version", run.version);
         summary.put("status", run.status != null ? run.status.name() : null);
         summary.put("submittedBy", run.submittedBy);
+        summary.put("origin", run.origin);
         summary.put("createdAt", Long.valueOf(run.createdAt));
         summary.put("startedAt", run.startedAt);
         summary.put("endedAt", run.endedAt);

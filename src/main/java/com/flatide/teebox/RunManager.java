@@ -183,6 +183,7 @@ public class RunManager {
         run.properties = sanitizeProperties(request.props);
         run.callback = request.callback;
         run.submittedBy = request.userId;
+        run.origin = request.origin;
         run.submittedFrom = request.clientAddress;
 
         // Resolve the script's execution settings BEFORE registering so run.immediate is persisted

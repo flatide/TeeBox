@@ -19,6 +19,8 @@ public class RunRequest {
     /** Optional submitter identity (null = anonymous): the X-TeeBox-User header on API submits, or the
      *  admin-UI session username. Recorded on the run as {@code RunInfo.submittedBy} for display. */
     public String userId;
+    /** Submission origin: "ui" or "api" (see RunInfo.origin). */
+    public String origin;
     /** Caller IP at submit time (X-Forwarded-For-aware; null = unknown). Recorded on the run as
      *  {@code RunInfo.submittedFrom} — shown on the run detail page for audit. */
     public String clientAddress;

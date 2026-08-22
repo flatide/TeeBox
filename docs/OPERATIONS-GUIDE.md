@@ -101,9 +101,11 @@ The `/admin` HTML UI has its own cookie/session login, **independent of the API 
   menu and routes exist only in roster mode — open mode has no users to manage.
 - **What login gates** — the **entire `/admin` UI**, GET pages included (only the login page stays
   reachable), so script source and run/task output never leak to unauthenticated clients. Regular
-  (`user` role) accounts may only modify/run scripts they own (registered themselves); `admin`
-  accounts may act on everything; server shutdown and user management are admin-only. The `/api/*`
-  namespaces are unaffected (token-gated, no ownership checks).
+  (`user` role) accounts may only modify/run scripts they own (registered themselves), and may
+  **kill/cancel only runs they submitted from the TeeBox UI themselves** — API-submitted runs
+  (origin `api`) are admin-only in the UI, even on the user's own script. `admin` accounts may act
+  on everything; server shutdown and user management are admin-only. The `/api/*` namespaces are
+  unaffected (token-gated, no ownership checks).
 
 ### Running
 
@@ -171,6 +173,11 @@ client-facing run responses.
 
 This is **display/audit metadata only** — it is caller-supplied and not authenticated. Do not use it
 for authorization; API access is still governed by the Bearer tokens.
+
+Each run also records its **origin** — `ui` (TeeBox admin UI submit) or `api` (client API
+submit) — shown as a tag next to the submitter in the admin Runs list, as an Origin field on the
+run detail page, and as `origin` in the run status/summary/result JSON. It drives the regular-user
+kill/cancel permission above.
 
 ### Runs List Filters (admin UI)
 

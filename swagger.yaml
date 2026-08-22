@@ -1031,6 +1031,14 @@ components:
           type: string
           nullable: true
           description: Submitter identity (X-TeeBox-User header / admin-UI session username); null = anonymous.
+        origin:
+          type: string
+          nullable: true
+          enum: [ui, api]
+          description: >
+            How the run was submitted: "ui" = TeeBox admin UI, "api" = client API. Null on runs
+            persisted before the field existed. Drives the regular-user kill/cancel permission in
+            the admin UI (own UI-submitted runs only).
         createdAt:
           type: integer
           format: int64
@@ -1164,6 +1172,14 @@ components:
           type: string
           nullable: true
           description: Submitter identity (X-TeeBox-User header / admin-UI session username); null = anonymous.
+        origin:
+          type: string
+          nullable: true
+          enum: [ui, api]
+          description: >
+            How the run was submitted: "ui" = TeeBox admin UI, "api" = client API. Null on runs
+            persisted before the field existed. Drives the regular-user kill/cancel permission in
+            the admin UI (own UI-submitted runs only).
         createdAt:
           type: integer
           format: int64

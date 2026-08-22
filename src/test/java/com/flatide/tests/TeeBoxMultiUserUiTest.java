@@ -640,6 +640,64 @@ public class TeeBoxMultiUserUiTest {
     }
 
     @Test
+    public void runKillFollowsUiSubmitterNotScriptOwner() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-runperm").toFile();
+        writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"},"
+                + "{\"username\":\"alice\",\"role\":\"user\"},"
+                + "{\"username\":\"bob\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "alice-pw");
+            String bob = login(base, "bob", "bob-pw");
+            String admin = login(base, "admin", "admin-pw");
+
+            assertRedirect("alice registers her script", postForm(base, "/admin/scripts/register",
+                    "scriptId=alice_kill&content=" + enc("result = SHELL(\"sleep 3\")\n") + "&activate=on", alice));
+
+            // --- UI submit by alice: origin=ui, submitter=alice ---
+            String location = postFormLocation(base, "/admin/submit",
+                    "scriptId=alice_kill&propsJson=" + enc("{}") + "&maxIterations=1000", alice);
+            Assert.assertNotNull(location);
+            String uiRunId = location.substring(location.lastIndexOf('/') + 1);
+            String uiRunJson = getBody(base, "/api/admin/runs/" + uiRunId, null);
+            Assert.assertTrue("UI submit records origin=ui, got: " + uiRunJson,
+                    uiRunJson.replace(" ", "").contains("\"origin\":\"ui\""));
+
+            // Submitter may kill their own UI run; another regular user may not.
+            assertForbidden("bob cannot kill alice's UI run", postForm(base,
+                    "/admin/runs/" + uiRunId + "/kill-tasks", "", bob));
+            assertForbidden("bob cannot cancel alice's UI run", postForm(base,
+                    "/admin/runs/" + uiRunId + "/cancel", "", bob));
+            assertRedirect("alice kills her own UI run", postForm(base,
+                    "/admin/runs/" + uiRunId + "/kill-tasks", "", alice));
+
+            // --- API submit on alice's OWN script: origin=api => admin-only in the UI ---
+            String apiSubmit = postFormWithBody(base, "/api/client/scripts/alice_kill/runs",
+                    "{\"props\": {}}", null)[1];
+            int idStart = apiSubmit.indexOf("run-");
+            String apiRunId = apiSubmit.substring(idStart, apiSubmit.indexOf('"', idStart));
+            String apiRunJson = getBody(base, "/api/admin/runs/" + apiRunId, null);
+            Assert.assertTrue("API submit records origin=api, got: " + apiRunJson,
+                    apiRunJson.replace(" ", "").contains("\"origin\":\"api\""));
+
+            assertForbidden("alice cannot kill the API run even on her own script",
+                    postForm(base, "/admin/runs/" + apiRunId + "/kill-tasks", "", alice));
+            assertForbidden("alice cannot cancel the API run either",
+                    postForm(base, "/admin/runs/" + apiRunId + "/cancel", "", alice));
+            assertRedirect("admin kills the API run", postForm(base,
+                    "/admin/runs/" + apiRunId + "/kill-tasks", "", admin));
+
+            // Runs list shows the origin tags next to the submitter.
+            String list = getBody(base, "/admin/fragments/all-runs?limit=20", admin);
+            Assert.assertTrue("runs list shows the ui tag", list.contains(">ui</span>"));
+            Assert.assertTrue("runs list shows the api tag", list.contains(">api</span>"));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
     public void openModeHasNoUserManagement() throws Exception {
         File dataDir = Files.createTempDirectory("teebox-usermgmt-open").toFile();
         TeeBoxServer server = startServer(dataDir);   // no roster: UI fully open

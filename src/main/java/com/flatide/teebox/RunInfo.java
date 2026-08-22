@@ -22,6 +22,10 @@ public class RunInfo {
     /** Who submitted the run (null = anonymous): the caller-supplied X-TeeBox-User header on API
      *  submits, or the admin-UI session username. Display/audit only — not an auth identity. */
     public String submittedBy;
+    /** How the run was submitted: "ui" (TeeBox admin UI) or "api" (external client API). Drives
+     *  the regular-user kill/cancel permission (own UI runs only) and the runs-list origin tag.
+     *  Null on runs persisted before the field existed (treated like external). */
+    public String origin;
     /** Caller IP at submit time (first X-Forwarded-For hop when present, else the socket peer;
      *  null = unknown). Shown on the run detail page; audit only. */
     public String submittedFrom;
@@ -59,6 +63,7 @@ public class RunInfo {
         copy.archived = archived;
         copy.immediate = immediate;
         copy.submittedBy = submittedBy;
+        copy.origin = origin;
         copy.submittedFrom = submittedFrom;
         copy.createdAt = createdAt;
         copy.startedAt = startedAt;
