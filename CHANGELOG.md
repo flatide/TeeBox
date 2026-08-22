@@ -2,6 +2,23 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.25.3
+
+Third review round on the debug feature — honest command outcomes:
+
+- **A never-executed command can no longer report success.** A resume command drained at
+  session end (e.g. the duplicate Continue queued during the run's LAST pause) used to return
+  `accepted=true`. Commands now carry an explicit rejected state: stale-pause refusals and
+  session-end drains both return `accepted=false` with the reason for every command kind, and
+  the by-id outcome (`GET .../command/{id}`) marks them `rejected`.
+- **A mistyped `generation` field is a 400, not a silent unpin.** `"generation":"3"` (or a
+  non-integral number) used to be treated as "unspecified", quietly disabling the stale-frame
+  protection the client asked for. Present-but-invalid now rejects; absent or JSON null stays
+  "unpinned".
+- **The console polls every timed-out command, not just evals.** A Continue/Step queued behind
+  a long eval can time out too; any `timedOut` response with a `commandId` is now polled to its
+  final outcome in the console log.
+
 ## 1.25.2
 
 Second review round on the debug feature — command/state atomicity and console result polling:

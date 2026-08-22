@@ -267,9 +267,13 @@ public class DebugSessionManager {
                 + cmd.commandId + " instead of retrying");
             return result;
         }
-        if (cmd.conflict) {
+        if (cmd.rejected) {
+            // Never executed (stale-pause refusal or session-end drain) — for EVERY command
+            // kind: a drained Continue reporting accepted=true would read as a success.
             result.put("accepted", Boolean.FALSE);
-            result.put("conflict", Boolean.TRUE);
+            if (cmd.conflict) {
+                result.put("conflict", Boolean.TRUE);
+            }
             result.put("error", cmd.error);
             return result;
         }
@@ -304,6 +308,9 @@ public class DebugSessionManager {
             return result;
         }
         result.put("done", Boolean.TRUE);
+        if (cmd.rejected) {
+            result.put("rejected", Boolean.TRUE);
+        }
         if (cmd.conflict) {
             result.put("conflict", Boolean.TRUE);
         }
@@ -491,6 +498,9 @@ public class DebugSessionManager {
         volatile String result;    // eval echo in display form (null = no echo)
         volatile String error;     // eval/refusal error message
         volatile boolean conflict; // refused: issued against an earlier pause
+        /** True when the command was never EXECUTED (stale-pause refusal, or drained at session
+         *  end) — reported {@code accepted=false}; an executed-but-failed eval is NOT rejected. */
+        volatile boolean rejected;
 
         Command(int kind, String source, String commandId, long generation) {
             this.kind = kind;
@@ -538,6 +548,7 @@ public class DebugSessionManager {
                     // eval) — executing it here would silently consume this pause / run in the
                     // wrong frame. Refuse it and keep waiting.
                     cmd.conflict = true;
+                    cmd.rejected = true;
                     cmd.error = "Superseded: the session resumed and paused again after this command was issued";
                     finishCommand(session, cmd);
                     continue;
@@ -616,9 +627,11 @@ public class DebugSessionManager {
                 drained.add(cmd);
             }
         }
-        // Free any HTTP thread still waiting on a drained command (outside the monitor).
+        // Free any HTTP thread still waiting on a drained command (outside the monitor). Drained
+        // = never executed: it must NOT read as a success (accepted=false via rejected).
         for (Command cmd : drained) {
-            cmd.error = "Debug session ended";
+            cmd.rejected = true;
+            cmd.error = "Debug session ended before this command was executed";
             finishCommand(session, cmd);
         }
         RunInfo run = runManager.getRun(session.runId);

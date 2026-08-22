@@ -681,9 +681,7 @@ public class TeeBoxServer {
                             if (isCommand) {
                                 String op = body.get("op") instanceof String ? (String) body.get("op") : null;
                                 String source = body.get("source") instanceof String ? (String) body.get("source") : null;
-                                Long generation = body.get("generation") instanceof Number
-                                    ? Long.valueOf(((Number) body.get("generation")).longValue()) : null;
-                                result = debugSessionManager.command(sessionId, op, source, generation);
+                                result = debugSessionManager.command(sessionId, op, source, optionalGeneration(body));
                             } else {
                                 List<Integer> lines = toIntList(body.get("lines"));
                                 if (lines == null) {
@@ -1199,10 +1197,8 @@ public class TeeBoxServer {
                 Map<String, Object> body = parseJsonBody(exchange);
                 String op = body.get("op") instanceof String ? (String) body.get("op") : null;
                 String source = body.get("source") instanceof String ? (String) body.get("source") : null;
-                Long generation = body.get("generation") instanceof Number
-                    ? Long.valueOf(((Number) body.get("generation")).longValue()) : null;
                 writeJson(exchange, HttpURLConnection.HTTP_OK,
-                    debugSessionManager.command(sessionId, op, source, generation));
+                    debugSessionManager.command(sessionId, op, source, optionalGeneration(body)));
                 return;
             }
             if (("PUT".equals(method) || "POST".equals(method)) && suffix.endsWith("/breakpoints")) {
@@ -2225,6 +2221,25 @@ public class TeeBoxServer {
         } catch (NumberFormatException e) {
             return defaultValue;
         }
+    }
+
+    /**
+     * The optional {@code generation} pause-pin of a debug command. Absent (or an explicit JSON
+     * null) = unpinned; PRESENT but not an integral number is a 400 — a mistyped field (e.g.
+     * {@code "generation":"3"}) must not silently disable the stale-frame protection.
+     */
+    private static Long optionalGeneration(Map<String, Object> body) {
+        Object value = body.get("generation");
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            double d = ((Number) value).doubleValue();
+            if (d == Math.rint(d) && !Double.isInfinite(d)) {
+                return Long.valueOf(((Number) value).longValue());
+            }
+        }
+        throw new IllegalArgumentException("generation must be an integer");
     }
 
     /** JSON array of numbers → Integer list; null when not an array or any element is not a

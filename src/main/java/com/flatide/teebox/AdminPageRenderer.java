@@ -904,13 +904,14 @@ public class AdminPageRenderer {
         sb.append("var body={op:op,source:source||null};");
         sb.append("if(op!=='quit'&&curGen!=null){body.generation=curGen;}");
         sb.append("post(base+'/command',body,function(st,r){");
-        sb.append("if(op==='eval'){logLine('> '+source);");
-        sb.append("if(r&&r.error){logLine('! '+r.error);}");
-        sb.append("else if(r&&r.timedOut){logLine('\\u2026 still evaluating \\u2014 will report when it finishes');");
+        sb.append("if(op==='eval'){logLine('> '+source);}");
+        // ANY timed-out command (a Continue/Step queued behind a long eval times out too, not
+        // just the eval itself) is polled by id — retrying it would double-execute.
+        sb.append("if(r&&r.timedOut){logLine('\\u2026 '+op+' not finished yet \\u2014 will report when it completes');");
         sb.append("if(r.commandId)pollCommand(r.commandId);}");
-        sb.append("else if(r&&r.result!=null){logLine(String(r.result));}");
-        sb.append("else if(st!==200){logLine('! HTTP '+st);}}");
-        sb.append("else if(st!==200&&r&&r.error){logLine('! '+r.error);}");
+        sb.append("else if(r&&r.error){logLine('! '+r.error);}");
+        sb.append("else if(op==='eval'&&r&&r.result!=null){logLine(String(r.result));}");
+        sb.append("else if(st!==200){logLine('! HTTP '+st);}");
         sb.append("refresh();});};");
         // Poll a timed-out command's outcome by id (the command keeps executing server-side).
         sb.append("function pollCommand(id){var n=0;var t=setInterval(function(){n++;");

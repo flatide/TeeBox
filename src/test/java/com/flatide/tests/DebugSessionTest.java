@@ -372,6 +372,11 @@ public class DebugSessionTest {
                 "{broken", 400);
             postJsonExpectingStatus(testServer.baseUrl + "/api/admin/debug/" + sessionId + "/breakpoints",
                 "{\"lines\":\"x\"}", 400);
+            // A mistyped generation must not silently disable the stale-frame protection.
+            postJsonExpectingStatus(testServer.baseUrl + "/api/admin/debug/" + sessionId + "/command",
+                "{\"op\":\"continue\",\"generation\":\"3\"}", 400);
+            postJsonExpectingStatus(testServer.baseUrl + "/api/admin/debug/" + sessionId + "/command",
+                "{\"op\":\"continue\",\"generation\":3.5}", 400);
             Assert.assertEquals("PAUSED",
                 getJsonMap(testServer.baseUrl + "/api/admin/debug/" + sessionId, 200).get("state"));
 
@@ -454,6 +459,53 @@ public class DebugSessionTest {
             waitForSessionState(testServer, sessionId, "ENDED", 10000L);
         } finally {
             System.clearProperty("propertee.teebox.debugCommandWaitMs");
+            testServer.close();
+        }
+    }
+
+    /** A duplicate Continue with NO later breakpoint: the run completes, the leftover command is
+     *  drained at session end — and must report accepted=false (it never executed), not success. */
+    @Test
+    public void drainedDuplicateContinueReportsNotAccepted() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("dbg_drain", "v1",
+                "a = 1\nb = 2\nPRINT(b)\n", "drain", Arrays.asList("test"), true);
+            String sourceRunId = (String) client.submitRun("dbg_drain", null,
+                new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(client, sourceRunId, "COMPLETED", 10000L);
+
+            Map<String, Object> session = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug",
+                "{\"breakpoints\":[2]}", 201);   // ONE pause — nothing after it to refuse at
+            final String sessionId = (String) session.get("sessionId");
+            waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+
+            // Occupy the handler with a slow eval so two Continues queue in the only pause.
+            final Map<String, Object>[] evalResult = newResultSlot();
+            final Map<String, Object>[] firstContinue = newResultSlot();
+            Thread evalThread = commandInBackground(testServer, sessionId, "eval", "SLEEP(1200)", evalResult);
+            Thread.sleep(300L);
+            Thread continueThread = commandInBackground(testServer, sessionId, "continue", null, firstContinue);
+            Thread.sleep(100L);
+            Map<String, Object> second = command(testServer, sessionId, "continue", null, 200);
+            evalThread.join(20000L);
+            continueThread.join(20000L);
+
+            Assert.assertEquals(Boolean.TRUE, firstContinue[0].get("accepted"));
+            Assert.assertEquals("drained continue reported as success: " + second,
+                Boolean.FALSE, second.get("accepted"));
+            Assert.assertTrue(String.valueOf(second.get("error")).contains("ended"));
+
+            Map<String, Object> ended = waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+            Assert.assertEquals("COMPLETED", ended.get("runStatus"));
+            // The by-id outcome marks it rejected too.
+            Map<String, Object> outcome = getJsonMap(testServer.baseUrl + "/api/admin/debug/"
+                + sessionId + "/command/" + second.get("commandId"), 200);
+            Assert.assertEquals(Boolean.TRUE, outcome.get("done"));
+            Assert.assertEquals(Boolean.TRUE, outcome.get("rejected"));
+        } finally {
             testServer.close();
         }
     }
