@@ -30,6 +30,12 @@ public class TeeBoxConfig {
     public long runTimeoutMs = 0;
     /** Retained script-output ring size per run (stdout and stderr each). 0 = default (200). */
     public int runOutputMaxLines = 0;
+    /** Max concurrent interactive debug sessions (each holds a dedicated debug-executor thread
+     *  for its whole lifetime — keep this small). */
+    public int debugMaxSessions = DebugSessionManager.DEFAULT_MAX_SESSIONS;
+    /** Idle timeout for a debug session (no API activity; status polling counts as activity;
+     *  duration syntax accepted, e.g. "30m"). Abandoned sessions are killed by maintenance. */
+    public long debugIdleTimeoutMs = DebugSessionManager.DEFAULT_IDLE_TIMEOUT_MS;
     public static TeeBoxConfig fromArgs(String[] args) {
         File configFile = resolveConfigFile(args);
         Properties fileProps = loadProperties(configFile);
@@ -106,6 +112,14 @@ public class TeeBoxConfig {
         String runOutputMaxLines = getSetting("runOutputMaxLines", fileProps);
         if (runOutputMaxLines != null && runOutputMaxLines.trim().length() > 0) {
             config.runOutputMaxLines = Integer.parseInt(runOutputMaxLines.trim());
+        }
+        String debugMaxSessions = getSetting("debugMaxSessions", fileProps);
+        if (debugMaxSessions != null && debugMaxSessions.trim().length() > 0) {
+            config.debugMaxSessions = Integer.parseInt(debugMaxSessions.trim());
+        }
+        String debugIdleTimeoutMs = getSetting("debugIdleTimeoutMs", fileProps);
+        if (debugIdleTimeoutMs != null && debugIdleTimeoutMs.trim().length() > 0) {
+            config.debugIdleTimeoutMs = DurationParser.parseMillis(debugIdleTimeoutMs.trim());
         }
         return config;
     }

@@ -29,6 +29,12 @@ public class RunInfo {
     /** Caller IP at submit time (first X-Forwarded-For hop when present, else the socket peer;
      *  null = unknown). Shown on the run detail page; audit only. */
     public String submittedFrom;
+    /** True for a debugger re-run (created from a terminal run via the debug API): runs on the
+     *  dedicated debug executor, exempt from the run timeout and per-script concurrency, no
+     *  webhook callback. Legacy persisted runs read back as false. */
+    public boolean debug;
+    /** The source run this debug run re-executes (null on normal runs). */
+    public String debugOf;
     public long createdAt;
     public Long startedAt;
     public Long endedAt;
@@ -65,6 +71,8 @@ public class RunInfo {
         copy.submittedBy = submittedBy;
         copy.origin = origin;
         copy.submittedFrom = submittedFrom;
+        copy.debug = debug;
+        copy.debugOf = debugOf;
         copy.createdAt = createdAt;
         copy.startedAt = startedAt;
         copy.endedAt = endedAt;

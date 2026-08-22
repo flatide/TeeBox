@@ -59,6 +59,28 @@ public class ScriptExecutor {
                                    String version,
                                    TaskRunner taskRunner,
                                    final Callbacks callbacks) {
+        return execute(scriptFile, properties, maxIterations, iterationLimitBehavior,
+            runId, scriptId, version, taskRunner, callbacks, null);
+    }
+
+    /**
+     * Debug variant (engine 0.26.0 hooks): with a non-null {@code debugHandler} the run becomes a
+     * debug mode — {@code debug} statements, line breakpoints, and stepping pause the run and hand
+     * a {@code DebugFrame} to the handler ON the paused engine fiber (the whole run is frozen while
+     * the handler blocks). The handler receives the live breakpoint set via
+     * {@link Callbacks#onDebugReady} before the run starts. {@code DebugFrame.quit()} ends the run
+     * as {@link ExecutionResult#cancelled()} — an operator decision, never a script failure.
+     */
+    public ExecutionResult execute(File scriptFile,
+                                   Map<String, Object> properties,
+                                   int maxIterations,
+                                   String iterationLimitBehavior,
+                                   String runId,
+                                   String scriptId,
+                                   String version,
+                                   TaskRunner taskRunner,
+                                   final Callbacks callbacks,
+                                   com.flatide.propertee2.interp.DebugHandler debugHandler) {
         ProperTeeInterpreter visitor = null;
         try {
             String scriptText = readFile(scriptFile);
@@ -129,6 +151,15 @@ public class ScriptExecutor {
             sys.put("scriptId", scriptId != null ? scriptId : "");
             sys.put("version", version != null ? version : "");
             visitor.variables.put("_SYS", sys);
+            if (debugHandler != null) {
+                visitor.setDebugHandler(debugHandler);
+                // Hand out the engine's LIVE breakpoint set (concurrent; mutations before or
+                // mid-run take effect) before the cancel handle, so a cancel that fires at
+                // registration finds the debug session fully wired.
+                if (callbacks != null) {
+                    callbacks.onDebugReady(visitor.debugBreakpoints());
+                }
+            }
             // Hand the host a cancel handle BEFORE the run starts. RunManager re-checks its cancel
             // latch right after storing the handle, so a cancel that raced this registration still
             // aborts the run (the engine-side abort is itself latched and thread-safe).
@@ -161,6 +192,10 @@ public class ScriptExecutor {
             // Host-initiated cancel — deliberately NOT a script error (the Throwable arm below
             // would misreport it as FAILED); RunManager maps this to RunStatus.CANCELLED.
             return ExecutionResult.cancelled();
+        } catch (com.flatide.propertee2.interp.DebugQuit quit) {
+            // Operator ended the run from the debugger (DebugFrame.quit()) — like an abort, an
+            // operator decision, never a script failure; the Throwable arm would mark it FAILED.
+            return ExecutionResult.cancelled();
         } catch (Throwable error) {
             return ExecutionResult.failed(error != null ? error.getMessage() : "Unknown error");
         } finally {
@@ -181,6 +216,11 @@ public class ScriptExecutor {
          *  any thread). Delivered once the engine exists, before the run starts; hosts store it to
          *  implement run cancel. Default: ignored, so existing Callbacks impls keep compiling. */
         default void onCancelHandle(Runnable cancelHandle) { }
+
+        /** Debug runs only: receives the engine's live breakpoint set (1-based lines; concurrent,
+         *  mutable before and mid-run) once the engine exists, before the run starts and before
+         *  {@link #onCancelHandle}. Default: ignored. */
+        default void onDebugReady(java.util.Set<Integer> liveBreakpoints) { }
     }
 
     public static class ExecutionResult {

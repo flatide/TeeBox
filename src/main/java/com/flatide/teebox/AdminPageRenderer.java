@@ -71,6 +71,13 @@ public class AdminPageRenderer {
         this.gson = gson;
     }
 
+    /** Wired by the server after construction (the manager itself needs the RunManager first). */
+    public void setDebugSessionManager(DebugSessionManager debugSessionManager) {
+        this.debugSessionManager = debugSessionManager;
+    }
+
+    private DebugSessionManager debugSessionManager;
+
     /**
      * Per-request identity, set by the server before each render. Drives read-only mode and per-owner
      * button visibility. A null session means either open mode (loginRequired() false) or not-logged-in.
@@ -646,6 +653,15 @@ public class AdminPageRenderer {
             sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/kill-tasks'>");
             sb.append("<button type='submit' class='btn-danger btn-sm'>Kill All Tasks</button></form>");
         }
+        boolean terminal = run.status != RunStatus.QUEUED && run.status != RunStatus.PENDING
+            && run.status != RunStatus.RUNNING;
+        if (terminal && !run.archived && isAdmin() && debugSessionManager != null) {
+            sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/debug' ");
+            sb.append("style='display:inline;margin-left:6px' ");
+            sb.append("onsubmit=\"return confirm('Re-run this run under the debugger? ");
+            sb.append("SHELL/HTTP/file side effects will execute again.');\">");
+            sb.append("<button type='submit' class='btn btn-sm'>Debug Re-run</button></form>");
+        }
         sb.append("</div>");
         sb.append("<div class='detail-grid'>");
         sb.append("<div class='detail-item'><div class='detail-label'>Script</div><div class='detail-value'><code>").append(escape(run.scriptId != null ? run.scriptId : "")).append(run.version != null ? "@" + escape(run.version) : "").append("</code></div></div>");
@@ -655,8 +671,15 @@ public class AdminPageRenderer {
         }
         sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(renderRunStatusWithTaskWarnings(run, taskStatuses)).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Origin</div><div class='detail-value'>")
-          .append("ui".equals(run.origin) ? "TeeBox UI" : ("api".equals(run.origin) ? "Client API" : "<span class='dim'>&mdash;</span>"))
+          .append("ui".equals(run.origin) ? "TeeBox UI"
+              : ("api".equals(run.origin) ? "Client API"
+              : ("debug".equals(run.origin) ? "Debugger" : "<span class='dim'>&mdash;</span>")))
           .append("</div></div>");
+        if (run.debug && run.debugOf != null) {
+            sb.append("<div class='detail-item'><div class='detail-label'>Debug Re-run Of</div><div class='detail-value'>");
+            sb.append("<a href='/admin/runs/").append(urlPath(run.debugOf)).append("' class='mono'>")
+              .append(escape(shortId(run.debugOf))).append("</a></div></div>");
+        }
         sb.append("<div class='detail-item'><div class='detail-label'>Submitted By</div><div class='detail-value'>");
         if (run.submittedBy != null && run.submittedBy.length() > 0) {
             sb.append("<code>").append(escape(run.submittedBy)).append("</code>");
@@ -784,6 +807,160 @@ public class AdminPageRenderer {
                 sb.append("<p class='empty'>No task output</p>");
             }
             sb.append("</div>");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * The interactive debug-session console: a static skeleton plus a 1s poller over
+     * {@code /admin/debug/{sid}/state}; commands (continue/step/eval/quit/breakpoints) POST JSON
+     * to the session-authed {@code /admin/debug/{sid}/...} endpoints. All frame data arrives as
+     * pre-rendered display strings from the pause snapshot — the page never touches the engine.
+     */
+    public String renderDebugSessionPage(String sessionId) {
+        if (debugSessionManager == null || debugSessionManager.find(sessionId) == null) {
+            return renderErrorPage("Debug session not found",
+                sessionId + " — the session may have ended and been swept");
+        }
+        DebugSessionManager.Session session = debugSessionManager.find(sessionId);
+        StringBuilder sb = new StringBuilder();
+        sb.append(pageStart("Debug " + sessionId));
+        sb.append(renderTopNav(""));
+
+        sb.append("<div class='nav'>");
+        sb.append("<a href='/admin'>Dashboard</a>");
+        sb.append("<span class='nav-sep'>/</span>");
+        sb.append("<a href='/admin/runs/").append(urlPath(session.sourceRunId)).append("'>Run ")
+          .append(escape(shortId(session.sourceRunId))).append("</a>");
+        sb.append("<span class='nav-sep'>/</span>");
+        sb.append("<span>Debug ").append(escape(shortId(sessionId))).append("</span>");
+        sb.append("</div>");
+
+        sb.append("<div class='callout callout-warn'>This debug session <b>re-executes the script</b> — ");
+        sb.append("SHELL/HTTP/file side effects happen again. Breaks fire on the main thread only ");
+        sb.append("(<code>thread</code> worker and <code>monitor</code> bodies do not pause).</div>");
+
+        sb.append("<div class='card'>");
+        sb.append("<div class='card-header'><h2>Debug session ").append(escape(shortId(sessionId))).append("</h2>");
+        sb.append("<button id='dbg-btn-continue' class='btn btn-sm' onclick=\"dbgCmd('continue')\" disabled>Continue</button> ");
+        sb.append("<button id='dbg-btn-stepOver' class='btn btn-sm' onclick=\"dbgCmd('stepOver')\" disabled>Step Over</button> ");
+        sb.append("<button id='dbg-btn-stepIn' class='btn btn-sm' onclick=\"dbgCmd('stepIn')\" disabled>Step In</button> ");
+        sb.append("<button id='dbg-btn-stepOut' class='btn btn-sm' onclick=\"dbgCmd('stepOut')\" disabled>Step Out</button> ");
+        sb.append("<button id='dbg-btn-quit' class='btn-danger btn-sm' onclick=\"if(confirm('End this debug run?'))dbgCmd('quit')\">Quit Run</button>");
+        sb.append("</div>");
+        sb.append("<div class='detail-grid'>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Source Run</div><div class='detail-value'>");
+        sb.append("<a href='/admin/runs/").append(urlPath(session.sourceRunId)).append("' class='mono'>")
+          .append(escape(shortId(session.sourceRunId))).append("</a></div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Debug Run</div><div class='detail-value'>");
+        sb.append("<a href='/admin/runs/").append(urlPath(session.runId)).append("' class='mono'>")
+          .append(escape(shortId(session.runId))).append("</a> <span class='dim'>(output/threads/tasks live there)</span></div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>State</div><div class='detail-value'><span id='dbg-status'>&mdash;</span></div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Paused At</div><div class='detail-value mono' id='dbg-line'>&mdash;</div></div>");
+        sb.append("</div></div>");
+
+        sb.append("<div class='card' id='dbg-paused-card' style='display:none'><h2>Paused Statement</h2>");
+        sb.append("<pre id='dbg-stmt'></pre>");
+        sb.append("<div id='dbg-stack' class='dim mono'></div>");
+        sb.append("</div>");
+
+        sb.append("<div class='card'><h2>Breakpoints</h2>");
+        sb.append("<p class='dim'>Current: <span id='dbg-bp-current' class='mono'>&mdash;</span></p>");
+        sb.append("<input id='dbg-bp-input' placeholder='lines, e.g. 3, 17' style='width:200px'> ");
+        sb.append("<button class='btn btn-sm' onclick='dbgSetBp()'>Set</button>");
+        sb.append("</div>");
+
+        sb.append("<div class='card'><h2>Console</h2>");
+        sb.append("<pre id='dbg-console' class='task-out' style='min-height:120px;max-height:320px;overflow:auto'></pre>");
+        sb.append("<input id='dbg-input' style='width:100%;box-sizing:border-box' ");
+        sb.append("placeholder='statement or expression — Enter evaluates it in the paused scope'>");
+        sb.append("</div>");
+
+        sb.append("<div class='card'><h2>Locals</h2><div id='dbg-locals'><p class='empty'>&mdash;</p></div></div>");
+        sb.append("<div class='card'><h2>Globals</h2><div id='dbg-globals'><p class='empty'>&mdash;</p></div></div>");
+
+        sb.append("<script>");
+        sb.append("(function(){");
+        sb.append("var sid='").append(jsString(sessionId)).append("';");
+        sb.append("var base='/admin/debug/'+encodeURIComponent(sid);");
+        sb.append("var pausedKey=null;var pollTimer=null;");
+        sb.append("function el(id){return document.getElementById(id);}");
+        sb.append("function esc(s){var d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}");
+        sb.append("function logLine(s){var c=el('dbg-console');c.textContent+=(c.textContent?'\\n':'')+s;c.scrollTop=c.scrollHeight;}");
+        sb.append("function post(url,body,cb){var x=new XMLHttpRequest();x.open('POST',url,true);");
+        sb.append("x.setRequestHeader('Content-Type','application/json');");
+        sb.append("x.onreadystatechange=function(){if(x.readyState===4){var r=null;try{r=JSON.parse(x.responseText);}catch(e){}cb(x.status,r);}};");
+        sb.append("x.send(JSON.stringify(body));}");
+        sb.append("window.dbgCmd=function(op,source){post(base+'/command',{op:op,source:source||null},function(st,r){");
+        sb.append("if(op==='eval'){logLine('> '+source);");
+        sb.append("if(r&&r.error){logLine('! '+r.error);}");
+        sb.append("else if(r&&r.timedOut){logLine('… still evaluating (long-running eval keeps the session busy)');}");
+        sb.append("else if(r&&r.result!=null){logLine(String(r.result));}");
+        sb.append("else if(st!==200){logLine('! HTTP '+st);}}");
+        sb.append("else if(st!==200&&r&&r.error){logLine('! '+r.error);}");
+        sb.append("refresh();});};");
+        sb.append("window.dbgEval=function(){var i=el('dbg-input');var s=i.value;if(!s)return;i.value='';dbgCmd('eval',s);};");
+        sb.append("window.dbgSetBp=function(){var raw=el('dbg-bp-input').value.split(',');var lines=[];");
+        sb.append("for(var i=0;i<raw.length;i++){var n=parseInt(raw[i],10);if(n>0)lines.push(n);}");
+        sb.append("post(base+'/breakpoints',{lines:lines},function(st,r){");
+        sb.append("if(st!==200&&r&&r.error){logLine('! '+r.error);}refresh();});};");
+        sb.append("function varsTable(obj){var keys=Object.keys(obj||{});");
+        sb.append("if(!keys.length)return \"<p class='empty'>none</p>\";");
+        sb.append("var h=\"<table class='data-table'><tbody>\";");
+        sb.append("for(var i=0;i<keys.length;i++){h+=\"<tr><td class='mono'>\"+esc(keys[i])+\"</td><td class='mono'>\"+esc(obj[keys[i]])+\"</td></tr>\";}");
+        sb.append("return h+'</tbody></table>';}");
+        sb.append("function render(s){");
+        sb.append("var paused=!!s.paused;var ended=s.state==='ENDED';");
+        sb.append("el('dbg-status').textContent=s.state+(s.runStatus?' (run '+s.runStatus+')':'');");
+        sb.append("var ops=['continue','stepOver','stepIn','stepOut'];");
+        sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=!paused;}");
+        sb.append("el('dbg-btn-quit').disabled=ended;");
+        sb.append("el('dbg-bp-current').textContent=(s.breakpoints&&s.breakpoints.length)?s.breakpoints.join(', '):'none';");
+        sb.append("if(paused){");
+        sb.append("var p=s.paused;var key=p.line+':'+p.column+':'+p.reason;");
+        sb.append("el('dbg-line').textContent='line '+p.line+':'+p.column+' ('+p.reason+')';");
+        sb.append("el('dbg-paused-card').style.display='';");
+        sb.append("el('dbg-stmt').textContent=p.statement||'';");
+        sb.append("var stack='';if(p.callStack&&p.callStack.length){var parts=[];");
+        sb.append("for(var i=0;i<p.callStack.length;i++){var c=p.callStack[i];parts.push(c.function+' @ '+c.line+':'+c.column);}");
+        sb.append("stack='call stack: '+parts.join(' \\u2192 ');}");
+        sb.append("el('dbg-stack').textContent=stack;");
+        sb.append("el('dbg-locals').innerHTML=varsTable(p.locals);");
+        sb.append("el('dbg-globals').innerHTML=varsTable(p.globals);");
+        sb.append("if(key!==pausedKey){pausedKey=key;logLine('-- paused at line '+p.line+':'+p.column+' ('+p.reason+') '+(p.statement||''));}");
+        sb.append("}else{");
+        sb.append("pausedKey=null;el('dbg-line').textContent='\\u2014';el('dbg-paused-card').style.display='none';");
+        sb.append("}");
+        sb.append("if(ended){");
+        sb.append("logEndOnce(s);");
+        sb.append("if(pollTimer){clearInterval(pollTimer);pollTimer=null;}");
+        sb.append("}}");
+        sb.append("var endLogged=false;");
+        sb.append("function logEndOnce(s){if(endLogged)return;endLogged=true;");
+        sb.append("logLine('-- session ended: run '+(s.runStatus||'?')+(s.errorMessage?' — '+s.errorMessage:''));}");
+        sb.append("function refresh(){var x=new XMLHttpRequest();x.open('GET',base+'/state',true);");
+        sb.append("x.onreadystatechange=function(){if(x.readyState===4&&x.status===200){");
+        sb.append("try{render(JSON.parse(x.responseText));}catch(e){}}};x.send();}");
+        sb.append("el('dbg-input').addEventListener('keydown',function(e){if(e.key==='Enter'){dbgEval();}});");
+        sb.append("pollTimer=setInterval(refresh,1000);refresh();");
+        sb.append("})();");
+        sb.append("</script>");
+        sb.append(pageEnd());
+        return sb.toString();
+    }
+
+    /** Escape a value for embedding inside a single-quoted JS string literal. */
+    private static String jsString(String value) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '\\' || c == '\'') {
+                sb.append('\\').append(c);
+            } else if (c == '<') {
+                sb.append("\\u003c");
+            } else {
+                sb.append(c);
+            }
         }
         return sb.toString();
     }

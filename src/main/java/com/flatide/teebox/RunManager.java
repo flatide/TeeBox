@@ -840,11 +840,102 @@ public class RunManager {
         }, maintenanceIntervalMs, maintenanceIntervalMs, TimeUnit.MILLISECONDS);
     }
 
+    // --- debug re-run support (engine 0.26.0 debug hooks; sessions owned by DebugSessionManager) ---
+
+    /** Debug-session wiring for a debug re-run — implemented by DebugSessionManager. */
+    public interface DebugAttach {
+        /** The debug handler to arm on the run (runs ON the paused engine fiber at each break). */
+        com.flatide.propertee2.interp.DebugHandler handler();
+        /** Receives the engine's live breakpoint set before the run starts (seed + keep). */
+        void onDebugReady(java.util.Set<Integer> liveBreakpoints);
+        /** Cancel was requested: wake a session paused at a break (an engine abort alone cannot —
+         *  the fiber is blocked in the handler, not at a cooperative checkpoint). */
+        void onCancelWake();
+    }
+
+    /** A prepared debug re-run: the registered RunInfo plus the resolved script file to execute. */
+    public static class DebugTarget {
+        public final RunInfo run;
+        public final File scriptFile;
+        DebugTarget(RunInfo run, File scriptFile) {
+            this.run = run;
+            this.scriptFile = scriptFile;
+        }
+    }
+
+    /**
+     * Build and register a debug re-run of a terminal run: same script <b>version</b>, same input
+     * properties, same iteration settings; a fresh runId with {@code debug=true}/{@code debugOf}.
+     * Deliberately exempt from the run timeout (a debug session pauses for as long as the operator
+     * thinks; DebugSessionManager's idle timeout owns abandonment) and from per-script concurrency
+     * (operator investigation must not queue behind production runs — the debug executor's own
+     * small cap bounds it). The caller submits the returned target to the debug executor.
+     *
+     * @throws IllegalArgumentException unknown run
+     * @throws IllegalStateException    non-terminal or archived source (archiving drops the input
+     *                                  properties, so a faithful re-run is no longer possible)
+     */
+    public DebugTarget prepareDebugRun(String sourceRunId, String requestedBy) {
+        if (draining || shutdownRequested) {
+            throw new IllegalStateException("Server is shutting down; new runs are rejected");
+        }
+        RunInfo source = runRegistry.getRawRun(sourceRunId);
+        if (source == null) {
+            throw new IllegalArgumentException("Run not found: " + sourceRunId);
+        }
+        synchronized (source) {
+            if (source.status == RunStatus.QUEUED || source.status == RunStatus.PENDING
+                    || source.status == RunStatus.RUNNING) {
+                throw new IllegalStateException("Run " + sourceRunId + " is still " + source.status
+                    + " — debug re-run needs a finished run");
+            }
+            if (source.archived) {
+                throw new IllegalStateException("Run " + sourceRunId + " is archived — its input "
+                    + "properties were dropped, so a faithful debug re-run is no longer possible");
+            }
+        }
+        // The failed version, not the active one: the point is to reproduce THAT run.
+        ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolve(source.scriptId, source.version);
+        RunInfo run = new RunInfo();
+        run.runId = createRunId();
+        run.scriptPath = resolved.displayPath;
+        run.scriptId = resolved.scriptId;
+        run.version = resolved.version;
+        run.scriptAbsolutePath = resolved.file.getAbsolutePath();
+        run.status = RunStatus.QUEUED;
+        run.createdAt = System.currentTimeMillis();
+        run.maxIterations = source.maxIterations;
+        run.iterationLimitBehavior = source.iterationLimitBehavior;
+        run.timeoutMs = 0;
+        run.properties = sanitizeProperties(source.properties);
+        run.submittedBy = requestedBy;
+        run.origin = "debug";
+        run.debug = true;
+        run.debugOf = sourceRunId;
+        runRegistry.register(run);
+        return new DebugTarget(run, resolved.file);
+    }
+
+    /**
+     * Execute a prepared debug run with the session's debug wiring attached — the same path as a
+     * normal run (SHELL task runner, output/thread callbacks, terminal marking) minus the debug
+     * exemptions. Blocks until the run is terminal; call from the debug executor.
+     */
+    public void executeDebugRun(RunInfo run, File scriptFile, DebugAttach debug) {
+        executeRun(run, scriptFile, debug);
+    }
+
     private void executeRun(final RunInfo run, File scriptFile) {
+        executeRun(run, scriptFile, null);
+    }
+
+    private void executeRun(final RunInfo run, File scriptFile, final DebugAttach debugAttach) {
         final List<OutputPublishRule> outputRules = getOutputRulesForScript(run.scriptId, run.version);
         try {
             runRegistry.markStarted(run);
-            scheduleRunTimeout(run);
+            if (debugAttach == null) {
+                scheduleRunTimeout(run);
+            }
             // Wrap task engine to auto-register watchers on task creation
             final ManagedTaskEngine engine = managedTaskEngine;
             com.flatide.propertee2.task.TaskRunner taskRunner = (outputRules != null && !outputRules.isEmpty())
@@ -891,15 +982,36 @@ public class RunManager {
                     }
 
                     @Override
-                    public void onCancelHandle(Runnable cancelHandle) {
-                        abortHandles.put(run.runId, cancelHandle);
+                    public void onDebugReady(java.util.Set<Integer> liveBreakpoints) {
+                        if (debugAttach != null) {
+                            debugAttach.onDebugReady(liveBreakpoints);
+                        }
+                    }
+
+                    @Override
+                    public void onCancelHandle(final Runnable cancelHandle) {
+                        Runnable handle = cancelHandle;
+                        if (debugAttach != null) {
+                            // Composite: latch the engine abort AND wake the session — a run
+                            // paused at a break sits in the handler, not at a checkpoint, so
+                            // only the session wake (a QUIT command) can unwind it.
+                            handle = new Runnable() {
+                                @Override
+                                public void run() {
+                                    cancelHandle.run();
+                                    debugAttach.onCancelWake();
+                                }
+                            };
+                        }
+                        abortHandles.put(run.runId, handle);
                         // A cancel that arrived before the engine existed latched a reason;
                         // apply it now that there is something to abort.
                         if (cancelReasons.containsKey(run.runId)) {
-                            cancelHandle.run();
+                            handle.run();
                         }
                     }
-                }
+                },
+                debugAttach != null ? debugAttach.handler() : null
             );
             // Flush watchers for this run before marking complete
             flushWatchersForRun(run.runId);
@@ -941,7 +1053,12 @@ public class RunManager {
             synchronized (run) {
                 activeRuns.remove(run.runId);
             }
-            dequeueNextRun(run.scriptId);
+            // A debug run never took a per-script slot (prepareDebugRun bypasses the limit), so
+            // releasing one here would over-admit: it would decrement a counter it never
+            // incremented, or promote a pending run beyond the script's max.
+            if (!run.debug) {
+                dequeueNextRun(run.scriptId);
+            }
         }
     }
 

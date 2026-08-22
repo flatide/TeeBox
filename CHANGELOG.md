@@ -2,6 +2,37 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.25.0
+
+- **Interactive debug re-runs of finished runs** (requires the propertee2 0.26.0 engine — its
+  new v1-façade debug hooks). A terminal run — typically a FAILED one — can be re-executed
+  under the engine debugger: **Debug Re-run** on the run detail page (admins only; eval is code
+  execution) opens a live console at `/admin/debug/{sessionId}` with pause state, the paused
+  statement + call stack, locals/globals, an eval console (read AND write the paused scope),
+  step over/in/out, continue, quit, and live line breakpoints. When the source run failed with
+  a positioned error, a breakpoint is pre-set on the failing line, so the session pauses just
+  before the statement that failed — with the exact input properties and script **version** of
+  the original run.
+- **`DebugSessionManager` — separate from the run pool by design.** A paused session holds its
+  engine fiber frozen for as long as the operator thinks, so debug runs execute on a small
+  dedicated executor (`propertee.teebox.debugMaxSessions`, default 2; opening beyond the cap is
+  rejected) and never occupy production `maxRuns` slots. Debug runs are exempt from the run
+  execution timeout and per-script concurrency; abandonment is handled by an idle sweep instead
+  (`propertee.teebox.debugIdleTimeoutMs`, default 30m — any API touch, status polling included,
+  keeps a session alive). Ending a session — quit, admin cancel of the debug run, idle sweep,
+  shutdown — lands as **CANCELLED, never FAILED** (the engine's `DebugQuit` is mapped like an
+  abort; a paused run is additionally woken via the session's command queue, since an engine
+  abort alone cannot unwind a fiber parked in the debug handler).
+- **JSON API** (admin token): `POST /api/admin/runs/{runId}/debug` (optional
+  `{"breakpoints":[..]}`) → session; `GET /api/admin/debug[/{sessionId}]`;
+  `POST /api/admin/debug/{sessionId}/command` (`continue` / `stepOver` / `stepIn` / `stepOut` /
+  `eval` + `source` / `quit`); `PUT /api/admin/debug/{sessionId}/breakpoints`. Runs record
+  `debug`/`debugOf`/origin `"debug"`, and the run detail page links the lineage both ways.
+- Guards: only terminal, non-archived source runs (archiving drops the input properties, so a
+  faithful re-run is impossible); a debug re-run **re-executes side effects** (SHELL/HTTP/file
+  writes) — the UI says so before opening a session. Known limit (engine): breaks fire on the
+  main thread only — `thread` worker and `monitor` bodies do not pause.
+
 ## 1.24.0
 
 - **Regular-user (`user` role) permissions tightened for runs, with a run origin identifier.**

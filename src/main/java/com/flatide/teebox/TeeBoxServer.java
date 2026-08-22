@@ -41,6 +41,7 @@ public class TeeBoxServer {
             .setPrettyPrinting()
             .registerTypeAdapter(com.flatide.propertee2.value.JsonNull.class, new JsonNullGsonAdapter())
             .create();
+    private final DebugSessionManager debugSessionManager;
     private final AdminPageRenderer pageRenderer;
     private final UserStore userStore;
     private final AdminSessionManager sessionManager;
@@ -50,6 +51,8 @@ public class TeeBoxServer {
     public TeeBoxServer(TeeBoxConfig config) throws IOException {
         this.config = config;
         this.runManager = new RunManager(config.dataDir, config.maxConcurrentRuns, config);
+        this.debugSessionManager = new DebugSessionManager(runManager,
+            config.debugMaxSessions, config.debugIdleTimeoutMs);
         this.userStore = new UserStore(config.dataDir);
         this.userStore.seedAdminIfEmpty(config.adminUser, config.adminPassword);
         this.sessionManager = new AdminSessionManager(userStore);
@@ -61,6 +64,7 @@ public class TeeBoxServer {
             }
         });
         this.pageRenderer = new AdminPageRenderer(config, runManager, gson);
+        this.pageRenderer.setDebugSessionManager(debugSessionManager);
         this.server = HttpServer.create(new InetSocketAddress(config.bindAddress, config.port), 0);
         this.httpExecutor = Executors.newCachedThreadPool();
         this.server.setExecutor(this.httpExecutor);
@@ -73,6 +77,9 @@ public class TeeBoxServer {
 
     public void stop() {
         server.stop(5);
+        // Debug sessions first: their unwinding runs still use the task engine and registries
+        // that RunManager.shutdown() tears down.
+        debugSessionManager.shutdown();
         runManager.shutdown();
         httpExecutor.shutdown();
         try {
@@ -92,6 +99,11 @@ public class TeeBoxServer {
     /** The server's run manager — an embedding/test hook (e.g. to inject a drain {@link RunManager.ExitHandler}). */
     public RunManager getRunManager() {
         return runManager;
+    }
+
+    /** The server's debug-session manager — an embedding/test hook. */
+    public DebugSessionManager getDebugSessionManager() {
+        return debugSessionManager;
     }
 
     private void registerContexts() {
@@ -614,6 +626,64 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/runs/" + urlPath(runId) + "?cancelRequested=1");
                     return;
                 }
+                if ("POST".equals(method) && path.startsWith("/admin/runs/") && path.endsWith("/debug")) {
+                    // Debug re-run: eval executes arbitrary script code with the server's SHELL
+                    // access — admins only, regardless of run ownership.
+                    String runId = path.substring("/admin/runs/".length(), path.length() - "/debug".length());
+                    if (!isAdmin(session)) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    String requestedBy = session != null ? session.username : "admin";
+                    DebugSessionManager.Session debugSession =
+                        debugSessionManager.open(runId, requestedBy, null);
+                    redirect(exchange, "/admin/debug/" + urlPath(debugSession.sessionId));
+                    return;
+                }
+                if (path.startsWith("/admin/debug/")) {
+                    if (!isAdmin(session)) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    String suffix = path.substring("/admin/debug/".length());
+                    if ("GET".equals(method) && suffix.endsWith("/state")) {
+                        String sessionId = suffix.substring(0, suffix.length() - "/state".length());
+                        Map<String, Object> status = debugSessionManager.status(sessionId);
+                        if (status == null) {
+                            writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Debug session not found"));
+                            return;
+                        }
+                        writeJson(exchange, HttpURLConnection.HTTP_OK, status);
+                        return;
+                    }
+                    if ("POST".equals(method) && (suffix.endsWith("/command") || suffix.endsWith("/breakpoints"))) {
+                        // JSON in/out for the debug console JS — errors as JSON too, not error pages.
+                        boolean isCommand = suffix.endsWith("/command");
+                        String sessionId = suffix.substring(0,
+                            suffix.length() - (isCommand ? "/command".length() : "/breakpoints".length()));
+                        try {
+                            Map<String, Object> body = parseJsonBody(exchange);
+                            Map<String, Object> result;
+                            if (isCommand) {
+                                String op = body.get("op") instanceof String ? (String) body.get("op") : null;
+                                String source = body.get("source") instanceof String ? (String) body.get("source") : null;
+                                result = debugSessionManager.command(sessionId, op, source);
+                            } else {
+                                result = debugSessionManager.setBreakpoints(sessionId, toIntList(body.get("lines")));
+                            }
+                            writeJson(exchange, HttpURLConnection.HTTP_OK, result);
+                        } catch (IllegalArgumentException e) {
+                            writeJson(exchange, HttpURLConnection.HTTP_BAD_REQUEST, errorMap(e.getMessage()));
+                        } catch (IllegalStateException e) {
+                            writeJson(exchange, HttpURLConnection.HTTP_CONFLICT, errorMap(e.getMessage()));
+                        }
+                        return;
+                    }
+                    if ("GET".equals(method)) {
+                        writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderDebugSessionPage(suffix));
+                        return;
+                    }
+                }
                 if ("GET".equals(method) && path.startsWith("/admin/tasks/")) {
                     String suffix = path.substring("/admin/tasks/".length());
                     if (suffix.endsWith("/kill")) {
@@ -1072,6 +1142,63 @@ public class TeeBoxServer {
             String runId = path.substring("/api/admin/runs/".length(), path.length() - "/cancel".length());
             handleRunCancel(exchange, runId, "Cancelled by admin");
             return;
+        }
+        if ("POST".equals(method) && path.startsWith("/api/admin/runs/") && path.endsWith("/debug")) {
+            String runId = path.substring("/api/admin/runs/".length(), path.length() - "/debug".length());
+            if (runManager.getRun(runId) == null) {
+                writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
+                return;
+            }
+            List<Integer> breakpoints = null;
+            try {   // body is optional: {"breakpoints":[..]} adds to the auto error-line breakpoint
+                Map<String, Object> body = parseJsonBody(exchange);
+                breakpoints = toIntList(body.get("breakpoints"));
+            } catch (Exception ignore) {
+                // no body — auto breakpoint only
+            }
+            DebugSessionManager.Session session = debugSessionManager.open(runId, "admin", breakpoints);
+            writeJson(exchange, HttpURLConnection.HTTP_CREATED, debugSessionManager.statusMap(session));
+            return;
+        }
+        if ("GET".equals(method) && "/api/admin/debug".equals(path)) {
+            writeJson(exchange, HttpURLConnection.HTTP_OK, debugSessionManager.list());
+            return;
+        }
+        if (path.startsWith("/api/admin/debug/")) {
+            String suffix = path.substring("/api/admin/debug/".length());
+            if ("POST".equals(method) && suffix.endsWith("/command")) {
+                String sessionId = suffix.substring(0, suffix.length() - "/command".length());
+                if (debugSessionManager.find(sessionId) == null) {
+                    writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Debug session not found"));
+                    return;
+                }
+                Map<String, Object> body = parseJsonBody(exchange);
+                String op = body.get("op") instanceof String ? (String) body.get("op") : null;
+                String source = body.get("source") instanceof String ? (String) body.get("source") : null;
+                writeJson(exchange, HttpURLConnection.HTTP_OK,
+                    debugSessionManager.command(sessionId, op, source));
+                return;
+            }
+            if (("PUT".equals(method) || "POST".equals(method)) && suffix.endsWith("/breakpoints")) {
+                String sessionId = suffix.substring(0, suffix.length() - "/breakpoints".length());
+                if (debugSessionManager.find(sessionId) == null) {
+                    writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Debug session not found"));
+                    return;
+                }
+                Map<String, Object> body = parseJsonBody(exchange);
+                writeJson(exchange, HttpURLConnection.HTTP_OK,
+                    debugSessionManager.setBreakpoints(sessionId, toIntList(body.get("lines"))));
+                return;
+            }
+            if ("GET".equals(method)) {
+                Map<String, Object> status = debugSessionManager.status(suffix);
+                if (status == null) {
+                    writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Debug session not found"));
+                    return;
+                }
+                writeJson(exchange, HttpURLConnection.HTTP_OK, status);
+                return;
+            }
         }
         if ("GET".equals(method) && "/api/admin/tasks".equals(path)) {
             Map<String, String> query = parseQuery(exchange);
@@ -2034,6 +2161,20 @@ public class TeeBoxServer {
         } catch (NumberFormatException e) {
             return defaultValue;
         }
+    }
+
+    /** JSON array of numbers → Integer list (non-numbers skipped); null when not an array. */
+    private static List<Integer> toIntList(Object value) {
+        if (!(value instanceof List)) {
+            return null;
+        }
+        List<Integer> result = new ArrayList<Integer>();
+        for (Object element : (List<?>) value) {
+            if (element instanceof Number) {
+                result.add(Integer.valueOf(((Number) element).intValue()));
+            }
+        }
+        return result;
     }
 
     private long parseLong(String raw, long defaultValue) {

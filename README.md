@@ -9,6 +9,8 @@ TeeBox is the ProperTee execution service module. It exposes an HTTP admin UI an
 - `/api/admin/*` for run/task inspection and control
 - namespaced `client`, `publisher`, and `admin` JSON APIs
 - `/admin` HTML UI for operators
+- interactive debug re-runs of finished runs (breakpoints/stepping/eval console at
+  `/admin/debug/{sessionId}`, on a small dedicated executor — see `DebugSessionManager`)
 - external task tracking through `ManagedTaskEngine`
 - persisted run/task indexes with archive and purge support
 
@@ -88,8 +90,8 @@ Useful settings:
 `propertee-teebox-dist.zip` is the recommended GitHub release artifact. It does not include a Java runtime, so deploy targets should install a Linux x86_64 Java 25 runtime separately under `runtime/`. (As of 1.0.0, TeeBox runs on the ProperTee v2 runtime, which requires Java 25.)
 
 ```bash
-git tag v1.24.0
-git push origin v1.24.0
+git tag v1.25.0
+git push origin v1.25.0
 ```
 
 If you need a prebundled internal package instead, build `propertee-teebox-dist-with-runtime.zip` locally with:
@@ -113,6 +115,8 @@ Primary settings use the `propertee.teebox.*` prefix:
 - `propertee.teebox.runRetentionMs`
 - `propertee.teebox.runArchiveRetentionMs`
 - `propertee.teebox.maintenanceIntervalMs`
+- `propertee.teebox.debugMaxSessions` (concurrent debug sessions, default 2)
+- `propertee.teebox.debugIdleTimeoutMs` (debug-session idle kill, default 30m)
 
 Duration-style settings accept `ms`, `s`, `m`, `h`, and `d` suffixes. Example: `500ms`, `1m`, `24h`, `7d`.
 
