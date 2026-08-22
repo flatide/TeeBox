@@ -886,7 +886,7 @@ public class AdminPageRenderer {
         sb.append("(function(){");
         sb.append("var sid='").append(jsString(sessionId)).append("';");
         sb.append("var base='/admin/debug/'+encodeURIComponent(sid);");
-        sb.append("var pausedKey=null;var pollTimer=null;");
+        sb.append("var pausedKey=null;var pollTimer=null;var curGen=null;");
         sb.append("function el(id){return document.getElementById(id);}");
         sb.append("function esc(s){var d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}");
         sb.append("function logLine(s){var c=el('dbg-console');c.textContent+=(c.textContent?'\\n':'')+s;c.scrollTop=c.scrollHeight;}");
@@ -899,14 +899,29 @@ public class AdminPageRenderer {
         // resume that the server then refuses as superseded — don't even let it be sent.
         sb.append("if(op!=='eval'){var ops=['continue','stepOver','stepIn','stepOut'];");
         sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=true;}}");
-        sb.append("post(base+'/command',{op:op,source:source||null},function(st,r){");
+        // Send the pause generation this page is showing: the server refuses the command if the
+        // session paused somewhere else meanwhile, instead of acting on a frame we never saw.
+        sb.append("var body={op:op,source:source||null};");
+        sb.append("if(op!=='quit'&&curGen!=null){body.generation=curGen;}");
+        sb.append("post(base+'/command',body,function(st,r){");
         sb.append("if(op==='eval'){logLine('> '+source);");
         sb.append("if(r&&r.error){logLine('! '+r.error);}");
-        sb.append("else if(r&&r.timedOut){logLine('… still evaluating (long-running eval keeps the session busy)');}");
+        sb.append("else if(r&&r.timedOut){logLine('\\u2026 still evaluating \\u2014 will report when it finishes');");
+        sb.append("if(r.commandId)pollCommand(r.commandId);}");
         sb.append("else if(r&&r.result!=null){logLine(String(r.result));}");
         sb.append("else if(st!==200){logLine('! HTTP '+st);}}");
         sb.append("else if(st!==200&&r&&r.error){logLine('! '+r.error);}");
         sb.append("refresh();});};");
+        // Poll a timed-out command's outcome by id (the command keeps executing server-side).
+        sb.append("function pollCommand(id){var n=0;var t=setInterval(function(){n++;");
+        sb.append("var x=new XMLHttpRequest();x.open('GET',base+'/command/'+encodeURIComponent(id),true);");
+        sb.append("x.onreadystatechange=function(){if(x.readyState!==4)return;");
+        sb.append("var r=null;try{r=JSON.parse(x.responseText);}catch(e){}");
+        sb.append("if(x.status===200&&r&&r.done){clearInterval(t);");
+        sb.append("if(r.error){logLine('! '+r.error);}else if(r.result!=null){logLine(String(r.result));}else{logLine('(finished)');}");
+        sb.append("refresh();return;}");
+        sb.append("if(x.status!==200||n>300){clearInterval(t);logLine('! gave up waiting for command '+id);}");
+        sb.append("};x.send();},1000);}");
         sb.append("window.dbgEval=function(){var i=el('dbg-input');var s=i.value;if(!s)return;i.value='';dbgCmd('eval',s);};");
         sb.append("window.dbgSetBp=function(){var raw=el('dbg-bp-input').value.split(',');var lines=[];");
         sb.append("for(var i=0;i<raw.length;i++){var n=parseInt(raw[i],10);if(n>0)lines.push(n);}");
@@ -919,6 +934,7 @@ public class AdminPageRenderer {
         sb.append("return h+'</tbody></table>';}");
         sb.append("function render(s){");
         sb.append("var paused=!!s.paused;var ended=s.state==='ENDED';");
+        sb.append("curGen=paused?s.pauseGeneration:null;");
         sb.append("el('dbg-status').textContent=s.state+(s.runStatus?' (run '+s.runStatus+')':'');");
         sb.append("var ops=['continue','stepOver','stepIn','stepOut'];");
         sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=!paused;}");

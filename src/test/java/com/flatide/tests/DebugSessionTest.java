@@ -382,6 +382,82 @@ public class DebugSessionTest {
         }
     }
 
+    /** A remote client can pin a command to the pause it SAW ({@code generation} from the status
+     *  payload): if the session paused somewhere else meanwhile, the command is refused instead
+     *  of acting on a frame the caller never looked at. */
+    @Test
+    public void commandTargetingAnOutdatedPausedFrameIsRefused() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            String sourceRunId = runFailingScript(testServer, "dbg_gen");
+            Map<String, Object> session = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            String sessionId = (String) session.get("sessionId");
+            Map<String, Object> paused = waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            long generation = ((Number) paused.get("pauseGeneration")).longValue();
+
+            // Matching generation: accepted.
+            Map<String, Object> ok = postJson(
+                testServer.baseUrl + "/api/admin/debug/" + sessionId + "/command",
+                "{\"op\":\"eval\",\"source\":\"msg\",\"generation\":" + generation + "}", 200);
+            Assert.assertEquals("hello ops", ok.get("result"));
+            // Mismatched generation: refused as a state conflict, session untouched.
+            postJsonExpectingStatus(
+                testServer.baseUrl + "/api/admin/debug/" + sessionId + "/command",
+                "{\"op\":\"continue\",\"generation\":" + (generation + 1) + "}", 409);
+            Assert.assertEquals("PAUSED",
+                getJsonMap(testServer.baseUrl + "/api/admin/debug/" + sessionId, 200).get("state"));
+
+            command(testServer, sessionId, "quit", null, 200);
+            waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    /** The REAL command-wait timeout path (wait shortened via system property): a slow eval
+     *  reports timedOut + commandId, keeps executing, and its outcome is retrievable from the
+     *  session-authed console route the debug page polls. */
+    @Test
+    public void timedOutCommandOutcomeIsRetrievableViaTheConsoleRoute() throws Exception {
+        System.setProperty("propertee.teebox.debugCommandWaitMs", "300");
+        TestServer testServer = createServer(null);
+        try {
+            String sourceRunId = runFailingScript(testServer, "dbg_timeout");
+            Map<String, Object> session = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            String sessionId = (String) session.get("sessionId");
+            waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+
+            Map<String, Object> timedOut = command(testServer, sessionId, "eval", "SLEEP(1500)", 200);
+            Assert.assertEquals("expected a timeout: " + timedOut, Boolean.TRUE, timedOut.get("timedOut"));
+            String commandId = (String) timedOut.get("commandId");
+            Assert.assertNotNull(commandId);
+
+            // The console polls this session-authed route until the command reports done.
+            long deadline = System.currentTimeMillis() + 10000L;
+            Map<String, Object> outcome = null;
+            while (System.currentTimeMillis() < deadline) {
+                outcome = getJsonMap(testServer.baseUrl + "/admin/debug/" + sessionId
+                    + "/command/" + commandId, 200);
+                if (Boolean.TRUE.equals(outcome.get("done"))) {
+                    break;
+                }
+                Thread.sleep(100L);
+            }
+            Assert.assertEquals("command never finished: " + outcome, Boolean.TRUE, outcome.get("done"));
+            Assert.assertNull("unexpected eval error: " + outcome, outcome.get("error"));
+            Assert.assertEquals("PAUSED",
+                getJsonMap(testServer.baseUrl + "/api/admin/debug/" + sessionId, 200).get("state"));
+
+            command(testServer, sessionId, "quit", null, 200);
+            waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+        } finally {
+            System.clearProperty("propertee.teebox.debugCommandWaitMs");
+            testServer.close();
+        }
+    }
+
     // ===================== helpers =====================
 
     @SuppressWarnings("unchecked")

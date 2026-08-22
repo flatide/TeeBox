@@ -656,6 +656,20 @@ public class TeeBoxServer {
                         writeJson(exchange, HttpURLConnection.HTTP_OK, status);
                         return;
                     }
+                    if ("GET".equals(method) && suffix.contains("/command/")) {
+                        // Session-authed mirror of the API route — the console polls this for the
+                        // outcome of a command whose synchronous wait timed out.
+                        int idx = suffix.indexOf("/command/");
+                        String sessionId = suffix.substring(0, idx);
+                        String commandId = suffix.substring(idx + "/command/".length());
+                        if (debugSessionManager.find(sessionId) == null) {
+                            writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Debug session not found"));
+                            return;
+                        }
+                        writeJson(exchange, HttpURLConnection.HTTP_OK,
+                            debugSessionManager.commandResult(sessionId, commandId));
+                        return;
+                    }
                     if ("POST".equals(method) && (suffix.endsWith("/command") || suffix.endsWith("/breakpoints"))) {
                         // JSON in/out for the debug console JS — errors as JSON too, not error pages.
                         boolean isCommand = suffix.endsWith("/command");
@@ -667,7 +681,9 @@ public class TeeBoxServer {
                             if (isCommand) {
                                 String op = body.get("op") instanceof String ? (String) body.get("op") : null;
                                 String source = body.get("source") instanceof String ? (String) body.get("source") : null;
-                                result = debugSessionManager.command(sessionId, op, source);
+                                Long generation = body.get("generation") instanceof Number
+                                    ? Long.valueOf(((Number) body.get("generation")).longValue()) : null;
+                                result = debugSessionManager.command(sessionId, op, source, generation);
                             } else {
                                 List<Integer> lines = toIntList(body.get("lines"));
                                 if (lines == null) {
@@ -1183,8 +1199,10 @@ public class TeeBoxServer {
                 Map<String, Object> body = parseJsonBody(exchange);
                 String op = body.get("op") instanceof String ? (String) body.get("op") : null;
                 String source = body.get("source") instanceof String ? (String) body.get("source") : null;
+                Long generation = body.get("generation") instanceof Number
+                    ? Long.valueOf(((Number) body.get("generation")).longValue()) : null;
                 writeJson(exchange, HttpURLConnection.HTTP_OK,
-                    debugSessionManager.command(sessionId, op, source));
+                    debugSessionManager.command(sessionId, op, source, generation));
                 return;
             }
             if (("PUT".equals(method) || "POST".equals(method)) && suffix.endsWith("/breakpoints")) {

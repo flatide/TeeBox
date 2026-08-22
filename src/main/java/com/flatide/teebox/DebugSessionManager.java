@@ -52,8 +52,10 @@ public class DebugSessionManager {
     /** How long an ENDED session stays queryable before the sweeper drops it. */
     private static final long ENDED_RETENTION_MS = 15L * 60L * 1000L;
     /** How long a command endpoint waits for the handler (an eval can legitimately run long —
-     *  it may SLEEP or SHELL; on timeout the command stays queued and executes when reached). */
-    private static final long COMMAND_WAIT_MS = 15000L;
+     *  it may SLEEP or SHELL; on timeout the command stays queued, executes when reached, and
+     *  its outcome is queryable by commandId). Tunable for tests via
+     *  {@code -Dpropertee.teebox.debugCommandWaitMs}. */
+    private final long commandWaitMs = Long.getLong("propertee.teebox.debugCommandWaitMs", 15000L);
     private static final int VALUE_DISPLAY_MAX = 300;
     private static final int EVAL_DISPLAY_MAX = 2000;
 
@@ -179,17 +181,24 @@ public class DebugSessionManager {
         return result;
     }
 
+    public Map<String, Object> command(String sessionId, String op, String source) {
+        return command(sessionId, op, source, null);
+    }
+
     /**
      * Execute a debugger command. {@code op}: {@code continue}, {@code stepOver}, {@code stepIn},
      * {@code stepOut}, {@code eval} (with {@code source}), {@code quit}. All but {@code quit}
      * require the session to be paused at a break. Commands queue FIFO to the paused handler; the
-     * call waits up to {@value #COMMAND_WAIT_MS} ms for completion (a long-running eval reports
-     * {@code timedOut} and still executes).
+     * call waits up to {@code debugCommandWaitMs} (default 15 s) for completion — a long-running
+     * eval reports {@code timedOut} plus its {@code commandId}, still executes, and its outcome
+     * is fetched via {@link #commandResult}. {@code expectedGeneration} (optional) is the
+     * {@code pauseGeneration} the caller saw: when it no longer matches the session's current
+     * pause, the command is refused — a remote client never acts on a frame it hasn't seen.
      *
      * @throws IllegalArgumentException unknown session or op, missing eval source
-     * @throws IllegalStateException    session ended, or not paused for a pause-only op
+     * @throws IllegalStateException    session ended, not paused, or paused-frame mismatch
      */
-    public Map<String, Object> command(String sessionId, String op, String source) {
+    public Map<String, Object> command(String sessionId, String op, String source, Long expectedGeneration) {
         Session session = find(sessionId);
         if (session == null) {
             throw new IllegalArgumentException("Debug session not found: " + sessionId);
@@ -202,9 +211,6 @@ public class DebugSessionManager {
             boolean applied = kill(sessionId, "Ended from the debugger");
             result.put("accepted", Boolean.valueOf(applied));
             return result;
-        }
-        if (Session.ENDED.equals(session.state)) {
-            throw new IllegalStateException("Debug session has ended");
         }
         int kind;
         if ("continue".equals(op)) {
@@ -223,26 +229,40 @@ public class DebugSessionManager {
         } else {
             throw new IllegalArgumentException("Unknown debug op: " + op);
         }
-        if (!Session.PAUSED.equals(session.state)) {
-            throw new IllegalStateException("Debug session is not paused (state " + session.state + ")");
+        // State check, generation capture, and enqueue as ONE atomic unit against the pump's
+        // pause/resume and finalizeSession's ENDED+drain (all take the session monitor): a
+        // command can neither slip into the queue after the final drain (it would never be
+        // answered) nor capture a generation from a different pause than the one it checked.
+        Command cmd;
+        synchronized (session) {
+            if (Session.ENDED.equals(session.state)) {
+                throw new IllegalStateException("Debug session has ended");
+            }
+            if (!Session.PAUSED.equals(session.state)) {
+                throw new IllegalStateException("Debug session is not paused (state " + session.state + ")");
+            }
+            if (expectedGeneration != null && expectedGeneration.longValue() != session.pauseGeneration) {
+                // The caller was looking at an earlier pause (its request raced a resume + new
+                // pause) — refuse rather than act on a frame the caller never saw.
+                throw new IllegalStateException("Paused frame changed since the command was issued"
+                    + " (command targets pause " + expectedGeneration
+                    + ", session is at pause " + session.pauseGeneration + ")");
+            }
+            cmd = new Command(kind, source,
+                "c" + session.commandSeq.incrementAndGet(), session.pauseGeneration);
+            session.commands.add(cmd);
         }
-        // Read the generation AFTER the pause check: if the session resumes in between, the
-        // command carries the old generation and the pump refuses it at the next pause instead
-        // of applying it there (duplicate-Continue / retried-eval guard).
-        Command cmd = new Command(kind, source,
-            "c" + session.commandSeq.incrementAndGet(), session.pauseGeneration);
-        session.commands.add(cmd);
         result.put("commandId", cmd.commandId);
         boolean done;
         try {
-            done = cmd.done.await(COMMAND_WAIT_MS, TimeUnit.MILLISECONDS);
+            done = cmd.done.await(commandWaitMs, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             done = false;
         }
         if (!done) {
             result.put("timedOut", Boolean.TRUE);
-            result.put("message", "Command not finished after " + COMMAND_WAIT_MS
+            result.put("message", "Command not finished after " + commandWaitMs
                 + " ms — it stays queued; fetch the outcome later via GET .../command/"
                 + cmd.commandId + " instead of retrying");
             return result;
@@ -423,7 +443,12 @@ public class DebugSessionManager {
         /** Enqueue a QUIT so a handler blocked at a break unwinds (see class doc, kill semantics).
          *  Generation-exempt: a kill must land no matter which pause the handler is in. */
         void wakeForCancel() {
-            commands.add(new Command(Command.QUIT, null, "cancel-" + commandSeq.incrementAndGet(), -1L));
+            synchronized (this) {
+                if (ENDED.equals(state)) {
+                    return;   // already drained — a dead-queue QUIT would never be consumed
+                }
+                commands.add(new Command(Command.QUIT, null, "cancel-" + commandSeq.incrementAndGet(), -1L));
+            }
         }
 
         /** The RunManager wiring for this session's run. */
@@ -485,9 +510,14 @@ public class DebugSessionManager {
 
         @Override
         public void onBreak(DebugFrame frame) {
-            session.pauseGeneration++;   // single writer: only this fiber pauses the session
-            session.paused = buildSnapshot(frame);
-            session.state = Session.PAUSED;
+            Map<String, Object> snapshot = buildSnapshot(frame);
+            // Every state transition happens under the session monitor — command()'s
+            // check+capture+enqueue and finalizeSession's ENDED+drain serialize against it.
+            synchronized (session) {
+                session.pauseGeneration++;   // single writer: only this fiber pauses the session
+                session.paused = snapshot;
+                session.state = Session.PAUSED;
+            }
             while (true) {
                 Command cmd;
                 try {
@@ -495,8 +525,10 @@ public class DebugSessionManager {
                 } catch (InterruptedException e) {
                     // Executor teardown — end the run rather than resume it headless.
                     Thread.currentThread().interrupt();
-                    session.state = Session.RUNNING;
-                    session.paused = null;
+                    synchronized (session) {
+                        session.state = Session.RUNNING;
+                        session.paused = null;
+                    }
                     frame.quit();
                     return;
                 }
@@ -536,8 +568,10 @@ public class DebugSessionManager {
                         resume(cmd);
                         return;
                     case Command.QUIT:
-                        session.state = Session.RUNNING;
-                        session.paused = null;
+                        synchronized (session) {
+                            session.state = Session.RUNNING;
+                            session.paused = null;
+                        }
                         finishCommand(session, cmd);
                         frame.quit();   // throws DebugQuit — unwinds the run
                         return;
@@ -550,8 +584,10 @@ public class DebugSessionManager {
         }
 
         private void resume(Command cmd) {
-            session.state = Session.RUNNING;
-            session.paused = null;
+            synchronized (session) {
+                session.state = Session.RUNNING;
+                session.paused = null;
+            }
             finishCommand(session, cmd);
         }
     }
@@ -564,15 +600,24 @@ public class DebugSessionManager {
     }
 
     private void finalizeSession(Session session) {
-        session.state = Session.ENDED;
-        session.paused = null;
-        session.endedAt = System.currentTimeMillis();
-        // Free any HTTP thread still waiting on a queued command.
-        while (true) {
-            Command cmd = session.commands.poll();
-            if (cmd == null) {
-                break;
+        // ENDED + drain as one atomic unit (session monitor): command() enqueues under the same
+        // monitor behind a not-ENDED check, so no command can slip in after this drain and sit
+        // unanswered forever.
+        List<Command> drained = new ArrayList<Command>();
+        synchronized (session) {
+            session.state = Session.ENDED;
+            session.paused = null;
+            session.endedAt = System.currentTimeMillis();
+            while (true) {
+                Command cmd = session.commands.poll();
+                if (cmd == null) {
+                    break;
+                }
+                drained.add(cmd);
             }
+        }
+        // Free any HTTP thread still waiting on a drained command (outside the monitor).
+        for (Command cmd : drained) {
             cmd.error = "Debug session ended";
             finishCommand(session, cmd);
         }
@@ -647,11 +692,21 @@ public class DebugSessionManager {
         map.put("sessionId", session.sessionId);
         map.put("sourceRunId", session.sourceRunId);
         map.put("runId", session.runId);
-        map.put("state", session.state);
+        String state;
+        long pauseGeneration;
+        Map<String, Object> pausedSnapshot;
+        synchronized (session) {   // one consistent (state, generation, frame) triple
+            state = session.state;
+            pauseGeneration = session.pauseGeneration;
+            pausedSnapshot = session.paused;
+        }
+        map.put("state", state);
+        // The pause this status describes — send it back as a command's `generation` to be
+        // refused instead of acting on a frame this status never showed.
+        map.put("pauseGeneration", Long.valueOf(pauseGeneration));
         map.put("createdAt", Long.valueOf(session.createdAt));
         map.put("lastActivityAt", Long.valueOf(session.lastActivityAt));
         map.put("breakpoints", sortedBreakpoints(session));
-        Map<String, Object> pausedSnapshot = session.paused;
         if (pausedSnapshot != null) {
             map.put("paused", pausedSnapshot);
         }

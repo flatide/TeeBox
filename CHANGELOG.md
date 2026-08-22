@@ -2,6 +2,30 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.25.2
+
+Second review round on the debug feature — command/state atomicity and console result polling:
+
+- **Command handling and session state transitions now serialize on one monitor.** The 1.25.1
+  generation guard still left a window: a command could pass the PAUSED check, stall, and
+  enqueue after the session resumed — landing in a drained (ended) queue where nothing would
+  ever answer it, or capturing a different pause's generation than the one it checked. Now
+  `command()`'s state check + generation capture + enqueue, the handler's pause/resume
+  transitions, and `finalizeSession`'s ENDED+drain all take the session monitor, so a command
+  is enqueued if and only if the pause it validated is still current, and never after the final
+  drain (`wakeForCancel` is guarded the same way).
+- **Clients can pin a command to the pause they saw.** The status payload now carries
+  `pauseGeneration`; sending it back as the command's optional `generation` field makes the
+  server refuse (409) when the session has since paused somewhere else — a remote caller never
+  acts on a frame it never looked at. The console sends it automatically with every
+  continue/step/eval.
+- **The console now shows long-eval outcomes.** The session-authed
+  `GET /admin/debug/{sid}/command/{commandId}` route mirrors the API one, and the debug page
+  polls it whenever a command reports `timedOut` — the final return value or error of a
+  long-running eval reaches the browser instead of stopping at "still evaluating". The command
+  wait is tunable (`-Dpropertee.teebox.debugCommandWaitMs`, default 15s), and the real timeout
+  path is now exercised by test end-to-end.
+
 ## 1.25.1
 
 Review hardening of the 1.25.0 debug feature — three fixes plus one documented decision:
