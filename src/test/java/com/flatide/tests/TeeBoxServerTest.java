@@ -325,6 +325,10 @@ public class TeeBoxServerTest {
             // Admin API: no param = all (backward compatible); instant=exclude / instant=only filter.
             List<Map<String, Object>> all = getJsonList(testServer.baseUrl + "/api/admin/runs", 200);
             Assert.assertEquals(2, all.size());
+            Assert.assertEquals(2,
+                getJsonList(testServer.baseUrl + "/api/admin/runs?origin=api", 200).size());
+            Assert.assertEquals(0,
+                getJsonList(testServer.baseUrl + "/api/admin/runs?origin=ui", 200).size());
             List<Map<String, Object>> excl = getJsonList(testServer.baseUrl + "/api/admin/runs?instant=exclude", 200);
             Assert.assertEquals(1, excl.size());
             Assert.assertEquals(normalRun, excl.get(0).get("runId"));
@@ -354,8 +358,13 @@ public class TeeBoxServerTest {
             Assert.assertFalse(fragOnly.contains(normalRun));
             Assert.assertTrue("instant badge on the row", fragOnly.contains(">instant</span>"));
 
-            // The Runs page default view excludes instant runs ("Include instant" checkbox, unchecked).
+            // The Runs page defaults to API origin and excludes instant runs.
             String page = getHtml(testServer.baseUrl + "/admin/runs", 200);
+            Assert.assertTrue(page.contains("id='origin-filter'"));
+            Assert.assertTrue("API must be the selected origin",
+                page.contains("<option value='api' selected>API</option>"));
+            Assert.assertTrue(page.contains("<option value='ui'>UI</option>"));
+            Assert.assertTrue(page.contains("<option value='debug'>Debug</option>"));
             Assert.assertTrue(page.contains("Include instant"));
             Assert.assertFalse("checkbox must default to unchecked",
                 page.contains("id='instant-filter' checked"));

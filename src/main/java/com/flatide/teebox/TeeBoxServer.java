@@ -573,6 +573,37 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()) + "?version=" + urlParam(version.trim()));
                     return;
                 }
+                if ("POST".equals(method) && path.startsWith("/admin/scripts/")
+                        && path.endsWith("/debug")) {
+                    // Like the existing Run debugger, this can eval arbitrary code with the
+                    // server's SHELL access. Script ownership is therefore insufficient: admins
+                    // only. The Run Script inputs are executed without creating Run history.
+                    if (!isAdmin(session)) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    String scriptId = path.substring("/admin/scripts/".length(),
+                        path.length() - "/debug".length());
+                    Map<String, String> form = parseForm(exchange);
+                    // Debug Editor targets the version currently open in Source Editor, not the
+                    // ordinary Run selector. JS also posts that editor's unsaved content; a direct
+                    // no-JS POST omits it and RunManager loads the saved version as a fallback.
+                    String version = trimToNull(form.get("debugVersion"));
+                    if (version == null) {
+                        version = trimToNull(form.get("version"));
+                    }
+                    String sourceSnapshot = form.containsKey("content") ? form.get("content") : null;
+                    Map<String, Object> properties = parsePropsJson(form.get("propsJson"));
+                    int maxIterations = parseInt(form.get("maxIterations"), 1000);
+                    boolean warnLoops = "on".equals(form.get("warnLoops"))
+                        || "true".equals(form.get("warnLoops"));
+                    String requestedBy = session != null ? session.username : "admin";
+                    DebugSessionManager.Session debugSession = debugSessionManager.openScript(
+                        scriptId, version, sourceSnapshot, properties, maxIterations, warnLoops,
+                        requestedBy, null);
+                    redirect(exchange, "/admin/debug/" + urlPath(debugSession.sessionId));
+                    return;
+                }
                 if ("GET".equals(method) && "/admin/runs".equals(path)) {
                     writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderRunsPage());
                     return;
@@ -640,6 +671,15 @@ public class TeeBoxServer {
                     redirect(exchange, "/admin/debug/" + urlPath(debugSession.sessionId));
                     return;
                 }
+                if ("GET".equals(method) && "/admin/debug".equals(path)) {
+                    if (!isAdmin(session)) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    writeHtml(exchange, HttpURLConnection.HTTP_OK,
+                        pageRenderer.renderDebugSessionsPage());
+                    return;
+                }
                 if (path.startsWith("/admin/debug/")) {
                     if (!isAdmin(session)) {
                         forbidden(exchange);
@@ -668,6 +708,29 @@ public class TeeBoxServer {
                         }
                         writeJson(exchange, HttpURLConnection.HTTP_OK,
                             debugSessionManager.commandResult(sessionId, commandId));
+                        return;
+                    }
+                    if ("POST".equals(method) && suffix.endsWith("/restart")) {
+                        String sessionId = suffix.substring(0,
+                            suffix.length() - "/restart".length());
+                        if (debugSessionManager.find(sessionId) == null) {
+                            writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND,
+                                errorMap("Debug session not found"));
+                            return;
+                        }
+                        String requestedBy = session != null ? session.username : "admin";
+                        try {
+                            DebugSessionManager.Session restarted =
+                                debugSessionManager.restart(sessionId, requestedBy);
+                            writeJson(exchange, HttpURLConnection.HTTP_CREATED,
+                                debugSessionManager.statusMap(restarted));
+                        } catch (IllegalArgumentException e) {
+                            writeJson(exchange, HttpURLConnection.HTTP_BAD_REQUEST,
+                                errorMap(e.getMessage()));
+                        } catch (IllegalStateException e) {
+                            writeJson(exchange, HttpURLConnection.HTTP_CONFLICT,
+                                errorMap(e.getMessage()));
+                        }
                         return;
                     }
                     if ("POST".equals(method) && (suffix.endsWith("/command") || suffix.endsWith("/breakpoints"))) {
@@ -839,6 +902,7 @@ public class TeeBoxServer {
             html = pageRenderer.renderNavCountsFragment();
         } else if (fragment.startsWith("all-runs")) {
             String status = null;
+            String origin = null;
             Boolean immediate = null;
             String search = null;
             int page = 1;
@@ -847,14 +911,15 @@ public class TeeBoxServer {
             if (rawQuery != null) {
                 Map<String, String> query = parseQuery(exchange);
                 status = trimToNull(query.get("status"));
+                origin = trimToNull(query.get("origin"));
                 immediate = parseInstantFilter(query.get("instant"));
                 search = trimToNull(query.get("q"));
                 page = parseInt(query.get("page"), 1);
             }
             if (page < 1) page = 1;
             int offset = (page - 1) * pageSize;
-            int totalCount = runManager.countRuns(status, immediate, search);
-            List<RunInfo> runs = runManager.listRuns(status, immediate, search, offset, pageSize);
+            int totalCount = runManager.countRuns(status, immediate, search, origin);
+            List<RunInfo> runs = runManager.listRuns(status, immediate, search, origin, offset, pageSize);
             html = pageRenderer.renderRunsTableWithPagination(runs, page, pageSize, totalCount);
         } else if (fragment.startsWith("run-detail/")) {
             String runId = fragment.substring("run-detail/".length());
@@ -1119,13 +1184,15 @@ public class TeeBoxServer {
         if ("GET".equals(method) && "/api/admin/runs".equals(path)) {
             Map<String, String> query = parseQuery(exchange);
             String status = trimToNull(query.get("status"));
-            // Same filters as the admin-UI Runs page: instant=exclude|only, q=<runId/scriptId substring>.
+            // Same filters as the admin-UI Runs page: origin=api|ui|debug,
+            // instant=exclude|only, q=<runId/scriptId substring>.
+            String origin = trimToNull(query.get("origin"));
             Boolean immediate = parseInstantFilter(query.get("instant"));
             String search = trimToNull(query.get("q"));
             int offset = parseInt(query.get("offset"), 0);
             int limit = parseInt(query.get("limit"), -1);
             writeJson(exchange, HttpURLConnection.HTTP_OK,
-                runManager.listRuns(status, immediate, search, offset, limit));
+                runManager.listRuns(status, immediate, search, origin, offset, limit));
             return;
         }
         if ("GET".equals(method) && path.startsWith("/api/admin/runs/")) {
@@ -1167,7 +1234,7 @@ public class TeeBoxServer {
                 writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Run not found"));
                 return;
             }
-            // Body is optional ({"breakpoints":[..]} adds to the auto error-line breakpoint) —
+            // Body is optional ({"breakpoints":[..]} adds user stops after the private entry stop) —
             // but only ABSENCE is optional: this endpoint re-executes a script with real side
             // effects, so a malformed/oversize body is a 400, never treated as "no body".
             Map<String, Object> body = parseJsonBodyOptional(exchange);
@@ -1188,6 +1255,20 @@ public class TeeBoxServer {
         }
         if (path.startsWith("/api/admin/debug/")) {
             String suffix = path.substring("/api/admin/debug/".length());
+            if ("POST".equals(method) && suffix.endsWith("/restart")) {
+                String sessionId = suffix.substring(0,
+                    suffix.length() - "/restart".length());
+                if (debugSessionManager.find(sessionId) == null) {
+                    writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND,
+                        errorMap("Debug session not found"));
+                    return;
+                }
+                DebugSessionManager.Session restarted =
+                    debugSessionManager.restart(sessionId, "admin");
+                writeJson(exchange, HttpURLConnection.HTTP_CREATED,
+                    debugSessionManager.statusMap(restarted));
+                return;
+            }
             if ("POST".equals(method) && suffix.endsWith("/command")) {
                 String sessionId = suffix.substring(0, suffix.length() - "/command".length());
                 if (debugSessionManager.find(sessionId) == null) {

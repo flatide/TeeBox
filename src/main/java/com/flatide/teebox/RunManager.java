@@ -402,6 +402,11 @@ public class RunManager {
         return runRegistry.countRuns(status, immediate, search);
     }
 
+    /** Filtered count with an optional run origin ({@code api/ui/debug}). */
+    public int countRuns(String status, Boolean immediate, String search, String origin) {
+        return runRegistry.countRuns(status, immediate, search, origin);
+    }
+
     public List<RunInfo> listRuns() {
         return listRuns(null, 0, -1);
     }
@@ -417,6 +422,12 @@ public class RunManager {
     /** Filtered listing; see {@link #countRuns(String, Boolean, String)} for filter semantics. */
     public List<RunInfo> listRuns(String status, Boolean immediate, String search, int offset, int limit) {
         return runRegistry.listRuns(status, null, immediate, search, offset, limit);
+    }
+
+    /** Filtered listing with an optional run origin ({@code api/ui/debug}). */
+    public List<RunInfo> listRuns(String status, Boolean immediate, String search, String origin,
+                                  int offset, int limit) {
+        return runRegistry.listRuns(status, null, immediate, search, origin, offset, limit);
     }
 
     public RunInfo getRun(String runId) {
@@ -853,20 +864,24 @@ public class RunManager {
         void onCancelWake();
     }
 
-    /** A prepared debug re-run: the registered RunInfo plus the resolved script file to execute. */
+    /** A prepared debug re-run: the registered/reset RunInfo plus the resolved script to execute. */
     public static class DebugTarget {
         public final RunInfo run;
         public final File scriptFile;
-        DebugTarget(RunInfo run, File scriptFile) {
+        /** Immutable content used by both the debug editor and the engine for this attempt. */
+        public final String sourceCode;
+        DebugTarget(RunInfo run, File scriptFile, String sourceCode) {
             this.run = run;
             this.scriptFile = scriptFile;
+            this.sourceCode = sourceCode;
         }
     }
 
     /**
      * Build and register a debug re-run of a terminal run: the same script <b>version</b>, the
-     * source run's input properties, and its iteration settings; a fresh runId with
-     * {@code debug=true}/{@code debugOf}. The version executes by its <b>current stored
+     * source run's input properties, and its iteration settings. One canonical debug runId is
+     * reused for every execution of the same source Run; each execution completely resets its
+     * prior lifecycle/output/result/task state. The version executes by its <b>current stored
      * content</b> — deliberately (user decision): editing the version after the failure and
      * re-debugging the fix is a supported workflow. The trade-off is that the failing-line auto
      * breakpoint assumes the text has not moved; a future step is editing the source from within
@@ -912,8 +927,15 @@ public class RunManager {
         }
         // The failed version, not the active one — but by its current content (see javadoc).
         ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolve(source.scriptId, source.version);
+        // One launch snapshot: editing this version remains allowed, but cannot move the source/
+        // entry mapping underneath an already-open debug session.
+        String sourceCode = scriptRegistry.readVersionContent(resolved.scriptId, resolved.version);
+        if (sourceCode == null) {
+            sourceCode = "";
+        }
+        RunInfo previous = runRegistry.findDebugRun(sourceRunId);
         RunInfo run = new RunInfo();
-        run.runId = createRunId();
+        run.runId = previous != null ? previous.runId : createRunId();
         run.scriptPath = resolved.displayPath;
         run.scriptId = resolved.scriptId;
         run.version = resolved.version;
@@ -928,8 +950,76 @@ public class RunManager {
         run.origin = "debug";
         run.debug = true;
         run.debugOf = sourceRunId;
-        runRegistry.register(run);
-        return new DebugTarget(run, resolved.file);
+        if (previous != null) {
+            synchronized (previous) {
+                if (previous.status == RunStatus.QUEUED || previous.status == RunStatus.PENDING
+                        || previous.status == RunStatus.RUNNING) {
+                    throw new IllegalStateException("Debug run " + previous.runId + " is still "
+                        + previous.status + " and cannot be re-used yet");
+                }
+            }
+            // A debug run may have spawned detached tasks that outlived the interpreter. Kill and
+            // remove the complete previous task set before the shared runId becomes QUEUED again.
+            managedTaskEngine.clearRunTasks(run.runId);
+            run = runRegistry.resetDebugRun(previous, run);
+            TeeBoxLog.info("RunManager", "Reset debug run " + run.runId
+                + " for source Run " + sourceRunId);
+        } else {
+            runRegistry.register(run);
+        }
+        return new DebugTarget(run, resolved.file, sourceCode);
+    }
+
+    /**
+     * Prepare a debugger attempt directly from the script page's Run Script panel. The currently
+     * edited source (possibly unsaved) and caller-supplied input properties/iteration settings are
+     * captured for the attempt, and there is deliberately no parent Run. A null
+     * {@code sourceSnapshot} is the no-JS fallback (load the selected saved version); Restart
+     * supplies the previous session's immutable snapshot.
+     * The RunRegistry entry exists only while the session executes: it is neither persisted nor
+     * returned by run list/count APIs.
+     */
+    public DebugTarget prepareScriptDebug(String scriptId, String version, String sourceSnapshot,
+                                          Map<String, Object> properties, int maxIterations,
+                                          boolean warnLoops, String requestedBy) {
+        if (draining || shutdownRequested) {
+            throw new IllegalStateException("Server is shutting down; new runs are rejected");
+        }
+        ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolve(scriptId, version);
+        String sourceCode = sourceSnapshot != null ? sourceSnapshot
+            : scriptRegistry.readVersionContent(resolved.scriptId, resolved.version);
+        List<String> errors = scriptRegistry.validateContent(sourceCode);
+        if (!errors.isEmpty()) {
+            throw new IllegalArgumentException("Cannot debug invalid script: " + errors.get(0));
+        }
+        RunInfo run = new RunInfo();
+        run.runId = createRunId();
+        run.scriptPath = resolved.displayPath;
+        run.scriptId = resolved.scriptId;
+        run.version = resolved.version;
+        run.scriptAbsolutePath = resolved.file.getAbsolutePath();
+        run.status = RunStatus.QUEUED;
+        run.createdAt = System.currentTimeMillis();
+        run.maxIterations = maxIterations > 0 ? maxIterations : 1000;
+        run.iterationLimitBehavior = warnLoops ? "warn" : "error";
+        run.timeoutMs = 0;
+        run.properties = sanitizeProperties(properties);
+        run.submittedBy = requestedBy;
+        run.origin = "debug";
+        run.debug = true;
+        run.debugOf = null;
+        runRegistry.registerTransientDebug(run);
+        return new DebugTarget(run, resolved.file, sourceCode);
+    }
+
+    /** Remove every trace of a script-editor debug attempt after its Session copied the terminal
+     *  output/result. Detached tasks are stopped as part of the same cleanup. */
+    public void discardTransientDebugRun(String runId) {
+        try {
+            managedTaskEngine.clearRunTasks(runId);
+        } finally {
+            runRegistry.discardTransientDebug(runId);
+        }
     }
 
     /** Terminalize a prepared-but-never-started debug run (its submit raced a shutdown): without
@@ -943,15 +1033,16 @@ public class RunManager {
      * normal run (SHELL task runner, output/thread callbacks, terminal marking) minus the debug
      * exemptions. Blocks until the run is terminal; call from the debug executor.
      */
-    public void executeDebugRun(RunInfo run, File scriptFile, DebugAttach debug) {
-        executeRun(run, scriptFile, debug);
+    public void executeDebugRun(RunInfo run, File scriptFile, String sourceCode, DebugAttach debug) {
+        executeRun(run, scriptFile, debug, sourceCode);
     }
 
     private void executeRun(final RunInfo run, File scriptFile) {
-        executeRun(run, scriptFile, null);
+        executeRun(run, scriptFile, null, null);
     }
 
-    private void executeRun(final RunInfo run, File scriptFile, final DebugAttach debugAttach) {
+    private void executeRun(final RunInfo run, File scriptFile, final DebugAttach debugAttach,
+                            String sourceSnapshot) {
         final List<OutputPublishRule> outputRules = getOutputRulesForScript(run.scriptId, run.version);
         try {
             runRegistry.markStarted(run);
@@ -1033,7 +1124,8 @@ public class RunManager {
                         }
                     }
                 },
-                debugAttach != null ? debugAttach.handler() : null
+                debugAttach != null ? debugAttach.handler() : null,
+                sourceSnapshot
             );
             // Flush watchers for this run before marking complete
             flushWatchersForRun(run.runId);

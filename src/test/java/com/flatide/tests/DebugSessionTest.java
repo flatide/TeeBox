@@ -2,6 +2,7 @@ package com.flatide.tests;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import com.flatide.propertee2.task.TaskInfo;
 import com.flatide.teebox.RunInfo;
 import com.flatide.teebox.RunStatus;
 import com.flatide.teebox.TeeBoxClient;
@@ -19,6 +20,7 @@ import java.io.OutputStream;
 import java.lang.reflect.Type;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -28,15 +30,15 @@ import java.util.Map;
 /**
  * Interactive debug re-runs (1.25.0): a finished run re-executed under the engine debugger
  * (propertee2 0.26.0 façade hooks) on the dedicated debug executor, driven over the admin API —
- * auto-breakpoint on the failing line, pause/eval/step/continue, quit and cancel both ending as
- * CANCELLED (never FAILED), the capacity cap, and the idle sweep.
+ * entry pause, live breakpoints, eval/step/continue/restart, current-attempt error markers, quit
+ * and cancel both ending as CANCELLED (never FAILED), the capacity cap, and the idle sweep.
  */
 public class DebugSessionTest {
     private final Gson gson = new Gson();
     private final Type mapType = new TypeToken<Map<String, Object>>() {}.getType();
 
-    /** Fails on line 2 with a positioned error — the auto-breakpoint target. Line 1 proves the
-     *  debug re-run replays the source run's input properties. */
+    /** Fails on line 2 with a positioned error marker. Line 1 proves the debug re-run replays the
+     *  source run's input properties. */
     private static final String FAILING_SCRIPT =
         "msg = \"hello \" + _PROPS.who\n" +
         "FAIL(\"upstream unreachable\")\n" +
@@ -48,23 +50,32 @@ public class DebugSessionTest {
         "PRINT(b)\n";
 
     @Test
-    public void failedRunDebugRerunPausesAtTheFailingLineAndEvalReadsAndWritesTheScope() throws Exception {
+    public void debugStartsAtEntryAndKeepsTheSourceErrorAsASeparateMarker() throws Exception {
         TestServer testServer = createServer(null);
         try {
             String sourceRunId = runFailingScript(testServer, "dbg_fail");
 
-            // Open: no body — the breakpoint comes from the source run's positioned error.
+            // No body: no user breakpoint. The positioned source failure is a red marker only;
+            // the private entry stop pauses before line 1 executes and is not exposed in the list.
             Map<String, Object> session = postJson(
                 testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
             String sessionId = (String) session.get("sessionId");
             String debugRunId = (String) session.get("runId");
-            Assert.assertEquals(Arrays.asList(2.0), session.get("breakpoints"));
+            Assert.assertEquals(java.util.Collections.emptyList(), session.get("breakpoints"));
+            Assert.assertEquals(2.0, ((Number) session.get("errorLine")).doubleValue(), 0.0);
 
             Map<String, Object> paused = waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
             @SuppressWarnings("unchecked")
             Map<String, Object> frame = (Map<String, Object>) paused.get("paused");
-            Assert.assertEquals(2.0, ((Number) frame.get("line")).doubleValue(), 0.0);
-            Assert.assertEquals("BREAKPOINT", frame.get("reason"));
+            Assert.assertEquals(1.0, ((Number) frame.get("line")).doubleValue(), 0.0);
+            Assert.assertEquals("ENTRY", frame.get("reason"));
+            Assert.assertTrue(String.valueOf(frame.get("statement")).contains("_PROPS.who"));
+
+            // Step from entry: line 1 executes, then line 2 pauses before FAIL.
+            command(testServer, sessionId, "stepOver", null, 200);
+            paused = waitForPausedAtLine(testServer, sessionId, 2, 10000L);
+            frame = (Map<String, Object>) paused.get("paused");
+            Assert.assertEquals("STEP", frame.get("reason"));
             Assert.assertTrue(String.valueOf(frame.get("statement")).contains("FAIL"));
             // The pause snapshot exposes the paused scope in display form — including the
             // property-derived global, proving the re-run replayed the source run's props.
@@ -98,6 +109,33 @@ public class DebugSessionTest {
     }
 
     @Test
+    public void failedDebugAttemptMovesTheRedMarkerToItsActualErrorLine() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            String sourceRunId = runFailingScript(testServer, "dbg_moved_error");
+            // The source Run failed on line 2, but the current version now fails on line 3.
+            testServer.server.getRunManager().updateScriptVersionContent("dbg_moved_error", "v1",
+                "a = 1\n" +
+                "b = 2\n" +
+                "FAIL(\"moved failure\")\n");
+            Map<String, Object> session = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            String sessionId = (String) session.get("sessionId");
+            Assert.assertEquals("the source failure is the initial marker", 2.0,
+                ((Number) session.get("errorLine")).doubleValue(), 0.0);
+            waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            command(testServer, sessionId, "continue", null, 200);
+            Map<String, Object> ended =
+                waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+            Assert.assertEquals("FAILED", ended.get("runStatus"));
+            Assert.assertEquals("the current attempt's failure must replace the old marker", 3.0,
+                ((Number) ended.get("errorLine")).doubleValue(), 0.0);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void quitEndsTheDebugRunAsCancelledNeverFailed() throws Exception {
         TestServer testServer = createServer(null);
         try {
@@ -113,10 +151,32 @@ public class DebugSessionTest {
             Map<String, Object> ended = waitForSessionState(testServer, sessionId, "ENDED", 10000L);
             Assert.assertEquals("CANCELLED", ended.get("runStatus"));
             Assert.assertTrue(String.valueOf(ended.get("errorMessage")).contains("Ended from the debugger"));
+            Assert.assertNull("a stopped attempt must not keep the source error marker",
+                ended.get("errorLine"));
 
             // Commands against an ended session are a state error, not a crash.
             postJsonExpectingStatus(testServer.baseUrl + "/api/admin/debug/" + sessionId + "/command",
                 "{\"op\":\"continue\"}", 409);
+
+            // A CANCELLED source has no positioned failure: debug still waits at entry, but must
+            // not invent a red error marker from the cancellation message.
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("dbg_cancelled_source", "v1", "loop true infinite do\nend\n",
+                "cancelled source", Arrays.asList("test"), true);
+            String cancelledSource = (String) client.submitRun("dbg_cancelled_source", null,
+                new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(client, cancelledSource, "RUNNING", 10000L);
+            client.cancelRun(cancelledSource);
+            waitForRunStatus(client, cancelledSource, "CANCELLED", 10000L);
+            Map<String, Object> cancelledDebug = postJson(testServer.baseUrl
+                + "/api/admin/runs/" + cancelledSource + "/debug", "{}", 201);
+            Assert.assertNull(cancelledDebug.get("errorLine"));
+            String cancelledSession = (String) cancelledDebug.get("sessionId");
+            Map<String, Object> atEntry = waitForSessionState(
+                testServer, cancelledSession, "PAUSED", 10000L);
+            Assert.assertEquals("ENTRY", pausedReason(atEntry));
+            command(testServer, cancelledSession, "quit", null, 200);
+            waitForSessionState(testServer, cancelledSession, "ENDED", 10000L);
         } finally {
             testServer.close();
         }
@@ -139,6 +199,11 @@ public class DebugSessionTest {
             String sessionId = (String) session.get("sessionId");
 
             Map<String, Object> paused = waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            Assert.assertEquals(1.0, pausedLine(paused), 0.0);
+            Assert.assertEquals("ENTRY", pausedReason(paused));
+            Assert.assertNull("a completed source has no error marker", paused.get("errorLine"));
+            command(testServer, sessionId, "continue", null, 200);
+            paused = waitForPausedAtLine(testServer, sessionId, 2, 10000L);
             Assert.assertEquals(2.0, pausedLine(paused), 0.0);
             Assert.assertEquals("BREAKPOINT", pausedReason(paused));
 
@@ -156,6 +221,50 @@ public class DebugSessionTest {
             command(testServer, sessionId, "continue", null, 200);
             Map<String, Object> ended = waitForSessionState(testServer, sessionId, "ENDED", 10000L);
             Assert.assertEquals("COMPLETED", ended.get("runStatus"));
+            Assert.assertEquals(Arrays.asList("2"), ended.get("stdoutLines"));
+            Assert.assertEquals(1.0, ((Number) ended.get("stdoutTotalLines")).doubleValue(), 0.0);
+            Assert.assertEquals(java.util.Collections.emptyList(), ended.get("stderrLines"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void restartStopsTheAttemptAndReentersWithTheSameRunAndBreakpoints() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("dbg_restart", "v1", QUICK_SCRIPT, "restart",
+                Arrays.asList("test"), true);
+            String sourceRunId = (String) client.submitRun("dbg_restart", null,
+                new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(client, sourceRunId, "COMPLETED", 10000L);
+
+            Map<String, Object> first = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug",
+                "{\"breakpoints\":[2]}", 201);
+            String firstSessionId = (String) first.get("sessionId");
+            String debugRunId = (String) first.get("runId");
+            waitForSessionState(testServer, firstSessionId, "PAUSED", 10000L);
+
+            Map<String, Object> restarted = postJson(testServer.baseUrl
+                + "/admin/debug/" + firstSessionId + "/restart", "{}", 201);
+            String restartedSessionId = (String) restarted.get("sessionId");
+            Assert.assertNotEquals(firstSessionId, restartedSessionId);
+            Assert.assertEquals("Restart must reset the canonical debug Run", debugRunId,
+                restarted.get("runId"));
+            Assert.assertEquals(Arrays.asList(2.0), restarted.get("breakpoints"));
+            Assert.assertNull("the superseded session still exposes the reset Run",
+                testServer.server.getDebugSessionManager().find(firstSessionId));
+
+            Map<String, Object> atEntry =
+                waitForSessionState(testServer, restartedSessionId, "PAUSED", 10000L);
+            Assert.assertEquals("ENTRY", pausedReason(atEntry));
+            Assert.assertEquals(1.0, pausedLine(atEntry), 0.0);
+            command(testServer, restartedSessionId, "continue", null, 200);
+            waitForPausedAtLine(testServer, restartedSessionId, 2, 10000L);
+            command(testServer, restartedSessionId, "quit", null, 200);
+            waitForSessionState(testServer, restartedSessionId, "ENDED", 10000L);
         } finally {
             testServer.close();
         }
@@ -175,9 +284,20 @@ public class DebugSessionTest {
             String sessionId = (String) session.get("sessionId");
             waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
 
-            // The one slot is held (a paused session occupies it for its whole lifetime).
-            postJsonExpectingStatus(testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug",
-                "{}", 409);
+            // Re-opening the SAME source is idempotent even at the capacity limit: one session,
+            // one debug Run, and any newly requested breakpoints merge into the live set.
+            Map<String, Object> reused = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug",
+                "{\"breakpoints\":[3]}", 201);
+            Assert.assertEquals(sessionId, reused.get("sessionId"));
+            Assert.assertEquals(session.get("runId"), reused.get("runId"));
+            Assert.assertEquals(Arrays.asList(3.0), reused.get("breakpoints"));
+            Assert.assertEquals(1, testServer.server.getDebugSessionManager().activeCount());
+
+            // A DIFFERENT finished source is still rejected while the one slot is held.
+            String otherSourceRunId = runFailingScript(testServer, "dbg_cap_other");
+            postJsonExpectingStatus(testServer.baseUrl + "/api/admin/runs/" + otherSourceRunId
+                + "/debug", "{}", 409);
             // A still-running source is rejected; an unknown one is 404.
             client.registerScript("dbg_spin", "v1", "loop true infinite do\nend\n", "spin",
                 Arrays.asList("test"), true);
@@ -188,16 +308,111 @@ public class DebugSessionTest {
                 "{}", 409);
             postJsonExpectingStatus(testServer.baseUrl + "/api/admin/runs/run-nope/debug", "{}", 404);
 
-            // Quit frees the slot; a new session opens.
+            // Quit frees the slot; a new console session opens, but the source's canonical debug
+            // Run is reset and reused (there is still only one debug Run in the registry).
             command(testServer, sessionId, "quit", null, 200);
             waitForSessionState(testServer, sessionId, "ENDED", 10000L);
             Map<String, Object> second = postJson(
                 testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            Assert.assertNotEquals("a new execution needs a fresh console session",
+                sessionId, second.get("sessionId"));
+            Assert.assertEquals("the same source must always reuse its debug Run",
+                session.get("runId"), second.get("runId"));
+            Assert.assertEquals(1, testServer.server.getRunManager()
+                .listRuns(null, null, null, "debug", 0, -1).size());
+            Assert.assertNull("the superseded ended console must not expose the reset Run",
+                testServer.server.getDebugSessionManager().find(sessionId));
+            waitForSessionState(testServer, (String) second.get("sessionId"), "PAUSED", 10000L);
+            RunInfo reset = testServer.server.getRunManager().getRun((String) second.get("runId"));
+            Assert.assertEquals(RunStatus.RUNNING, reset.status);
+            Assert.assertNull("previous terminal timestamp leaked into the next attempt", reset.endedAt);
+            Assert.assertNull("previous failure leaked into the next attempt", reset.errorMessage);
+            Assert.assertNull("previous result leaked into the next attempt", reset.resultData);
             command(testServer, (String) second.get("sessionId"), "quit", null, 200);
             waitForSessionState(testServer, (String) second.get("sessionId"), "ENDED", 10000L);
 
             client.cancelRun(spinning);
             waitForRunStatus(client, spinning, "CANCELLED", 10000L);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void endedDebugRerunReusesItsRunAcrossRestart() throws Exception {
+        File dataDir = Files.createTempDirectory("propertee-teebox-debug-restart").toFile();
+        TestServer first = createServer(dataDir, null);
+        String sourceRunId;
+        String debugRunId;
+        try {
+            sourceRunId = runFailingScript(first, "dbg_restart_reuse");
+            Map<String, Object> opened = postJson(
+                first.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            debugRunId = (String) opened.get("runId");
+            String sessionId = (String) opened.get("sessionId");
+            waitForSessionState(first, sessionId, "PAUSED", 10000L);
+            command(first, sessionId, "quit", null, 200);
+            waitForSessionState(first, sessionId, "ENDED", 10000L);
+        } finally {
+            first.close();
+        }
+
+        TestServer restarted = createServer(dataDir, null);
+        try {
+            Map<String, Object> reopened = postJson(
+                restarted.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            Assert.assertEquals("persisted debug Run was not reused after restart",
+                debugRunId, reopened.get("runId"));
+            Assert.assertEquals(1, restarted.server.getRunManager()
+                .listRuns(null, null, null, "debug", 0, -1).size());
+            String sessionId = (String) reopened.get("sessionId");
+            waitForSessionState(restarted, sessionId, "PAUSED", 10000L);
+            command(restarted, sessionId, "quit", null, 200);
+            waitForSessionState(restarted, sessionId, "ENDED", 10000L);
+        } finally {
+            restarted.close();
+        }
+    }
+
+    @Test
+    public void reusedDebugRunDoesNotAccumulateTasksFromEarlierAttempts() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("dbg_task_reset", "v1",
+                "result = SHELL(\"echo debug-attempt\")\n" +
+                "FAIL(\"stop after task\")\n",
+                "task reset", Arrays.asList("test"), true);
+            String sourceRunId = (String) client.submitRun("dbg_task_reset", null,
+                new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(client, sourceRunId, "FAILED", 10000L);
+
+            Map<String, Object> first = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            String firstSessionId = (String) first.get("sessionId");
+            String debugRunId = (String) first.get("runId");
+            waitForSessionState(testServer, firstSessionId, "PAUSED", 10000L);
+            command(testServer, firstSessionId, "stepOver", null, 200);
+            waitForPausedAtLine(testServer, firstSessionId, 2, 10000L);
+            List<TaskInfo> firstTasks = testServer.server.getRunManager().listTasksForRun(debugRunId);
+            Assert.assertEquals(1, firstTasks.size());
+            String firstTaskId = firstTasks.get(0).taskId;
+            command(testServer, firstSessionId, "quit", null, 200);
+            waitForSessionState(testServer, firstSessionId, "ENDED", 10000L);
+
+            Map<String, Object> second = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            Assert.assertEquals(debugRunId, second.get("runId"));
+            String secondSessionId = (String) second.get("sessionId");
+            waitForSessionState(testServer, secondSessionId, "PAUSED", 10000L);
+            command(testServer, secondSessionId, "stepOver", null, 200);
+            waitForPausedAtLine(testServer, secondSessionId, 2, 10000L);
+            List<TaskInfo> secondTasks = testServer.server.getRunManager().listTasksForRun(debugRunId);
+            Assert.assertEquals("old and new task rows were mixed", 1, secondTasks.size());
+            Assert.assertNotEquals("the old task row survived the reset",
+                firstTaskId, secondTasks.get(0).taskId);
+            command(testServer, secondSessionId, "quit", null, 200);
+            waitForSessionState(testServer, secondSessionId, "ENDED", 10000L);
         } finally {
             testServer.close();
         }
@@ -254,14 +469,212 @@ public class DebugSessionTest {
             String consolePage = getBody(testServer.baseUrl + location, 200);
             Assert.assertTrue(consolePage.contains("Debug session"));
             Assert.assertTrue("missing side-effect warning", consolePage.contains("side effects happen again"));
+            Assert.assertTrue("missing shared source editor", consolePage.contains("id='dbg-source'"));
+            Assert.assertTrue("source editor is not upgraded", consolePage.contains("data-pt-editor"));
+            Assert.assertTrue("source editor has no breakpoint gutter",
+                consolePage.contains("data-pt-breakpoints"));
+            Assert.assertTrue("debug source must be read-only",
+                consolePage.contains("data-pt-breakpoints readonly"));
+            Assert.assertTrue("debug source content is missing", consolePage.contains("_PROPS.who"));
+            Assert.assertTrue("shared editor breakpoint wiring is missing",
+                consolePage.contains("pt-breakpoints-change"));
+            Assert.assertTrue("current-line highlighting is missing",
+                consolePage.contains("setDebugLine(latestDebugLine,reveal)"));
+            Assert.assertTrue("source-error highlighting is missing",
+                consolePage.contains("setErrorLine(latestErrorLine,false)"));
+            Assert.assertTrue("playground-style red error marker CSS is missing",
+                consolePage.contains(".pt-editor-error-line"));
+            Assert.assertTrue("line markers must render above syntax across the full code row",
+                consolePage.contains("position:absolute; z-index:2; top:0; left:0; right:0; bottom:0"));
+            Assert.assertTrue("the editor input stacking contract is missing",
+                consolePage.contains("position:relative; z-index:3; display:block"));
+            Assert.assertTrue("active code-row markers must override their display:none default",
+                consolePage.contains("marker.style.display = 'block'"));
+            int editorAt = consolePage.indexOf("id='dbg-source'");
+            int workbenchAt = consolePage.indexOf("class='dbg-workbench'");
+            int outputAt = consolePage.indexOf("class='dbg-pane dbg-output-pane'");
+            int variablesAt = consolePage.indexOf("class='dbg-pane dbg-vars-pane'");
+            Assert.assertTrue("Output workbench is not attached below the editor",
+                editorAt >= 0 && editorAt < workbenchAt);
+            Assert.assertTrue("Output and Variables are not vertically split",
+                workbenchAt < outputAt && outputAt < variablesAt);
+            Assert.assertTrue("debug toolbar is not above Output",
+                outputAt < consolePage.indexOf("id='dbg-btn-continue'")
+                    && consolePage.indexOf("id='dbg-btn-stepOut'")
+                        < consolePage.indexOf("id='dbg-console'"));
+            Assert.assertTrue("Stop control is missing", consolePage.contains(">Stop</button>"));
+            Assert.assertTrue("Restart control is missing", consolePage.contains(">Restart</button>"));
+            Assert.assertTrue("Restart endpoint is not wired",
+                consolePage.contains("post(base+'/restart'"));
+            Assert.assertFalse("old Quit Run label remains", consolePage.contains(">Quit Run</button>"));
+            Assert.assertTrue("Run output is not wired into the console",
+                consolePage.contains("syncRunOutput(s)"));
+            Assert.assertFalse("pause diagnostics must not pollute script Output",
+                consolePage.contains("-- paused at line"));
+            Assert.assertFalse("generic session-end diagnostics must not pollute script Output",
+                consolePage.contains("-- session ended"));
+            Assert.assertFalse("Restart progress must stay in the toolbar, not Output",
+                consolePage.contains("-- restarting from entry"));
+            Assert.assertTrue("runtime failures must remain visible in Output",
+                consolePage.contains("Runtime Error:"));
+            Assert.assertTrue("script stderr must use the playground-style error prefix",
+                consolePage.contains("'[ERROR] '"));
+            Assert.assertFalse("old comma-separated breakpoint input remains",
+                consolePage.contains("dbg-bp-input"));
 
             // The session-authed state endpoint the console polls.
             Map<String, Object> state = getJsonMap(
                 testServer.baseUrl + "/admin/debug/" + sessionId + "/state", 200);
             Assert.assertEquals(sessionId, state.get("sessionId"));
+            Assert.assertEquals(2.0, ((Number) state.get("errorLine")).doubleValue(), 0.0);
+            Assert.assertEquals("ENTRY", ((Map<?, ?>) state.get("paused")).get("reason"));
+            Assert.assertEquals(java.util.Collections.emptyList(), state.get("stdoutLines"));
+            Assert.assertEquals(java.util.Collections.emptyList(), state.get("stderrLines"));
+            String debugRunId = String.valueOf(state.get("runId"));
+
+            // Runs defaults to API runs: the source is visible and its debug re-run is not.
+            String defaultRunsPage = getBody(testServer.baseUrl + "/admin/runs", 200);
+            Assert.assertTrue(defaultRunsPage.contains(sourceRunId));
+            Assert.assertFalse(defaultRunsPage.contains(debugRunId));
+            String debugRuns = getBody(
+                testServer.baseUrl + "/admin/fragments/all-runs?origin=debug", 200);
+            Assert.assertTrue(debugRuns.contains(debugRunId));
+            Assert.assertFalse(debugRuns.contains(sourceRunId));
+
+            // Leaving the console must not strand the session: the admin nav, dedicated session
+            // list, source Run and debug Run all provide a way back to the same console.
+            getBody(testServer.baseUrl + "/admin/scripts", 200);
+            String dashboard = getBody(testServer.baseUrl + "/admin", 200);
+            Assert.assertTrue("dashboard nav has no debugger entry",
+                dashboard.contains("href='/admin/debug'"));
+            String sessionsPage = getBody(testServer.baseUrl + "/admin/debug", 200);
+            Assert.assertTrue("debug session missing from session list", sessionsPage.contains(sessionId));
+            Assert.assertTrue("session list has no resume link",
+                sessionsPage.contains("href='/admin/debug/" + sessionId + "'>Resume</a>"));
+            String sourcePageAfterOpen = getBody(
+                testServer.baseUrl + "/admin/runs/" + sourceRunId, 200);
+            Assert.assertTrue("source Run has no resume-debug link",
+                sourcePageAfterOpen.contains("href='/admin/debug/" + sessionId + "'"));
+            Assert.assertFalse("source Run still offers a duplicate debug re-run",
+                sourcePageAfterOpen.contains("Debug Re-run</button>"));
+            Assert.assertEquals("UI reopen must redirect to the existing session", location,
+                postExpectingRedirect(testServer.baseUrl + "/admin/runs/" + sourceRunId + "/debug"));
+            Assert.assertEquals("UI reopen created another debug Run", 1,
+                testServer.server.getRunManager()
+                    .listRuns(null, null, null, "debug", 0, -1).size());
+            String debugRunPage = getBody(
+                testServer.baseUrl + "/admin/runs/" + debugRunId, 200);
+            Assert.assertTrue("debug Run has no resume-debug link",
+                debugRunPage.contains("href='/admin/debug/" + sessionId + "'"));
+            String reopenedConsole = getBody(
+                testServer.baseUrl + "/admin/debug/" + sessionId, 200);
+            Assert.assertTrue("debug console could not be re-entered",
+                reopenedConsole.contains("Debug session"));
 
             command(testServer, sessionId, "quit", null, 200);
             waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void runScriptPanelDebugUsesPropsWithoutParentOrRunHistory() throws Exception {
+        File dataDir = Files.createTempDirectory("propertee-teebox-script-debug").toFile();
+        TestServer testServer = createServer(dataDir, null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("editor_dbg", "v1", "PRINT(\"prop-\" + _PROPS.who)\n",
+                "props source", Arrays.asList("test"), true);
+
+            String scriptPage = getBody(
+                testServer.baseUrl + "/admin/scripts/editor_dbg?version=v1", 200);
+            int sourceCard = scriptPage.indexOf("id='version-source'");
+            int runCard = scriptPage.indexOf("<h2>Run Script</h2>");
+            int propsInput = scriptPage.indexOf("name='propsJson'");
+            int debugAction = scriptPage.indexOf("formaction='/admin/scripts/editor_dbg/debug'");
+            Assert.assertTrue("Debug action is not in the Run Script panel",
+                sourceCard >= 0 && sourceCard < runCard && runCard < propsInput
+                    && propsInput < debugAction);
+            Assert.assertEquals("Debug action still appears in the source editor", -1,
+                scriptPage.substring(sourceCard, runCard).indexOf("/admin/scripts/editor_dbg/debug"));
+            Assert.assertTrue("Debug does not identify the editor version",
+                scriptPage.contains("name='debugVersion' value='v1'"));
+            Assert.assertTrue("unsaved editor source is not wired into Debug",
+                scriptPage.contains("onclick='return ptPrepareScriptDebug(this)'"));
+            Assert.assertTrue("Debug/Run version semantics are not explained",
+                scriptPage.contains("Debug uses the unsaved Version Source above"));
+
+            String draft = "PRINT(\"draft-\" + _PROPS.who)\n";
+            String location = postFormExpectingRedirect(
+                testServer.baseUrl + "/admin/scripts/editor_dbg/debug",
+                "debugVersion=v1&content=" + URLEncoder.encode(draft, "UTF-8")
+                    + "&propsJson="
+                    + URLEncoder.encode("{\"who\":\"ops\"}", "UTF-8")
+                    + "&maxIterations=37&warnLoops=on&timeoutMs=1");
+            Assert.assertTrue("unexpected redirect: " + location,
+                location.startsWith("/admin/debug/"));
+            String sessionId = location.substring("/admin/debug/".length());
+
+            Map<String, Object> paused =
+                waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            Assert.assertEquals(Boolean.TRUE, paused.get("transientDebug"));
+            Assert.assertNull("script-page debug must not have a parent Run", paused.get("sourceRunId"));
+            Assert.assertEquals("editor_dbg", paused.get("scriptId"));
+            Assert.assertEquals("v1", paused.get("version"));
+            String transientRunId = String.valueOf(paused.get("runId"));
+            Assert.assertNotNull("running transient attempt must be internally addressable",
+                testServer.server.getRunManager().getRun(transientRunId));
+            RunInfo liveRun = testServer.server.getRunManager().getRun(transientRunId);
+            Assert.assertEquals("ops", liveRun.properties.get("who"));
+            Assert.assertEquals(37, liveRun.maxIterations);
+            Assert.assertEquals("warn", liveRun.iterationLimitBehavior);
+            Assert.assertEquals("debug run timeout must remain disabled", 0L, liveRun.timeoutMs);
+            Assert.assertEquals("transient debug leaked into Runs while active", 0,
+                testServer.server.getRunManager()
+                    .listRuns(null, null, null, "debug", 0, -1).size());
+            Assert.assertFalse("transient debug was persisted",
+                new File(new File(dataDir, "runs"), transientRunId + ".json").exists());
+
+            String consolePage = getBody(testServer.baseUrl + location, 200);
+            Assert.assertTrue(consolePage.contains("unsaved Version Source and Props captured"));
+            Assert.assertTrue(consolePage.contains("temporary; not retained in Runs"));
+            Assert.assertFalse("no-parent debugger rendered a null Run link",
+                consolePage.contains("/admin/runs/null"));
+
+            command(testServer, sessionId, "continue", null, 200);
+            Map<String, Object> ended =
+                waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+            Assert.assertEquals("COMPLETED", ended.get("runStatus"));
+            Assert.assertTrue("unsaved editor source or Run Script Props were not passed",
+                ((List<?>) ended.get("stdoutLines")).contains("draft-ops"));
+            Assert.assertNull("terminal transient Run was not removed",
+                testServer.server.getRunManager().getRun(transientRunId));
+            Assert.assertFalse("terminal transient Run was persisted",
+                new File(new File(dataDir, "runs"), transientRunId + ".json").exists());
+
+            String sessionsPage = getBody(testServer.baseUrl + "/admin/debug", 200);
+            Assert.assertTrue("editor session missing from debugger list",
+                sessionsPage.contains("editor_dbg@v1"));
+            Assert.assertTrue("debugger list does not label temporary execution",
+                sessionsPage.contains("temporary (not retained)"));
+            Assert.assertFalse("debugger list rendered a null Run link",
+                sessionsPage.contains("/admin/runs/null"));
+
+            Map<String, Object> restarted = postJson(testServer.baseUrl + "/admin/debug/"
+                + sessionId + "/restart", "{}", 201);
+            String restartedId = String.valueOf(restarted.get("sessionId"));
+            Assert.assertNotEquals(sessionId, restartedId);
+            Assert.assertNotEquals("restart must get a fresh temporary Run identity",
+                transientRunId, String.valueOf(restarted.get("runId")));
+            Assert.assertNull("superseded transient session should not be retained",
+                testServer.server.getDebugSessionManager().find(sessionId));
+            waitForSessionState(testServer, restartedId, "PAUSED", 10000L);
+            command(testServer, restartedId, "continue", null, 200);
+            Map<String, Object> restartedEnd =
+                waitForSessionState(testServer, restartedId, "ENDED", 10000L);
+            Assert.assertTrue("Restart did not replay the captured source and Props",
+                ((List<?>) restartedEnd.get("stdoutLines")).contains("draft-ops"));
         } finally {
             testServer.close();
         }
@@ -282,8 +695,17 @@ public class DebugSessionTest {
             Map<String, Object> session = postJson(
                 testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
             String sessionId = (String) session.get("sessionId");
-            // The auto breakpoint (line 2, from the OLD failure) now lands on the edited statement.
+            // Editing the same version remains allowed while paused, but this already-open session
+            // must keep executing the exact source shown in its editor.
+            testServer.server.getRunManager().updateScriptVersionContent("dbg_edit", "v1",
+                "FAIL(\"edited after debug launch\")\n");
+            // Start is always line 1. The OLD positioned failure remains a red marker on line 2,
+            // then stepping executes line 1 and pauses on the edited line 2 statement.
             Map<String, Object> paused = waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            Assert.assertEquals(1.0, pausedLine(paused), 0.0);
+            Assert.assertEquals(2.0, ((Number) paused.get("errorLine")).doubleValue(), 0.0);
+            command(testServer, sessionId, "stepOver", null, 200);
+            paused = waitForPausedAtLine(testServer, sessionId, 2, 10000L);
             Assert.assertEquals(2.0, pausedLine(paused), 0.0);
             @SuppressWarnings("unchecked")
             Map<String, Object> frame = (Map<String, Object>) paused.get("paused");
@@ -291,6 +713,8 @@ public class DebugSessionTest {
             command(testServer, sessionId, "continue", null, 200);
             Map<String, Object> ended = waitForSessionState(testServer, sessionId, "ENDED", 10000L);
             Assert.assertEquals("COMPLETED", ended.get("runStatus"));
+            Assert.assertNull("a successful debug attempt must clear the source error marker",
+                ended.get("errorLine"));
         } finally {
             testServer.close();
         }
@@ -314,8 +738,10 @@ public class DebugSessionTest {
                 "{\"breakpoints\":[2,3]}", 201);
             final String sessionId = (String) session.get("sessionId");
             waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            command(testServer, sessionId, "continue", null, 200);
+            waitForPausedAtLine(testServer, sessionId, 2, 10000L);
 
-            // Occupy the handler with a slow eval so two Continues can be queued in THIS pause.
+            // Occupy the line-2 handler with a slow eval so two Continues can be queued here.
             final Map<String, Object>[] evalResult = newResultSlot();
             final Map<String, Object>[] firstContinue = newResultSlot();
             Thread evalThread = commandInBackground(testServer, sessionId, "eval", "SLEEP(1200)", evalResult);
@@ -399,6 +825,8 @@ public class DebugSessionTest {
                 testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
             String sessionId = (String) session.get("sessionId");
             Map<String, Object> paused = waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            command(testServer, sessionId, "stepOver", null, 200);
+            paused = waitForPausedAtLine(testServer, sessionId, 2, 10000L);
             long generation = ((Number) paused.get("pauseGeneration")).longValue();
 
             // Matching generation: accepted.
@@ -481,8 +909,10 @@ public class DebugSessionTest {
                 "{\"breakpoints\":[2]}", 201);   // ONE pause — nothing after it to refuse at
             final String sessionId = (String) session.get("sessionId");
             waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            command(testServer, sessionId, "continue", null, 200);
+            waitForPausedAtLine(testServer, sessionId, 2, 10000L);
 
-            // Occupy the handler with a slow eval so two Continues queue in the only pause.
+            // Occupy the only user-breakpoint pause with a slow eval so two Continues queue.
             final Map<String, Object>[] evalResult = newResultSlot();
             final Map<String, Object>[] firstContinue = newResultSlot();
             Thread evalThread = commandInBackground(testServer, sessionId, "eval", "SLEEP(1200)", evalResult);
@@ -654,6 +1084,28 @@ public class DebugSessionTest {
         return location;
     }
 
+    private String postFormExpectingRedirect(String url, String body) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setInstanceFollowRedirects(false);
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=utf-8");
+        OutputStream out = conn.getOutputStream();
+        try {
+            out.write(body.getBytes("UTF-8"));
+        } finally {
+            out.close();
+        }
+        int code = conn.getResponseCode();
+        String location = conn.getHeaderField("Location");
+        InputStream input = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
+        String text = input != null ? readAll(input) : "";
+        conn.disconnect();
+        Assert.assertEquals("body: " + text, 302, code);
+        Assert.assertNotNull(location);
+        return location;
+    }
+
     private Map<String, Object> getJsonMap(String url, int expectedStatus) throws IOException {
         return gson.fromJson(getBody(url, expectedStatus), mapType);
     }
@@ -685,6 +1137,10 @@ public class DebugSessionTest {
 
     private TestServer createServer(TeeBoxConfig overrides) throws Exception {
         File dataDir = Files.createTempDirectory("propertee-teebox-debug").toFile();
+        return createServer(dataDir, overrides);
+    }
+
+    private TestServer createServer(File dataDir, TeeBoxConfig overrides) throws Exception {
         TeeBoxConfig config = overrides != null ? overrides : new TeeBoxConfig();
         config.bindAddress = "127.0.0.1";
         config.port = 0;

@@ -781,6 +781,48 @@ public class ManagedTaskEngine implements TaskRunner {
         return killed;
     }
 
+    /**
+     * Remove every task owned by a terminal Run before that same runId is executed again by the
+     * debugger. Reusing the Run record without this reset would mix old and new task rows (and a
+     * detached process from the previous attempt could keep running under the shared identity).
+     */
+    public void clearRunTasks(String runId) {
+        if (runId == null) {
+            return;
+        }
+        List<String> taskIds = new ArrayList<>();
+        for (TaskIndexEntry entry : snapshotIndexEntries()) {
+            if (runId.equals(entry.runId)) {
+                taskIds.add(entry.taskId);
+            }
+        }
+        for (String taskId : taskIds) {
+            // killTask is also the restored-process path. A terminal task simply returns false
+            // (or true when already KILLED), after which it is safe to remove its persisted row.
+            killTask(taskId);
+            withTaskLockVoid(taskId, () -> {
+                Task task = getTask(taskId);
+                if (task == null) {
+                    removeTaskIndex(taskId);
+                    return;
+                }
+                if (task.alive || isTransientStatus(task.status)) {
+                    throw new IllegalStateException("Task " + taskId + " for debug run " + runId
+                        + " is still active after termination");
+                }
+                removeRunnerTask(taskId);
+                lifecycles.remove(taskId);
+                deleteQuietly(task.taskDir);
+                if (task.taskDir != null && task.taskDir.exists()) {
+                    throw new IllegalStateException("Failed to clear task " + taskId
+                        + " before reusing debug run " + runId);
+                }
+                removeTaskIndex(taskId);
+            });
+            taskLocks.remove(taskId);
+        }
+    }
+
     // ---- Process termination for disk-loaded tasks ----
 
     /**

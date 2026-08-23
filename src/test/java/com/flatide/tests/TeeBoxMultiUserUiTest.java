@@ -48,6 +48,12 @@ public class TeeBoxMultiUserUiTest {
                     "scriptId=alice_script&propsJson=" + enc("{}") + "&maxIterations=1000", alice));
             assertRedirect("alice edits her script source", postForm(base, "/admin/scripts/update-source",
                     "scriptId=alice_script&version=1&content=" + enc(SCRIPT_BODY), alice));
+            Assert.assertFalse("regular owner must not receive the arbitrary-code debugger action",
+                    getBody(base, "/admin/scripts/alice_script?version=1", alice)
+                        .contains("/admin/scripts/alice_script/debug"));
+            assertForbidden("regular owner cannot start debug from Run Script", postForm(base,
+                    "/admin/scripts/alice_script/debug",
+                    "version=1&content=" + enc(SCRIPT_BODY), alice));
 
             // --- bob: cannot touch alice's script ---
             String bob = login(base, "bob", "bob-pw");
@@ -74,6 +80,9 @@ public class TeeBoxMultiUserUiTest {
             // --- admin: may act on any script ---
             String admin = login(base, "admin", "admin-pw");
             Assert.assertNotNull("admin first login should succeed", admin);
+            Assert.assertTrue("admin script editor has no Debug action",
+                    getBody(base, "/admin/scripts/alice_script?version=1", admin)
+                        .contains("formaction='/admin/scripts/alice_script/debug'"));
             assertRedirect("admin edits alice's script", postForm(base, "/admin/scripts/update-source",
                     "scriptId=alice_script&version=1&content=" + enc(SCRIPT_BODY), admin));
             assertRedirect("admin deletes alice's script", postForm(base, "/admin/scripts/delete/alice_script",
@@ -692,6 +701,16 @@ public class TeeBoxMultiUserUiTest {
             String list = getBody(base, "/admin/fragments/all-runs?limit=20", admin);
             Assert.assertTrue("runs list shows the ui tag", list.contains(">ui</span>"));
             Assert.assertTrue("runs list shows the api tag", list.contains(">api</span>"));
+            String uiOnly = getBody(base, "/admin/fragments/all-runs?origin=ui", admin);
+            Assert.assertTrue(uiOnly.contains(uiRunId));
+            Assert.assertFalse(uiOnly.contains(apiRunId));
+            String apiOnly = getBody(base, "/admin/fragments/all-runs?origin=api", admin);
+            Assert.assertTrue(apiOnly.contains(apiRunId));
+            Assert.assertFalse(apiOnly.contains(uiRunId));
+
+            String runsPage = getBody(base, "/admin/runs", admin);
+            Assert.assertTrue("Runs defaults to API", runsPage.contains(apiRunId));
+            Assert.assertFalse("Runs default must exclude UI runs", runsPage.contains(uiRunId));
         } finally {
             server.stop();
         }

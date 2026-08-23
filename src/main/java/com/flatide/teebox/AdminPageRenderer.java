@@ -182,6 +182,15 @@ public class AdminPageRenderer {
         sb.append("<a href='/admin' class='top-nav-link").append("dashboard".equals(activePage) ? " active" : "").append("'>Dashboard</a>");
         sb.append("<a href='/admin/scripts' class='top-nav-link").append("scripts".equals(activePage) ? " active" : "").append("'>Scripts</a>");
         sb.append("<a href='/admin/runs' class='top-nav-link").append("runs".equals(activePage) ? " active" : "").append("'>Runs</a>");
+        if (isAdmin() && debugSessionManager != null) {
+            int debugCount = debugSessionManager.activeCount();
+            sb.append("<a href='/admin/debug' class='top-nav-link")
+              .append("debug".equals(activePage) ? " active" : "").append("'>Debug");
+            if (debugCount > 0) {
+                sb.append(" <span class='tag tag-nav'>").append(debugCount).append("</span>");
+            }
+            sb.append("</a>");
+        }
         // Admin-only user management — shown only to a logged-in admin in roster mode (open mode has
         // no users; the server gates the routes the same way, this is display only).
         if (isRosterAdmin()) {
@@ -420,8 +429,8 @@ public class AdminPageRenderer {
         int pageSize = DEFAULT_RUNS_PAGE_SIZE;
         // Default view excludes instant runs (immediate scripts tend to be high-frequency and would
         // drown the list) — matches the Instant select's initial "exclude" value below.
-        int totalCount = runManager.countRuns(null, Boolean.FALSE, null);
-        List<RunInfo> runs = runManager.listRuns(null, Boolean.FALSE, null, 0, pageSize);
+        int totalCount = runManager.countRuns(null, Boolean.FALSE, null, "api");
+        List<RunInfo> runs = runManager.listRuns(null, Boolean.FALSE, null, "api", 0, pageSize);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Runs - TeeBox Admin"));
         sb.append(renderTopNav("runs"));
@@ -432,6 +441,13 @@ public class AdminPageRenderer {
         sb.append("<button class='btn-refresh' onclick='refreshRunsPage()'>Refresh</button>");
         sb.append("</div></div>");
         sb.append("<div class='filter-bar'>");
+        sb.append("<label style='font-size:13px;color:#64748b;'>Origin:</label>");
+        sb.append("<select id='origin-filter' onchange='filterRuns()'>");
+        sb.append("<option value='api' selected>API</option>");
+        sb.append("<option value='ui'>UI</option>");
+        sb.append("<option value='debug'>Debug</option>");
+        sb.append("<option value=''>All</option>");
+        sb.append("</select>");
         sb.append("<label style='font-size:13px;color:#64748b;'>Status:</label>");
         sb.append("<select id='status-filter' onchange='filterRuns()'>");
         sb.append("<option value=''>All</option>");
@@ -469,10 +485,12 @@ public class AdminPageRenderer {
         sb.append("}};xhr.send();}");
         sb.append("window.goToPage=function(p){currentPage=p;refreshRunsPage();};");
         sb.append("window.refreshRunsPage=function(){");
+        sb.append("var origin=document.getElementById('origin-filter').value;");
         sb.append("var status=document.getElementById('status-filter').value;");
         sb.append("var includeInstant=document.getElementById('instant-filter').checked;");
         sb.append("var q=document.getElementById('runs-search').value.trim();");
         sb.append("var url='/admin/fragments/all-runs?page='+currentPage;");
+        sb.append("if(origin)url+='&origin='+encodeURIComponent(origin);");
         sb.append("if(status)url+='&status='+encodeURIComponent(status);");
         sb.append("if(!includeInstant)url+='&instant=exclude';");
         sb.append("if(q)url+='&q='+encodeURIComponent(q);");
@@ -642,6 +660,17 @@ public class AdminPageRenderer {
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>").append(escape(runId)).append("</h2>");
+        List<java.util.Map<String, Object>> activeDebugSessions =
+            new ArrayList<java.util.Map<String, Object>>();
+        if (isAdmin() && debugSessionManager != null) {
+            activeDebugSessions = activeDebugSessionsForRun(runId);
+            for (java.util.Map<String, Object> debugSession : activeDebugSessions) {
+                String debugSessionId = String.valueOf(debugSession.get("sessionId"));
+                sb.append("<a class='btn btn-sm' href='/admin/debug/")
+                  .append(urlPath(debugSessionId)).append("'>Resume Debug ")
+                  .append(escape(shortId(debugSessionId))).append("</a>");
+            }
+        }
         if (canModifyRunId(run.runId)) {
             boolean cancellable = run.status == RunStatus.QUEUED || run.status == RunStatus.PENDING
                 || run.status == RunStatus.RUNNING;
@@ -655,7 +684,8 @@ public class AdminPageRenderer {
         }
         boolean terminal = run.status != RunStatus.QUEUED && run.status != RunStatus.PENDING
             && run.status != RunStatus.RUNNING;
-        if (terminal && !run.archived && isAdmin() && debugSessionManager != null) {
+        if (terminal && !run.archived && isAdmin() && debugSessionManager != null
+                && activeDebugSessions.isEmpty()) {
             sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/debug' ");
             sb.append("style='display:inline;margin-left:6px' ");
             sb.append("onsubmit=\"return confirm('Re-run this run under the debugger? ");
@@ -812,9 +842,101 @@ public class AdminPageRenderer {
         return sb.toString();
     }
 
+    /** Debug sessions related to either the original run or its debug re-run. Only live sessions
+     *  are useful as a Resume action; ended sessions remain available from the dedicated list. */
+    private List<java.util.Map<String, Object>> activeDebugSessionsForRun(String runId) {
+        List<java.util.Map<String, Object>> result = new ArrayList<java.util.Map<String, Object>>();
+        if (debugSessionManager == null || runId == null) {
+            return result;
+        }
+        for (java.util.Map<String, Object> session : debugSessionManager.list()) {
+            if (DebugSessionManager.Session.ENDED.equals(session.get("state"))) {
+                continue;
+            }
+            if (runId.equals(session.get("sourceRunId")) || runId.equals(session.get("runId"))) {
+                result.add(session);
+            }
+        }
+        return result;
+    }
+
+    /** Admin landing page for returning to a live debugger after navigating elsewhere. Ended
+     *  sessions are shown too while they remain retained, which keeps their final console/view
+     *  reachable without implying that they can be resumed. */
+    public String renderDebugSessionsPage() {
+        if (debugSessionManager == null) {
+            return renderErrorPage("Debugger unavailable", "Debug sessions are not configured");
+        }
+        List<java.util.Map<String, Object>> sessions = debugSessionManager.list();
+        StringBuilder sb = new StringBuilder();
+        sb.append(pageStart("Debug Sessions - TeeBox Admin"));
+        sb.append(renderTopNav("debug"));
+        sb.append("<div class='card'>");
+        sb.append("<div class='card-header'><h2>Debug Sessions</h2>");
+        sb.append("<span class='dim'>active ").append(debugSessionManager.activeCount())
+          .append(" / ").append(debugSessionManager.getMaxSessions()).append("</span></div>");
+        if (sessions.isEmpty()) {
+            sb.append("<p class='empty'>No debug sessions</p>");
+        } else {
+            sb.append("<div class='table-wrap'><table><thead><tr>");
+            sb.append("<th>Session</th><th>State</th><th>Source Run</th><th>Debug Run</th>");
+            sb.append("<th>Paused At</th><th>Created</th><th></th></tr></thead><tbody>");
+            for (java.util.Map<String, Object> session : sessions) {
+                String sessionId = String.valueOf(session.get("sessionId"));
+                boolean transientDebug = Boolean.TRUE.equals(session.get("transientDebug"));
+                String sourceRunId = session.get("sourceRunId") instanceof String
+                    ? (String) session.get("sourceRunId") : null;
+                String debugRunId = String.valueOf(session.get("runId"));
+                String scriptId = String.valueOf(session.get("scriptId"));
+                String version = String.valueOf(session.get("version"));
+                String state = String.valueOf(session.get("state"));
+                Object paused = session.get("paused");
+                Object pausedLine = paused instanceof java.util.Map
+                    ? ((java.util.Map<?, ?>) paused).get("line") : null;
+                Object createdAt = session.get("createdAt");
+                sb.append("<tr><td><a class='mono' href='/admin/debug/")
+                  .append(urlPath(sessionId)).append("'>").append(escape(shortId(sessionId)))
+                  .append("</a></td>");
+                sb.append("<td>").append(statusBadge(state));
+                if (session.get("runStatus") != null) {
+                    sb.append(" <span class='dim'>").append(escape(session.get("runStatus"))).append("</span>");
+                }
+                sb.append("</td>");
+                if (transientDebug) {
+                    sb.append("<td><a class='mono' href='/admin/scripts/").append(urlPath(scriptId))
+                      .append("?version=").append(urlParam(version)).append("#version-source'>")
+                      .append(escape(scriptId)).append("@").append(escape(version)).append("</a></td>");
+                    sb.append("<td><span class='dim'>temporary (not retained)</span></td>");
+                } else {
+                    sb.append("<td><a class='mono' href='/admin/runs/").append(urlPath(sourceRunId))
+                      .append("'>").append(escape(shortId(sourceRunId))).append("</a></td>");
+                    sb.append("<td><a class='mono' href='/admin/runs/").append(urlPath(debugRunId))
+                      .append("'>").append(escape(shortId(debugRunId))).append("</a></td>");
+                }
+                sb.append("<td class='mono'>")
+                  .append(pausedLine != null ? "line " + escape(pausedLine) : "&mdash;").append("</td>");
+                sb.append("<td class='dim'>");
+                if (createdAt instanceof Number) {
+                    sb.append(escape(formatTime(((Number) createdAt).longValue())));
+                } else {
+                    sb.append("&mdash;");
+                }
+                sb.append("</td><td><a class='btn btn-sm' href='/admin/debug/")
+                  .append(urlPath(sessionId)).append("'>")
+                  .append(DebugSessionManager.Session.ENDED.equals(state) ? "View" : "Resume")
+                  .append("</a></td></tr>");
+            }
+            sb.append("</tbody></table></div>");
+        }
+        sb.append("</div>");
+        sb.append("<script>window.refreshPage=function(){window.location.reload();};</script>");
+        sb.append(pageEnd());
+        return sb.toString();
+    }
+
     /**
      * The interactive debug-session console: a static skeleton plus a 1s poller over
-     * {@code /admin/debug/{sid}/state}; commands (continue/step/eval/quit/breakpoints) POST JSON
+     * {@code /admin/debug/{sid}/state}; commands (continue/step/eval/quit/breakpoints/restart) POST JSON
      * to the session-authed {@code /admin/debug/{sid}/...} endpoints. All frame data arrives as
      * pre-rendered display strings from the pause snapshot — the page never touches the engine.
      */
@@ -826,38 +948,57 @@ public class AdminPageRenderer {
         DebugSessionManager.Session session = debugSessionManager.find(sessionId);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Debug " + sessionId));
-        sb.append(renderTopNav(""));
+        sb.append(renderTopNav("debug"));
 
         sb.append("<div class='nav'>");
         sb.append("<a href='/admin'>Dashboard</a>");
         sb.append("<span class='nav-sep'>/</span>");
-        sb.append("<a href='/admin/runs/").append(urlPath(session.sourceRunId)).append("'>Run ")
-          .append(escape(shortId(session.sourceRunId))).append("</a>");
+        if (session.transientDebug) {
+            sb.append("<a href='/admin/scripts/").append(urlPath(session.scriptId))
+              .append("?version=").append(urlParam(session.version)).append("#version-source'>Script ")
+              .append(escape(session.scriptId)).append("@").append(escape(session.version)).append("</a>");
+        } else {
+            sb.append("<a href='/admin/runs/").append(urlPath(session.sourceRunId)).append("'>Run ")
+              .append(escape(shortId(session.sourceRunId))).append("</a>");
+        }
         sb.append("<span class='nav-sep'>/</span>");
         sb.append("<span>Debug ").append(escape(shortId(sessionId))).append("</span>");
         sb.append("</div>");
 
-        sb.append("<div class='callout callout-warn'>This debug session <b>re-executes the script</b> — ");
-        sb.append("SHELL/HTTP/file side effects happen again. It runs the <b>current</b> content of the ");
-        sb.append("script version, so edits made after the original failure are included (by design — ");
-        sb.append("fix, then re-debug). Breaks fire on the main thread only ");
+        sb.append("<div class='callout callout-warn'>This debug session <b>executes the script</b> — ");
+        sb.append("SHELL/HTTP/file side effects happen again. ");
+        if (session.transientDebug) {
+            sb.append("It uses snapshots of the unsaved Version Source and Props captured when ");
+            sb.append("Debug was clicked. Its temporary Run and Tasks are not retained. ");
+        } else {
+            sb.append("It runs the <b>current</b> content of the script version, so edits made after ");
+            sb.append("the original failure are included (by design — fix, then re-debug). ");
+        }
+        sb.append("Breaks fire on the main thread only ");
         sb.append("(<code>thread</code> worker and <code>monitor</code> bodies do not pause).</div>");
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Debug session ").append(escape(shortId(sessionId))).append("</h2>");
-        sb.append("<button id='dbg-btn-continue' class='btn btn-sm' onclick=\"dbgCmd('continue')\" disabled>Continue</button> ");
-        sb.append("<button id='dbg-btn-stepOver' class='btn btn-sm' onclick=\"dbgCmd('stepOver')\" disabled>Step Over</button> ");
-        sb.append("<button id='dbg-btn-stepIn' class='btn btn-sm' onclick=\"dbgCmd('stepIn')\" disabled>Step In</button> ");
-        sb.append("<button id='dbg-btn-stepOut' class='btn btn-sm' onclick=\"dbgCmd('stepOut')\" disabled>Step Out</button> ");
-        sb.append("<button id='dbg-btn-quit' class='btn-danger btn-sm' onclick=\"if(confirm('End this debug run?'))dbgCmd('quit')\">Quit Run</button>");
         sb.append("</div>");
         sb.append("<div class='detail-grid'>");
-        sb.append("<div class='detail-item'><div class='detail-label'>Source Run</div><div class='detail-value'>");
-        sb.append("<a href='/admin/runs/").append(urlPath(session.sourceRunId)).append("' class='mono'>")
-          .append(escape(shortId(session.sourceRunId))).append("</a></div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Source</div><div class='detail-value'>");
+        if (session.transientDebug) {
+            sb.append("<a href='/admin/scripts/").append(urlPath(session.scriptId))
+              .append("?version=").append(urlParam(session.version)).append("#version-source' class='mono'>")
+              .append(escape(session.scriptId)).append("@").append(escape(session.version))
+              .append("</a> <span class='dim'>(editor snapshot)</span></div></div>");
+        } else {
+            sb.append("<a href='/admin/runs/").append(urlPath(session.sourceRunId)).append("' class='mono'>")
+              .append(escape(shortId(session.sourceRunId))).append("</a></div></div>");
+        }
         sb.append("<div class='detail-item'><div class='detail-label'>Debug Run</div><div class='detail-value'>");
-        sb.append("<a href='/admin/runs/").append(urlPath(session.runId)).append("' class='mono'>")
-          .append(escape(shortId(session.runId))).append("</a> <span class='dim'>(output/threads/tasks live there)</span></div></div>");
+        if (session.transientDebug) {
+            sb.append("<span class='mono'>").append(escape(shortId(session.runId)))
+              .append("</span> <span class='dim'>(temporary; not retained in Runs)</span></div></div>");
+        } else {
+            sb.append("<a href='/admin/runs/").append(urlPath(session.runId)).append("' class='mono'>")
+              .append(escape(shortId(session.runId))).append("</a> <span class='dim'>(output/threads/tasks live there)</span></div></div>");
+        }
         sb.append("<div class='detail-item'><div class='detail-label'>State</div><div class='detail-value'><span id='dbg-status'>&mdash;</span></div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Paused At</div><div class='detail-value mono' id='dbg-line'>&mdash;</div></div>");
         sb.append("</div></div>");
@@ -867,29 +1008,75 @@ public class AdminPageRenderer {
         sb.append("<div id='dbg-stack' class='dim mono'></div>");
         sb.append("</div>");
 
-        sb.append("<div class='card'><h2>Breakpoints</h2>");
-        sb.append("<p class='dim'>Current: <span id='dbg-bp-current' class='mono'>&mdash;</span></p>");
-        sb.append("<input id='dbg-bp-input' placeholder='lines, e.g. 3, 17' style='width:200px'> ");
-        sb.append("<button class='btn btn-sm' onclick='dbgSetBp()'>Set</button>");
+        sb.append("<div class='card'><div class='card-header'><h2>Execution Source</h2>");
+        sb.append("<a class='btn btn-sm' href='/admin/scripts/").append(urlPath(session.scriptId))
+          .append("?version=").append(urlParam(session.version)).append("#version-source'>Open Script Editor</a>");
+        sb.append("</div>");
+        sb.append("<p class='dim' style='margin-bottom:10px'><span class='mono'>")
+          .append(escape(session.scriptId)).append("@").append(escape(session.version)).append("</span> — ");
+        sb.append("the yellow line is the current pause; a positioned error is red. ");
+        if (session.transientDebug) {
+            sb.append("The error marker appears only if this attempt fails at a positioned line. ");
+        } else {
+            sb.append("The marker starts from the source Run and, when this attempt ends, moves to ");
+            sb.append("its actual failure or clears. ");
+        }
+        sb.append("Click a line number to toggle a breakpoint. The source is read-only for this ");
+        sb.append(session.transientDebug
+            ? "session; Restart replays the same captured source and Props.</p>"
+            : "session; edit the script version and start a new debug re-run to execute changes.</p>");
+        sb.append("<p class='dim' style='margin-bottom:10px'>Current breakpoints: ");
+        sb.append("<span id='dbg-bp-current' class='mono'>&mdash;</span></p>");
+        sb.append("<textarea id='dbg-source' rows='24' class='pt-editor-fallback' data-pt-editor ");
+        sb.append("data-pt-panel data-pt-breakpoints readonly aria-label='Debug execution source'>")
+          .append(escape(session.sourceCode)).append("</textarea>");
+        // Match the ProperTee playground's editor -> Output flow. The right-hand Variables pane
+        // shares the same workbench so frame inspection never pushes program output off-screen.
+        sb.append("<div class='dbg-workbench'>");
+        sb.append("<section class='dbg-pane dbg-output-pane' aria-label='Debug output'>");
+        sb.append("<div class='dbg-pane-header dbg-output-header'>");
+        sb.append("<span class='dbg-pane-title'>Output</span>");
+        sb.append("<button id='dbg-btn-continue' class='btn btn-sm' onclick=\"dbgCmd('continue')\" disabled>Continue</button>");
+        sb.append("<button id='dbg-btn-stepOver' class='btn btn-sm' onclick=\"dbgCmd('stepOver')\" disabled>Step Over</button>");
+        sb.append("<button id='dbg-btn-stepIn' class='btn btn-sm' onclick=\"dbgCmd('stepIn')\" disabled>Step In</button>");
+        sb.append("<button id='dbg-btn-stepOut' class='btn btn-sm' onclick=\"dbgCmd('stepOut')\" disabled>Step Out</button>");
+        sb.append("<button id='dbg-btn-restart' class='btn btn-sm' onclick='dbgRestart()'>Restart</button>");
+        sb.append("<button id='dbg-btn-quit' class='btn-danger btn-sm' ");
+        sb.append("onclick=\"if(confirm('Stop this debug run?'))dbgCmd('quit')\">Stop</button>");
+        sb.append("</div>");
+        sb.append("<pre id='dbg-console' class='task-out' aria-live='polite'></pre>");
+        sb.append("<div class='dbg-eval-row'><input id='dbg-input' ");
+        sb.append("placeholder='statement or expression — Enter evaluates it in the paused scope' ");
+        sb.append("aria-label='Evaluate in paused scope'>");
+        sb.append("<button class='btn btn-sm' onclick='dbgEval()'>Evaluate</button></div>");
+        sb.append("</section>");
+        sb.append("<section class='dbg-pane dbg-vars-pane' aria-label='Debug variables'>");
+        sb.append("<div class='dbg-pane-header'><span class='dbg-pane-title'>Variables</span></div>");
+        sb.append("<div class='dbg-vars-scroll'>");
+        sb.append("<div class='dbg-var-section'><h3>Locals</h3><div id='dbg-locals'><p class='empty'>&mdash;</p></div></div>");
+        sb.append("<div class='dbg-var-section'><h3>Globals</h3><div id='dbg-globals'><p class='empty'>&mdash;</p></div></div>");
+        sb.append("</div></section></div>");
         sb.append("</div>");
 
-        sb.append("<div class='card'><h2>Console</h2>");
-        sb.append("<pre id='dbg-console' class='task-out' style='min-height:120px;max-height:320px;overflow:auto'></pre>");
-        sb.append("<input id='dbg-input' style='width:100%;box-sizing:border-box' ");
-        sb.append("placeholder='statement or expression — Enter evaluates it in the paused scope'>");
-        sb.append("</div>");
-
-        sb.append("<div class='card'><h2>Locals</h2><div id='dbg-locals'><p class='empty'>&mdash;</p></div></div>");
-        sb.append("<div class='card'><h2>Globals</h2><div id='dbg-globals'><p class='empty'>&mdash;</p></div></div>");
-
+        sb.append(editorScript());
         sb.append("<script>");
         sb.append("(function(){");
         sb.append("var sid='").append(jsString(sessionId)).append("';");
         sb.append("var base='/admin/debug/'+encodeURIComponent(sid);");
-        sb.append("var pausedKey=null;var pollTimer=null;var curGen=null;");
+        sb.append("var pausedKey=null;var pollTimer=null;var curGen=null;var restarting=false;");
+        sb.append("var seenStdout=0;var seenStderr=0;");
+        sb.append("var latestBreakpoints=[];var bpDesired=[];var bpSending=false;");
+        sb.append("var latestDebugLine=null;var latestErrorLine=null;");
         sb.append("function el(id){return document.getElementById(id);}");
         sb.append("function esc(s){var d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}");
         sb.append("function logLine(s){var c=el('dbg-console');c.textContent+=(c.textContent?'\\n':'')+s;c.scrollTop=c.scrollHeight;}");
+        sb.append("function syncRunStream(lines,total,stderr){lines=lines||[];total=Number(total)||lines.length;");
+        sb.append("var seen=stderr?seenStderr:seenStdout;var first=Math.max(0,total-lines.length);");
+        sb.append("if(seen<first){logLine('\\u2026 '+(first-seen)+' earlier '+(stderr?'stderr':'stdout')+' line(s) omitted \\u2026');seen=first;}");
+        sb.append("for(var i=Math.max(0,seen-first);i<lines.length;i++){logLine((stderr?'[ERROR] ':'')+lines[i]);}");
+        sb.append("seen=Math.max(seen,total);if(stderr)seenStderr=seen;else seenStdout=seen;}");
+        sb.append("function syncRunOutput(s){syncRunStream(s.stdoutLines,s.stdoutTotalLines,false);");
+        sb.append("syncRunStream(s.stderrLines,s.stderrTotalLines,true);}");
         sb.append("function post(url,body,cb){var x=new XMLHttpRequest();x.open('POST',url,true);");
         sb.append("x.setRequestHeader('Content-Type','application/json');");
         sb.append("x.onreadystatechange=function(){if(x.readyState===4){var r=null;try{r=JSON.parse(x.responseText);}catch(e){}cb(x.status,r);}};");
@@ -913,36 +1100,62 @@ public class AdminPageRenderer {
         sb.append("else if(op==='eval'&&r&&r.result!=null){logLine(String(r.result));}");
         sb.append("else if(st!==200){logLine('! HTTP '+st);}");
         sb.append("refresh();});};");
+        sb.append("window.dbgRestart=function(){if(restarting)return;");
+        sb.append("if(!confirm('Restart this debug run from the entry point? Side effects will run again.'))return;");
+        sb.append("restarting=true;el('dbg-btn-restart').disabled=true;el('dbg-btn-quit').disabled=true;");
+        sb.append("var ops=['continue','stepOver','stepIn','stepOut'];");
+        sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=true;}");
+        sb.append("post(base+'/restart',{},function(st,r){");
+        sb.append("if(st===201&&r&&r.sessionId){window.location.assign('/admin/debug/'+encodeURIComponent(r.sessionId));return;}");
+        sb.append("restarting=false;logLine('! '+(r&&r.error?r.error:'HTTP '+st));refresh();});};");
         // Poll a timed-out command's outcome by id (the command keeps executing server-side).
         sb.append("function pollCommand(id){var n=0;var t=setInterval(function(){n++;");
         sb.append("var x=new XMLHttpRequest();x.open('GET',base+'/command/'+encodeURIComponent(id),true);");
         sb.append("x.onreadystatechange=function(){if(x.readyState!==4)return;");
         sb.append("var r=null;try{r=JSON.parse(x.responseText);}catch(e){}");
         sb.append("if(x.status===200&&r&&r.done){clearInterval(t);");
-        sb.append("if(r.error){logLine('! '+r.error);}else if(r.result!=null){logLine(String(r.result));}else{logLine('(finished)');}");
+        sb.append("if(r.error){logLine('! '+r.error);}else if(r.result!=null){logLine(String(r.result));}");
         sb.append("refresh();return;}");
         sb.append("if(x.status!==200||n>300){clearInterval(t);logLine('! gave up waiting for command '+id);}");
         sb.append("};x.send();},1000);}");
         sb.append("window.dbgEval=function(){var i=el('dbg-input');var s=i.value;if(!s)return;i.value='';dbgCmd('eval',s);};");
-        sb.append("window.dbgSetBp=function(){var raw=el('dbg-bp-input').value.split(',');var lines=[];");
-        sb.append("for(var i=0;i<raw.length;i++){var n=parseInt(raw[i],10);if(n>0)lines.push(n);}");
-        sb.append("post(base+'/breakpoints',{lines:lines},function(st,r){");
-        sb.append("if(st!==200&&r&&r.error){logLine('! '+r.error);}refresh();});};");
+        sb.append("function sameLines(a,b){if(a.length!==b.length)return false;");
+        sb.append("for(var i=0;i<a.length;i++){if(a[i]!==b[i])return false;}return true;}");
+        sb.append("function showBreakpoints(lines){el('dbg-bp-current').textContent=lines.length?lines.join(', '):'none';}");
+        sb.append("function syncSourceEditor(reveal){var source=el('dbg-source');if(!source.ptEditor)return;");
+        sb.append("source.ptEditor.setBreakpoints(bpSending?bpDesired:latestBreakpoints);");
+        sb.append("source.ptEditor.setDebugLine(latestDebugLine,reveal);");
+        sb.append("source.ptEditor.setErrorLine(latestErrorLine,false);}");
+        sb.append("function flushBreakpoints(){if(bpSending)return;var sent=bpDesired.slice();bpSending=true;");
+        sb.append("post(base+'/breakpoints',{lines:sent},function(st,r){bpSending=false;");
+        sb.append("if(st!==200||!r){logLine('! '+(r&&r.error?r.error:'HTTP '+st));");
+        sb.append("bpDesired=latestBreakpoints.slice();showBreakpoints(bpDesired);syncSourceEditor(false);refresh();return;}");
+        sb.append("latestBreakpoints=(r.breakpoints||[]).slice();");
+        sb.append("if(!sameLines(bpDesired,sent)){flushBreakpoints();return;}");
+        sb.append("bpDesired=latestBreakpoints.slice();showBreakpoints(bpDesired);syncSourceEditor(false);});}");
+        sb.append("el('dbg-source').addEventListener('pt-breakpoints-change',function(e){");
+        sb.append("bpDesired=(e.detail&&e.detail.lines?e.detail.lines:[]).slice();showBreakpoints(bpDesired);flushBreakpoints();});");
+        sb.append("el('dbg-source').addEventListener('pt-editor-ready',function(){syncSourceEditor(false);});");
         sb.append("function varsTable(obj){var keys=Object.keys(obj||{});");
         sb.append("if(!keys.length)return \"<p class='empty'>none</p>\";");
         sb.append("var h=\"<table class='data-table'><tbody>\";");
         sb.append("for(var i=0;i<keys.length;i++){h+=\"<tr><td class='mono'>\"+esc(keys[i])+\"</td><td class='mono'>\"+esc(obj[keys[i]])+\"</td></tr>\";}");
         sb.append("return h+'</tbody></table>';}");
         sb.append("function render(s){");
+        sb.append("syncRunOutput(s);");
         sb.append("var paused=!!s.paused;var ended=s.state==='ENDED';");
         sb.append("curGen=paused?s.pauseGeneration:null;");
         sb.append("el('dbg-status').textContent=s.state+(s.runStatus?' (run '+s.runStatus+')':'');");
         sb.append("var ops=['continue','stepOver','stepIn','stepOut'];");
-        sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=!paused;}");
-        sb.append("el('dbg-btn-quit').disabled=ended;");
-        sb.append("el('dbg-bp-current').textContent=(s.breakpoints&&s.breakpoints.length)?s.breakpoints.join(', '):'none';");
+        sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=!paused||restarting;}");
+        sb.append("el('dbg-btn-restart').disabled=restarting;");
+        sb.append("el('dbg-btn-quit').disabled=ended||restarting;");
+        sb.append("latestBreakpoints=(s.breakpoints||[]).slice();");
+        sb.append("latestErrorLine=s.errorLine||null;");
+        sb.append("if(!bpSending){bpDesired=latestBreakpoints.slice();showBreakpoints(bpDesired);}");
         sb.append("if(paused){");
         sb.append("var p=s.paused;var key=p.line+':'+p.column+':'+p.reason;");
+        sb.append("latestDebugLine=p.line;");
         sb.append("el('dbg-line').textContent='line '+p.line+':'+p.column+' ('+p.reason+')';");
         sb.append("el('dbg-paused-card').style.display='';");
         sb.append("el('dbg-stmt').textContent=p.statement||'';");
@@ -952,17 +1165,20 @@ public class AdminPageRenderer {
         sb.append("el('dbg-stack').textContent=stack;");
         sb.append("el('dbg-locals').innerHTML=varsTable(p.locals);");
         sb.append("el('dbg-globals').innerHTML=varsTable(p.globals);");
-        sb.append("if(key!==pausedKey){pausedKey=key;logLine('-- paused at line '+p.line+':'+p.column+' ('+p.reason+') '+(p.statement||''));}");
+        sb.append("var newPause=key!==pausedKey;syncSourceEditor(newPause);");
+        sb.append("if(newPause){pausedKey=key;}");
         sb.append("}else{");
-        sb.append("pausedKey=null;el('dbg-line').textContent='\\u2014';el('dbg-paused-card').style.display='none';");
+        sb.append("pausedKey=null;latestDebugLine=null;syncSourceEditor(false);");
+        sb.append("el('dbg-line').textContent='\\u2014';el('dbg-paused-card').style.display='none';");
         sb.append("}");
         sb.append("if(ended){");
-        sb.append("logEndOnce(s);");
+        sb.append("showEndOnce(s);");
         sb.append("if(pollTimer){clearInterval(pollTimer);pollTimer=null;}");
         sb.append("}}");
         sb.append("var endLogged=false;");
-        sb.append("function logEndOnce(s){if(endLogged)return;endLogged=true;");
-        sb.append("logLine('-- session ended: run '+(s.runStatus||'?')+(s.errorMessage?' — '+s.errorMessage:''));}");
+        sb.append("function showEndOnce(s){if(endLogged)return;endLogged=true;");
+        sb.append("if(s.runStatus==='FAILED'){logLine('Runtime Error: '+(s.errorMessage||'Unknown error'));}");
+        sb.append("else if(s.runStatus==='CANCELLED'){logLine('Execution stopped.');}}");
         sb.append("function refresh(){var x=new XMLHttpRequest();x.open('GET',base+'/state',true);");
         sb.append("x.onreadystatechange=function(){if(x.readyState===4&&x.status===200){");
         sb.append("try{render(JSON.parse(x.responseText));}catch(e){}}};x.send();}");
@@ -1450,7 +1666,7 @@ public class AdminPageRenderer {
         if (runNoActive) {
             sb.append("<div class='callout'>No active version yet &mdash; pick a specific version to run, or <strong>Set active</strong> one first.</div>");
         }
-        sb.append("<form method='post' action='/admin/submit' class='form-grid'>");
+        sb.append("<form method='post' action='/admin/submit' class='form-grid' id='run-script-form'>");
         sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
         sb.append("<div class='form-row'><label>Version").append(runNoActive ? "" : " (blank = active)").append("</label><select name='version' style='padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;'>");
         if (runNoActive) {
@@ -1465,8 +1681,16 @@ public class AdminPageRenderer {
         sb.append("<div class='form-row'><label>Props (JSON)</label><input type='text' name='propsJson' value='{}'/></div>");
         sb.append("<div class='form-row-inline'>");
         sb.append("<div><label>Max Iterations</label><input type='text' name='maxIterations' value='1000' style='width:100px'/></div>");
-        sb.append("<div><label>Timeout (ms, 0 = server default)</label><input type='text' name='timeoutMs' value='0' style='width:100px'/></div>");
+        sb.append("<div><label>Timeout (ms, Run only; 0 = server default)</label><input type='text' name='timeoutMs' value='0' style='width:100px'/></div>");
         sb.append("<label class='checkbox-label'><input type='checkbox' name='warnLoops'/> Warn Loops</label>");
+        if (isAdmin()) {
+            sb.append("<button type='submit' name='debugVersion' value='")
+              .append(escape(selectedVersion)).append("' formaction='/admin/scripts/")
+              .append(urlPath(scriptId)).append("/debug' onclick='return ptPrepareScriptDebug(this)' ")
+              .append("style='background:#7c3aed;' title='Debug the unsaved Version Source with these Props and iteration settings; no Run history is retained'>Debug Editor (")
+              .append(escape(selectedVersion)).append(")</button>");
+            sb.append("<span class='dim' style='font-size:11px;'>Debug uses the unsaved Version Source above; Run uses the Version selector.</span>");
+        }
         sb.append("<button type='submit'>Run</button>");
         sb.append("</div></form></div>");
         } // end canModify check for Run Script
@@ -1930,6 +2154,24 @@ public class AdminPageRenderer {
         sb.append(".task-output-block{margin-bottom:16px;} .task-output-block:last-child{margin-bottom:0;} ");
         sb.append(".task-output-label{font-size:12px;color:#64748b;margin-bottom:4px;} ");
         sb.append(".task-output-block pre{margin-top:4px;} ");
+        sb.append(".dbg-workbench{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);");
+        sb.append("min-height:300px;margin-top:12px;border:1px solid #cbd5e1;border-radius:7px;overflow:hidden;background:#fff;} ");
+        sb.append(".dbg-pane{display:flex;flex-direction:column;min-width:0;min-height:0;} ");
+        sb.append(".dbg-vars-pane{border-left:1px solid #cbd5e1;} ");
+        sb.append(".dbg-pane-header{display:flex;align-items:center;gap:7px;min-height:44px;padding:6px 10px;");
+        sb.append("background:#f8fafc;border-bottom:1px solid #e2e8f0;flex-wrap:wrap;} ");
+        sb.append(".dbg-pane-title{margin-right:3px;color:#64748b;font-size:11px;font-weight:700;");
+        sb.append("letter-spacing:.6px;text-transform:uppercase;} ");
+        sb.append("#dbg-console{flex:1;min-height:230px;max-height:420px;margin:0;border-radius:0;padding:12px 14px;} ");
+        sb.append(".dbg-eval-row{display:flex;gap:8px;padding:8px 10px;border-top:1px solid #334155;background:#1e293b;} ");
+        sb.append(".dbg-eval-row input{min-width:0;flex:1;padding:7px 10px;border:1px solid #475569;border-radius:5px;");
+        sb.append("background:#0f172a;color:#e2e8f0;font-family:'SF Mono',SFMono-Regular,Consolas,monospace;font-size:12px;} ");
+        sb.append(".dbg-eval-row input:focus{outline:none;border-color:#60a5fa;box-shadow:0 0 0 2px rgba(96,165,250,.18);} ");
+        sb.append(".dbg-vars-scroll{flex:1;min-height:0;max-height:465px;overflow:auto;} ");
+        sb.append(".dbg-var-section{padding:10px 12px;} .dbg-var-section+.dbg-var-section{border-top:1px solid #e2e8f0;} ");
+        sb.append(".dbg-var-section h3{margin:0 0 6px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.5px;} ");
+        sb.append(".dbg-var-section .empty{padding:16px 0;} .dbg-var-section td{overflow-wrap:anywhere;} ");
+        sb.append("@media(max-width:850px){.dbg-workbench{grid-template-columns:1fr;}.dbg-vars-pane{border-left:0;border-top:1px solid #cbd5e1;}} ");
         sb.append(EDITOR_CSS);
         sb.append("</style></head><body>");
         return sb.toString();
@@ -2004,6 +2246,20 @@ public class AdminPageRenderer {
         sb.append(".then(function(d){ptRenderCheck(d,box);if(done)done(d.ok===true);})");
         sb.append(".catch(function(){box.style.display='none';if(done)done(true);});");
         sb.append("}");
+        // The Debug action lives in Run Script so it shares Props/iteration inputs, but executes
+        // the source editor's current (possibly unsaved) buffer. Add that buffer to the Run form
+        // only for this submit; without JS the server safely falls back to the saved version.
+        sb.append("function ptPrepareScriptDebug(button){");
+        sb.append("var sourceForm=document.getElementById('version-source-form');");
+        sb.append("var ta=sourceForm?sourceForm.querySelector(\"textarea[name='content']\"):null;");
+        sb.append("if(!ta||!button||!button.form)return true;");
+        sb.append("var local=ptClientCheck(ta.value);var box=document.getElementById('syntax-result');");
+        sb.append("if(local&&!local.ok){ptRenderCheck(local,box);location.hash='version-source';return false;}");
+        sb.append("if(local&&box)ptRenderCheck(local,box);");
+        sb.append("var hidden=document.getElementById('debug-source-content');");
+        sb.append("if(!hidden){hidden=document.createElement('input');hidden.type='hidden';hidden.name='content';hidden.id='debug-source-content';button.form.appendChild(hidden);}");
+        sb.append("hidden.value=ta.value;return true;");
+        sb.append("}");
         sb.append("(function(){");
         sb.append("var form=document.getElementById('version-source-form');");
         sb.append("if(!form)return;");
@@ -2059,6 +2315,8 @@ public class AdminPageRenderer {
             else if ("error".equals(lower) || "failed".equals(lower)) css = "badge badge-error";
             else if ("killed".equals(lower) || "cancelled".equals(lower)) css = "badge badge-killed";
             else if ("queued".equals(lower) || "pending".equals(lower)) css = "badge badge-queued";
+            else if ("paused".equals(lower)) css = "badge badge-blocked";
+            else if ("ended".equals(lower)) css = "badge badge-terminal";
             else if ("waiting".equals(lower) || "blocked".equals(lower)) css = "badge badge-blocked";
             else if ("ready".equals(lower)) css = "badge badge-ready";
             else if ("sleeping".equals(lower)) css = "badge badge-sleeping";

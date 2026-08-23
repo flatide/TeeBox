@@ -35,6 +35,10 @@ public class RunInfo {
     public boolean debug;
     /** The source run this debug run re-executes (null on normal runs). */
     public String debugOf;
+    /** Session-scoped debug launched directly from a script page. It has no source Run and is
+     *  deliberately excluded from persistence/listing; DebugSessionManager keeps the terminal
+     *  snapshot needed by the console, then removes the live registry entry. */
+    public boolean transientDebug;
     public long createdAt;
     public Long startedAt;
     public Long endedAt;
@@ -73,6 +77,7 @@ public class RunInfo {
         copy.submittedFrom = submittedFrom;
         copy.debug = debug;
         copy.debugOf = debugOf;
+        copy.transientDebug = transientDebug;
         copy.createdAt = createdAt;
         copy.startedAt = startedAt;
         copy.endedAt = endedAt;

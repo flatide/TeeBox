@@ -51,10 +51,18 @@ public class RunRegistryListTest {
     @Test
     public void listingFiltersSortsAndPaginatesFromMemory() throws Exception {
         RunRegistry registry = registry(tempDir());
-        registry.register(run("r1", "alpha", RunStatus.COMPLETED, 1, false));
-        registry.register(run("r2", "alpha", RunStatus.RUNNING, 2, false));
-        registry.register(run("r3", "beta", RunStatus.COMPLETED, 3, true));
-        registry.register(run("r4", "beta", RunStatus.FAILED, 4, false));
+        RunInfo r1 = run("r1", "alpha", RunStatus.COMPLETED, 1, false);
+        r1.origin = "api";
+        registry.register(r1);
+        RunInfo r2 = run("r2", "alpha", RunStatus.RUNNING, 2, false);
+        r2.origin = "ui";
+        registry.register(r2);
+        RunInfo r3 = run("r3", "beta", RunStatus.COMPLETED, 3, true);
+        r3.origin = "debug";
+        registry.register(r3);
+        RunInfo r4 = run("r4", "beta", RunStatus.FAILED, 4, false);
+        r4.origin = "API"; // case-insensitive filter
+        registry.register(r4);
         // same createdAt as r4: tie breaks by runId ascending
         registry.register(run("r0", "gamma", RunStatus.COMPLETED, 4, false));
 
@@ -75,6 +83,14 @@ public class RunRegistryListTest {
         Assert.assertEquals("search matches runId too",
                 "[r2]", ids(registry.listRuns(null, null, null, "R2", 0, -1)).toString());
         Assert.assertEquals(2, registry.countRuns(null, null, "beta"));
+
+        Assert.assertEquals("origin=api is case-insensitive",
+                "[r4, r1]", ids(registry.listRuns(null, null, null, null, "api", 0, -1)).toString());
+        Assert.assertEquals("origin=ui",
+                "[r2]", ids(registry.listRuns(null, null, null, null, "UI", 0, -1)).toString());
+        Assert.assertEquals("origin=debug",
+                "[r3]", ids(registry.listRuns(null, null, null, null, "debug", 0, -1)).toString());
+        Assert.assertEquals(2, registry.countRuns(null, null, null, "api"));
 
         Assert.assertEquals("scriptId filter is exact",
                 "[r2, r1]", ids(registry.listRuns(null, "alpha", 0, -1)).toString());

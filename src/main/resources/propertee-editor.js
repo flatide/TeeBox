@@ -9,8 +9,9 @@
  * stay diffable.
  * Only the wiring is new: it progressively upgrades any <textarea data-pt-editor> into a highlighted
  * editor (transparent textarea over a <pre> syntax overlay + line gutter), works for multiple editors
- * on a page, and optionally attaches a builtin-function reference panel (data-pt-panel). Run/debug and
- * error/line highlighting from the playground are intentionally left out. No external dependency.
+ * on a page, and optionally attaches a builtin-function reference panel (data-pt-panel). A textarea
+ * with data-pt-breakpoints gets the playground's clickable breakpoint gutter plus separate current
+ * debug-line (yellow) and positioned-error (red) highlights. No external dependency.
  */
 (function () {
     'use strict';
@@ -184,6 +185,7 @@
     }
 
     function insertAtCursor(ta, text) {
+        if (ta.readOnly) return;
         ta.focus();
         var start = ta.selectionStart, end = ta.selectionEnd, v = ta.value;
         ta.value = v.substring(0, start) + text + v.substring(end);
@@ -252,30 +254,151 @@
 
         var row = document.createElement('div');
         row.className = 'pt-editor-row';
+        var breakpointMode = ta.hasAttribute('data-pt-breakpoints');
         var editor = document.createElement('div'); editor.className = 'pt-editor';
+        if (breakpointMode) editor.classList.add('pt-editor-breakpoint-mode');
         var gutter = document.createElement('div'); gutter.className = 'pt-editor-lines'; gutter.textContent = '1';
         var bodyEl = document.createElement('div'); bodyEl.className = 'pt-editor-body';
+        var markers = document.createElement('div'); markers.className = 'pt-editor-markers'; markers.setAttribute('aria-hidden', 'true');
+        var debugMarker = document.createElement('div'); debugMarker.className = 'pt-editor-debug-line';
+        var errorMarker = document.createElement('div'); errorMarker.className = 'pt-editor-error-line';
         var syntax = document.createElement('pre'); syntax.className = 'pt-editor-syntax'; syntax.setAttribute('aria-hidden', 'true');
 
         ta.parentNode.insertBefore(row, ta);
         row.appendChild(editor);
         editor.appendChild(gutter);
         editor.appendChild(bodyEl);
+        bodyEl.appendChild(markers);
+        markers.appendChild(debugMarker);
+        markers.appendChild(errorMarker);
         bodyEl.appendChild(syntax);
         bodyEl.appendChild(ta);
 
+        var breakpointLines = [];
+        var debugLine = null;
+        var errorLine = null;
+
+        function normalizedLines(lines) {
+            var seen = {}, result = [];
+            for (var i = 0; i < (lines || []).length; i++) {
+                var n = Number(lines[i]);
+                if (n > 0 && n % 1 === 0 && !seen[n]) {
+                    seen[n] = true;
+                    result.push(n);
+                }
+            }
+            result.sort(function (a, b) { return a - b; });
+            return result;
+        }
+        function hasBreakpoint(line) {
+            return breakpointLines.indexOf(line) !== -1;
+        }
+        function renderGutter() {
+            if (!breakpointMode) {
+                gutter.textContent = lineNumbers(ta.value);
+                return;
+            }
+            var count = ta.value.split('\n').length;
+            var fragment = document.createDocumentFragment();
+            for (var i = 1; i <= count; i++) {
+                var line = document.createElement('span');
+                line.textContent = String(i);
+                line.setAttribute('data-line', String(i));
+                if (hasBreakpoint(i)) line.classList.add('pt-line-breakpoint');
+                if (debugLine === i) line.classList.add('pt-line-debug');
+                if (errorLine === i) line.classList.add('pt-line-error');
+                fragment.appendChild(line);
+            }
+            gutter.textContent = '';
+            gutter.appendChild(fragment);
+        }
+        function updateLineMarker(marker, line) {
+            if (!line) {
+                marker.style.display = 'none';
+                return;
+            }
+            var style = window.getComputedStyle(ta);
+            var lineHeight = parseFloat(style.lineHeight) || 22;
+            var paddingTop = parseFloat(style.paddingTop) || 0;
+            // The stylesheet default is display:none. Assigning '' merely removes the inline
+            // declaration and exposes that default again, so the gutter changed while the code-row
+            // marker stayed permanently hidden. Explicit block is the visible state.
+            marker.style.display = 'block';
+            marker.style.height = lineHeight + 'px';
+            marker.style.top = (paddingTop + ((line - 1) * lineHeight) - ta.scrollTop) + 'px';
+        }
+        function updateLineMarkers() {
+            updateLineMarker(debugMarker, debugLine);
+            updateLineMarker(errorMarker, errorLine);
+        }
         function syncScroll() {
             syntax.scrollTop = ta.scrollTop; syntax.scrollLeft = ta.scrollLeft;
             gutter.scrollTop = ta.scrollTop;
+            updateLineMarkers();
         }
         function refresh() {
             syntax.innerHTML = highlightSyntax(ta.value);
-            gutter.textContent = lineNumbers(ta.value);
+            renderGutter();
             syncScroll();
         }
+        function revealLine(line) {
+            var style = window.getComputedStyle(ta);
+            var lineHeight = parseFloat(style.lineHeight) || 22;
+            var paddingTop = parseFloat(style.paddingTop) || 0;
+            var top = paddingTop + ((line - 1) * lineHeight);
+            var bottom = top + lineHeight;
+            if (top < ta.scrollTop) {
+                ta.scrollTop = Math.max(0, top - lineHeight);
+            } else if (bottom > ta.scrollTop + ta.clientHeight) {
+                ta.scrollTop = Math.max(0, bottom - ta.clientHeight + lineHeight);
+            }
+            syncScroll();
+        }
+        var api = {
+            setBreakpoints: function (lines) {
+                breakpointLines = normalizedLines(lines);
+                renderGutter();
+            },
+            getBreakpoints: function () {
+                return breakpointLines.slice();
+            },
+            setDebugLine: function (line, reveal) {
+                var n = Number(line);
+                debugLine = n > 0 && n % 1 === 0 ? n : null;
+                renderGutter();
+                updateLineMarkers();
+                if (debugLine && reveal) revealLine(debugLine);
+            },
+            setErrorLine: function (line, reveal) {
+                var n = Number(line);
+                errorLine = n > 0 && n % 1 === 0 ? n : null;
+                renderGutter();
+                updateLineMarkers();
+                if (errorLine && reveal) revealLine(errorLine);
+            },
+            refresh: refresh
+        };
+        ta.ptEditor = api;
         ta.addEventListener('input', refresh);
         ta.addEventListener('scroll', syncScroll);
-        ta.addEventListener('keydown', function (e) { handleKey(e, ta, refresh); });
+        if (!ta.readOnly) {
+            ta.addEventListener('keydown', function (e) { handleKey(e, ta, refresh); });
+        }
+        if (breakpointMode) {
+            gutter.addEventListener('click', function (e) {
+                var target = e.target;
+                if (!target || !target.getAttribute) return;
+                var line = parseInt(target.getAttribute('data-line'), 10);
+                if (!(line > 0)) return;
+                var index = breakpointLines.indexOf(line);
+                if (index === -1) breakpointLines.push(line); else breakpointLines.splice(index, 1);
+                breakpointLines.sort(function (a, b) { return a - b; });
+                renderGutter();
+                ta.dispatchEvent(new CustomEvent('pt-breakpoints-change', {
+                    detail: { lines: breakpointLines.slice() }
+                }));
+            });
+        }
         refresh();
 
         if (ta.hasAttribute('data-pt-panel')) {
@@ -289,6 +412,7 @@
             syncPanelHeight(editor, panel);
             wirePanelToggle(editor, resizer, panel);
         }
+        ta.dispatchEvent(new CustomEvent('pt-editor-ready', { detail: { editor: api } }));
     }
 
     // TeeBox addition (not from the playground): the reference panel is hidden by default — most
@@ -387,15 +511,20 @@
             });
             var returnsHtml = f.returns ? '<div class="pt-fn-field-label">Returns</div><div class="pt-fn-field">' + escapeHtml(f.returns) + '</div>' : '';
             var failsHtml = f.fails ? '<div class="pt-fn-field-label">Fails</div><div class="pt-fn-field pt-fn-field-fail">' + escapeHtml(f.fails) + '</div>' : '';
+            var insertHtml = ta.readOnly ? '' :
+                '<button type="button" class="pt-fn-insert">Insert ' + escapeHtml(f.name) + '()</button>';
             detail.innerHTML =
                 '<div class="pt-fn-sig">' + escapeHtml(f.sig) + '</div>' +
                 '<div class="pt-fn-desc">' + escapeHtml(f.desc) + '</div>' +
                 returnsHtml + failsHtml +
                 '<div class="pt-fn-field-label">Sample</div><pre class="pt-fn-sample">' + escapeHtml(f.sample) + '</pre>' +
-                '<button type="button" class="pt-fn-insert">Insert ' + escapeHtml(f.name) + '()</button>';
-            detail.querySelector('.pt-fn-insert').addEventListener('click', function () {
-                insertAtCursor(ta, f.name + '()');
-            });
+                insertHtml;
+            var insert = detail.querySelector('.pt-fn-insert');
+            if (insert) {
+                insert.addEventListener('click', function () {
+                    insertAtCursor(ta, f.name + '()');
+                });
+            }
         });
 
         panel.appendChild(header);

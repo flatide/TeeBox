@@ -2,6 +2,62 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Scripts can be debugged directly from the Run Script panel.** The admin-only Debug action
+  captures the currently edited Version Source (including unsaved changes), Props JSON, Max
+  Iterations, and Warn Loops settings, then pauses at entry (debug remains timeout-exempt). The
+  Debug button names the editor version explicitly; the ordinary Run action continues to use the
+  Version selector. These sessions have no parent Run: their
+  temporary Run is never persisted or included in Runs list/count results, and its Task rows are
+  removed after the session captures terminal output/error/result. Restart replays the same
+  captured source and Props with a fresh temporary Run; the final console remains viewable for the
+  normal ended-session retention window without creating execution history.
+- **Current and error highlighting now covers the complete editor row.** The yellow paused line and
+  red positioned-error line remain marked in the gutter and now extend across the code area. The
+  row marker existed previously but its show path assigned an empty inline `display`, which simply
+  exposed the stylesheet's `display:none` default again; active markers now explicitly use
+  `display:block`. The marker remains between syntax and input, preserving caret/selection behavior.
+- **Debug Output is now script-focused like the ProperTee playground.** Per-pause statements,
+  generic session-end lines, restart progress, and successful no-result command acknowledgements
+  no longer pollute Output. It contains the script's stdout, `[ERROR]` stderr, retained-tail gap
+  notices, explicit eval input/results, actionable command errors/timeouts, and only the essential
+  terminal message (`Runtime Error` or `Execution stopped`; successful completion is silent).
+- **Debug sessions can restart in place.** Restart stops the current attempt, preserves live
+  breakpoints, resets the same canonical debug Run, opens a fresh console session/source snapshot,
+  and pauses at entry again. On terminalization the red editor marker now moves to the current
+  attempt's positioned failure; successful or stopped attempts clear it instead of retaining the
+  source Run's old error line.
+- **The debug workspace now follows the ProperTee playground layout.** Output is attached directly
+  below the source editor, with Continue, Step Over/In/Out, and Stop in its header. The workspace
+  is split vertically into Output and Variables (Locals/Globals), collapsing to rows on narrow
+  screens. Output now includes the debug Run's bounded stdout/stderr stream plus explicit eval
+  results and essential errors; retained-tail gaps are identified without re-fetching or
+  duplicating lines.
+- **The debug console now embeds the same ProperTee source editor used by script versions.** The
+  session's execution source is syntax-highlighted and read-only, the current paused line is
+  highlighted in place, and clicking a gutter line toggles a live breakpoint just like the
+  ProperTee playground. Breakpoint updates are serialized so rapid clicks cannot be overwritten
+  by an older response or the one-second state poll.
+- **Debug runs now start paused at the script entry point, before executing the first statement.**
+  Step/Continue controls release that initial stop, matching the playground's debug-start flow.
+  A positioned source failure is a separate red line marker rather than an implicit breakpoint;
+  CANCELLED/COMPLETED or unpositioned failures show no red marker. The private one-shot entry
+  breakpoint never appears in the user's breakpoint list and is removed at the first pause. The
+  editor and engine share one launch-time source snapshot, so concurrently editing that script
+  version cannot move an active session's entry/breakpoint mapping.
+- **Live debug sessions are re-enterable after navigating away.** Admin navigation now has a
+  Debug page listing retained sessions with Resume/View actions, and both the source Run and its
+  debug Run show a direct Resume Debug link while the session is active.
+- **The Runs page can filter by origin and now defaults to API runs.** Operators can switch among
+  API, UI, Debug, and All while combining the origin with status, instant, search, and pagination;
+  the admin JSON list accepts the same optional `origin=api|ui|debug` filter.
+- **Each source Run now has one reusable debug Run.** Repeated UI/API opens while debugging return
+  the same live session (additional requested breakpoints are merged). After that session ends, a
+  later re-run opens a new console session but fully resets and executes the same debug `runId`:
+  lifecycle/result/log/thread state is cleared, and old run-owned tasks are terminated and removed
+  before the next attempt, so execution history cannot bleed into the reused Run record.
+
 ## 1.25.3
 
 Third review round on the debug feature — honest command outcomes:

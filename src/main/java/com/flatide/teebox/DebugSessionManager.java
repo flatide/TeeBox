@@ -1,8 +1,10 @@
 package com.flatide.teebox;
 
+import com.flatide.propertee2.core.ScriptParser;
 import com.flatide.propertee2.interp.DebugCallSite;
 import com.flatide.propertee2.interp.DebugFrame;
 import com.flatide.propertee2.interp.DebugHandler;
+import com.flatide.propertee2.parser.ProperTeeParser;
 import com.flatide.propertee2.runtime.TypeChecker;
 
 import java.text.SimpleDateFormat;
@@ -93,9 +95,14 @@ public class DebugSessionManager {
 
     /**
      * Open a debug session re-running {@code sourceRunId} (must be terminal and not archived).
-     * When the source run FAILED with a positioned error, a breakpoint is pre-set on the failing
-     * line so the run pauses just before the statement that failed; {@code breakpoints} adds more.
-     * The session starts immediately on the dedicated executor (capacity permitting).
+     * Execution first pauses before the script's first root statement, like the ProperTee
+     * playground's debug start. A positioned FAILED line is exposed separately as an error marker,
+     * never converted into a breakpoint; {@code breakpoints} adds user stops.
+     * The session starts immediately on the dedicated executor (capacity permitting). Re-opening
+     * the same source Run while its session is still live is idempotent: the existing session and
+     * debug Run are returned, and newly requested breakpoints are merged into its live set. Once
+     * that session ends, opening again creates a new session but resets and reuses the same debug
+     * Run record.
      *
      * @throws IllegalArgumentException unknown source run
      * @throws IllegalStateException    capacity reached, non-terminal/archived source, shutdown
@@ -105,48 +112,171 @@ public class DebugSessionManager {
             if (shutdownRequested) {
                 throw new IllegalStateException("Server is shutting down; debug sessions are rejected");
             }
+            Session existing = activeSessionForSource(sourceRunId);
+            if (existing != null) {
+                if (breakpoints != null) {
+                    synchronized (existing) {
+                        for (Integer line : breakpoints) {
+                            if (line != null && line.intValue() > 0) {
+                                existing.breakpoints.add(line);
+                                if (existing.liveBreakpoints != null) {
+                                    existing.liveBreakpoints.add(line);
+                                }
+                            }
+                        }
+                    }
+                }
+                existing.touch();
+                TeeBoxLog.info("DebugSession", "Reusing " + existing.sessionId + " / "
+                    + existing.runId + " for source Run " + sourceRunId);
+                return existing;
+            }
             if (activeCount() >= maxSessions) {
                 throw new IllegalStateException("Debug session limit reached (" + maxSessions
                     + ") — close or quit an existing session first");
             }
             RunInfo source = runManager.getRun(sourceRunId);
             RunManager.DebugTarget target = runManager.prepareDebugRun(sourceRunId, requestedBy);
-            final Session session = new Session(createSessionId(), target.run.runId, sourceRunId);
-            if (breakpoints != null) {
-                for (Integer line : breakpoints) {
-                    if (line != null && line.intValue() > 0) {
-                        session.breakpoints.add(line);
-                    }
-                }
-            }
-            Integer failedLine = parseErrorLine(source != null ? source.errorMessage : null);
-            if (failedLine != null) {
-                session.breakpoints.add(failedLine);
-            }
-            sessions.put(session.sessionId, session);
-            final RunManager.DebugTarget finalTarget = target;
-            try {
-                debugExecutor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            runManager.executeDebugRun(finalTarget.run, finalTarget.scriptFile,
-                                session.new Attach());
-                        } finally {
-                            finalizeSession(session);
-                        }
-                    }
-                });
-            } catch (RejectedExecutionException e) {
-                sessions.remove(session.sessionId);
-                // The run was already registered — terminalize it, or it sits QUEUED forever.
-                runManager.abandonDebugRun(finalTarget.run,
-                    "Server shutting down — debug session rejected before start");
+            removeEndedSessionsForSource(sourceRunId);
+            String capturedSource = target.sourceCode != null ? target.sourceCode : "";
+            Integer errorLine = source != null && source.status == RunStatus.FAILED
+                ? parseErrorLine(source.errorMessage) : null;
+            return submitSession(target, sourceRunId, capturedSource, errorLine, breakpoints, false);
+        }
+    }
+
+    /**
+     * Start a debug session from the script page's Run Script panel. Unlike {@link #open}, this
+     * has no source Run; it captures the selected version, props, and iteration controls, while
+     * its execution Run remains session-scoped and is removed after terminal snapshot capture.
+     */
+    public Session openScript(String scriptId, String version, String sourceSnapshot,
+                              Map<String, Object> properties, int maxIterations, boolean warnLoops,
+                              String requestedBy, List<Integer> breakpoints) {
+        synchronized (openLock) {
+            if (shutdownRequested) {
                 throw new IllegalStateException("Server is shutting down; debug sessions are rejected");
             }
-            TeeBoxLog.info("DebugSession", "Opened " + session.sessionId + " re-running "
-                + sourceRunId + " as " + session.runId + " (breakpoints " + session.breakpoints + ")");
-            return session;
+            if (activeCount() >= maxSessions) {
+                throw new IllegalStateException("Debug session limit reached (" + maxSessions
+                    + ") — close or quit an existing session first");
+            }
+            RunManager.DebugTarget target =
+                runManager.prepareScriptDebug(scriptId, version, sourceSnapshot, properties,
+                    maxIterations, warnLoops, requestedBy);
+            String capturedSource = target.sourceCode != null ? target.sourceCode : "";
+            return submitSession(target, null, capturedSource, null, breakpoints, true);
+        }
+    }
+
+    /** Caller holds openLock. */
+    private Session submitSession(final RunManager.DebugTarget target, String sourceRunId,
+                                  String capturedSource, Integer errorLine,
+                                  List<Integer> breakpoints, boolean transientDebug) {
+        final Session session = new Session(createSessionId(), target.run.runId, sourceRunId,
+            target.run.scriptId, target.run.version, capturedSource,
+            firstEntryLine(capturedSource), errorLine, transientDebug, target.run.properties,
+            target.run.maxIterations, "warn".equals(target.run.iterationLimitBehavior));
+        if (breakpoints != null) {
+            for (Integer line : breakpoints) {
+                if (line != null && line.intValue() > 0) {
+                    session.breakpoints.add(line);
+                }
+            }
+        }
+        sessions.put(session.sessionId, session);
+        try {
+            debugExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        runManager.executeDebugRun(target.run, target.scriptFile,
+                            target.sourceCode, session.new Attach());
+                    } finally {
+                        finalizeSession(session);
+                    }
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            sessions.remove(session.sessionId);
+            // The run was already registered — terminalize it, or it sits QUEUED forever.
+            runManager.abandonDebugRun(target.run,
+                "Server shutting down — debug session rejected before start");
+            if (transientDebug) {
+                runManager.discardTransientDebugRun(target.run.runId);
+            }
+            throw new IllegalStateException("Server is shutting down; debug sessions are rejected");
+        }
+        TeeBoxLog.info("DebugSession", "Opened " + session.sessionId
+            + (sourceRunId != null ? " re-running " + sourceRunId : " from Run Script panel")
+            + " as " + session.runId + " (breakpoints " + session.breakpoints + ")");
+        return session;
+    }
+
+    /**
+     * Stop one attempt and immediately open its source Run again, preserving the user's live
+     * breakpoints. The replacement gets a fresh session id/source snapshot and pauses at entry,
+     * while {@link RunManager#prepareDebugRun} resets the same canonical debug run id.
+     *
+     * <p>The whole transition is serialized with {@link #open}: another request cannot observe the
+     * old attempt as ended and start a competing replacement between our stop and re-open.
+     */
+    public Session restart(String sessionId, String requestedBy) {
+        synchronized (openLock) {
+            if (shutdownRequested) {
+                throw new IllegalStateException("Server is shutting down; debug restart is rejected");
+            }
+            Session previous = sessions.get(sessionId);
+            if (previous == null) {
+                throw new IllegalArgumentException("Debug session not found: " + sessionId);
+            }
+            List<Integer> preservedBreakpoints = sortedBreakpoints(previous);
+            if (!Session.ENDED.equals(previous.state)) {
+                kill(previous.sessionId, "Restarted from the debugger");
+            }
+            try {
+                if (!previous.finished.await(15000L, TimeUnit.MILLISECONDS)) {
+                    throw new IllegalStateException("Debug session is still stopping; try Restart again");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while stopping the debug session");
+            }
+            if (previous.transientDebug) {
+                Session restarted = openScript(previous.scriptId, previous.version,
+                    previous.sourceCode, previous.inputProperties, previous.maxIterations,
+                    previous.warnLoops, requestedBy, preservedBreakpoints);
+                sessions.remove(previous.sessionId, previous);
+                return restarted;
+            }
+            return open(previous.sourceRunId, requestedBy, preservedBreakpoints);
+        }
+    }
+
+    /** Newest live session for a source Run. openLock is held by the caller, so once this policy
+     *  is deployed there can be at most one; newest-first also handles sessions created by an
+     *  older server before the idempotency guard existed. */
+    private Session activeSessionForSource(String sourceRunId) {
+        Session found = null;
+        for (Session candidate : sessions.values()) {
+            if (sourceRunId != null && sourceRunId.equals(candidate.sourceRunId)
+                    && !Session.ENDED.equals(candidate.state)
+                    && (found == null || candidate.createdAt > found.createdAt)) {
+                found = candidate;
+            }
+        }
+        return found;
+    }
+
+    /** Old session snapshots point at the same Run record that is about to be reset. Keeping them
+     *  would expose contradictory ENDED-session/RUNNING-run state, so the new attempt supersedes
+     *  every ended console for this source. */
+    private void removeEndedSessionsForSource(String sourceRunId) {
+        for (Session candidate : sessions.values()) {
+            if (sourceRunId != null && sourceRunId.equals(candidate.sourceRunId)
+                    && Session.ENDED.equals(candidate.state)) {
+                sessions.remove(candidate.sessionId, candidate);
+            }
         }
     }
 
@@ -330,13 +460,19 @@ public class DebugSessionManager {
         }
         session.touch();
         synchronized (session) {
-            Set<Integer> target = session.breakpoints;
-            target.clear();
+            session.breakpoints.clear();
             if (lines != null) {
                 for (Integer line : lines) {
                     if (line != null && line.intValue() > 0) {
-                        target.add(line);
+                        session.breakpoints.add(line);
                     }
+                }
+            }
+            if (session.liveBreakpoints != null) {
+                session.liveBreakpoints.clear();
+                session.liveBreakpoints.addAll(session.breakpoints);
+                if (session.entryPausePending && session.entryLine != null) {
+                    session.liveBreakpoints.add(session.entryLine);
                 }
             }
         }
@@ -411,11 +547,29 @@ public class DebugSessionManager {
         public final String sessionId;
         public final String runId;
         public final String sourceRunId;
+        /** True when launched from a script page: no parent Run and no retained Run history. */
+        public final boolean transientDebug;
+        /** Script identity and source shown by the debugger. Captured when the session opens so
+         *  later edits cannot move the UI's line mapping under an already-running debug session. */
+        public final String scriptId;
+        public final String version;
+        public final String sourceCode;
+        /** Inputs captured from the Run Script panel; Restart deep-copies and reuses them. */
+        public final Map<String, Object> inputProperties;
+        public final int maxIterations;
+        public final boolean warnLoops;
+        /** First root statement. A private one-shot breakpoint pauses here before side effects. */
+        public final Integer entryLine;
+        /** Positioned error marker. Starts from the source FAILED Run, then is replaced with this
+         *  attempt's actual FAILED line at terminalization (or cleared on non-error endings). */
+        public volatile Integer errorLine;
         public final long createdAt = System.currentTimeMillis();
         final BlockingQueue<Command> commands = new LinkedBlockingQueue<Command>();
-        /** Pre-seeded before the engine exists; swapped for the engine's live set at onDebugReady
-         *  (contents carried over), so mutations always reach the set the engine consults. */
-        volatile Set<Integer> breakpoints = ConcurrentHashMap.newKeySet();
+        /** Public/user breakpoints only — the synthetic entry stop must never appear in this set. */
+        final Set<Integer> breakpoints = ConcurrentHashMap.newKeySet();
+        /** Engine-owned set; includes the private entry breakpoint until the first pause. */
+        volatile Set<Integer> liveBreakpoints;
+        volatile boolean entryPausePending;
         volatile String state = RUNNING;
         /** Immutable pause description (built on the fiber, replaced wholesale). Null unless paused. */
         volatile Map<String, Object> paused;
@@ -425,6 +579,12 @@ public class DebugSessionManager {
         volatile long pauseGeneration;
         volatile long lastActivityAt = System.currentTimeMillis();
         volatile long endedAt;
+        /** Terminal Run snapshot retained by a script-editor session after its transient registry
+         *  entry and task rows have been deleted. */
+        volatile RunInfo terminalRunSnapshot;
+        /** Restart waits for the entire old attempt (including command draining) before resetting
+         *  its shared debug Run record. */
+        final CountDownLatch finished = new CountDownLatch(1);
         final java.util.concurrent.atomic.AtomicLong commandSeq =
             new java.util.concurrent.atomic.AtomicLong();
         /** Finished commands by id, oldest evicted — lets a caller whose command() wait timed out
@@ -437,10 +597,25 @@ public class DebugSessionManager {
                 }
             });
 
-        Session(String sessionId, String runId, String sourceRunId) {
+        @SuppressWarnings("unchecked")
+        Session(String sessionId, String runId, String sourceRunId, String scriptId, String version,
+                String sourceCode, Integer entryLine, Integer errorLine, boolean transientDebug,
+                Map<String, Object> inputProperties, int maxIterations, boolean warnLoops) {
             this.sessionId = sessionId;
             this.runId = runId;
             this.sourceRunId = sourceRunId;
+            this.transientDebug = transientDebug;
+            this.scriptId = scriptId;
+            this.version = version;
+            this.sourceCode = sourceCode;
+            this.inputProperties = inputProperties != null
+                ? (Map<String, Object>) TypeChecker.deepCopy(inputProperties)
+                : new LinkedHashMap<String, Object>();
+            this.maxIterations = maxIterations;
+            this.warnLoops = warnLoops;
+            this.entryLine = entryLine;
+            this.errorLine = errorLine;
+            this.entryPausePending = entryLine != null;
         }
 
         void touch() {
@@ -469,7 +644,12 @@ public class DebugSessionManager {
             public void onDebugReady(Set<Integer> liveBreakpoints) {
                 synchronized (Session.this) {
                     liveBreakpoints.addAll(breakpoints);
-                    breakpoints = liveBreakpoints;
+                    if (entryPausePending && entryLine != null) {
+                        // Playground-style break-on-entry. It is intentionally absent from the
+                        // user-facing breakpoint list and removed as soon as the entry pause hits.
+                        liveBreakpoints.add(entryLine);
+                    }
+                    Session.this.liveBreakpoints = liveBreakpoints;
                 }
             }
 
@@ -524,6 +704,17 @@ public class DebugSessionManager {
             // Every state transition happens under the session monitor — command()'s
             // check+capture+enqueue and finalizeSession's ENDED+drain serialize against it.
             synchronized (session) {
+                if (session.entryPausePending && session.entryLine != null
+                        && session.entryLine.intValue() == frame.line()) {
+                    session.entryPausePending = false;
+                    // Preserve a real user breakpoint on the entry line; remove only our private
+                    // one-shot stop so a loop returning here does not pause unexpectedly.
+                    if (session.liveBreakpoints != null
+                            && !session.breakpoints.contains(session.entryLine)) {
+                        session.liveBreakpoints.remove(session.entryLine);
+                    }
+                    snapshot.put("reason", "ENTRY");
+                }
                 session.pauseGeneration++;   // single writer: only this fiber pauses the session
                 session.paused = snapshot;
                 session.state = Session.PAUSED;
@@ -611,11 +802,18 @@ public class DebugSessionManager {
     }
 
     private void finalizeSession(Session session) {
+        RunInfo run = runManager.getRun(session.runId);
+        Integer terminalErrorLine = run != null && run.status == RunStatus.FAILED
+            ? parseErrorLine(run.errorMessage) : null;
         // ENDED + drain as one atomic unit (session monitor): command() enqueues under the same
         // monitor behind a not-ENDED check, so no command can slip in after this drain and sit
         // unanswered forever.
         List<Command> drained = new ArrayList<Command>();
         synchronized (session) {
+            // A successful/cancelled attempt has no current error marker. A failed attempt uses
+            // ITS positioned engine error, which may differ from the source Run after edits.
+            session.errorLine = terminalErrorLine;
+            session.terminalRunSnapshot = run;
             session.state = Session.ENDED;
             session.paused = null;
             session.endedAt = System.currentTimeMillis();
@@ -634,7 +832,15 @@ public class DebugSessionManager {
             cmd.error = "Debug session ended before this command was executed";
             finishCommand(session, cmd);
         }
-        RunInfo run = runManager.getRun(session.runId);
+        if (session.transientDebug) {
+            try {
+                runManager.discardTransientDebugRun(session.runId);
+            } catch (RuntimeException e) {
+                TeeBoxLog.warn("DebugSession", "Failed to remove transient debug run "
+                    + session.runId, e);
+            }
+        }
+        session.finished.countDown();
         TeeBoxLog.info("DebugSession", "Session " + session.sessionId + " ended — run "
             + session.runId + " " + (run != null ? run.status : "?"));
     }
@@ -705,13 +911,20 @@ public class DebugSessionManager {
         map.put("sessionId", session.sessionId);
         map.put("sourceRunId", session.sourceRunId);
         map.put("runId", session.runId);
+        map.put("transientDebug", Boolean.valueOf(session.transientDebug));
+        map.put("scriptId", session.scriptId);
+        map.put("version", session.version);
         String state;
         long pauseGeneration;
         Map<String, Object> pausedSnapshot;
+        Integer errorLine;
+        RunInfo terminalRunSnapshot;
         synchronized (session) {   // one consistent (state, generation, frame) triple
             state = session.state;
             pauseGeneration = session.pauseGeneration;
             pausedSnapshot = session.paused;
+            errorLine = session.errorLine;
+            terminalRunSnapshot = session.terminalRunSnapshot;
         }
         map.put("state", state);
         // The pause this status describes — send it back as a command's `generation` to be
@@ -720,12 +933,27 @@ public class DebugSessionManager {
         map.put("createdAt", Long.valueOf(session.createdAt));
         map.put("lastActivityAt", Long.valueOf(session.lastActivityAt));
         map.put("breakpoints", sortedBreakpoints(session));
+        if (errorLine != null) {
+            map.put("errorLine", errorLine);
+        }
         if (pausedSnapshot != null) {
             map.put("paused", pausedSnapshot);
         }
         RunInfo run = runManager.getRun(session.runId);
+        if (run == null) {
+            run = terminalRunSnapshot;
+        }
         if (run != null) {
             map.put("runStatus", run.status != null ? run.status.name() : null);
+            // The console polls this status endpoint already, so carry the RunRegistry's bounded
+            // output tails with it instead of making the browser issue two more requests every
+            // second. Total counts let the page avoid duplicates and report ring-buffer gaps.
+            map.put("stdoutLines", run.stdoutLines != null
+                ? new ArrayList<String>(run.stdoutLines) : new ArrayList<String>());
+            map.put("stderrLines", run.stderrLines != null
+                ? new ArrayList<String>(run.stderrLines) : new ArrayList<String>());
+            map.put("stdoutTotalLines", Integer.valueOf(run.stdoutTotalLines));
+            map.put("stderrTotalLines", Integer.valueOf(run.stderrTotalLines));
             if (Session.ENDED.equals(session.state)) {
                 map.put("endedAt", Long.valueOf(session.endedAt));
                 if (run.errorMessage != null) {
@@ -760,6 +988,19 @@ public class DebugSessionManager {
             }
         }
         return null;
+    }
+
+    /** Parse the exact first root statement instead of guessing from leading text/comments. */
+    static Integer firstEntryLine(String source) {
+        if (source == null || source.length() == 0) {
+            return null;
+        }
+        List<String> errors = new ArrayList<String>();
+        ProperTeeParser.RootContext root = ScriptParser.parse(source, errors);
+        if (root == null || root.statement() == null || root.statement().isEmpty()) {
+            return null;
+        }
+        return Integer.valueOf(root.statement(0).getStart().getLine());
     }
 
     private static String createSessionId() {

@@ -9,10 +9,16 @@ TeeBox is the ProperTee execution service module. It exposes an HTTP admin UI an
 - `/api/admin/*` for run/task inspection and control
 - namespaced `client`, `publisher`, and `admin` JSON APIs
 - `/admin` HTML UI for operators
-- interactive debug re-runs of finished runs (breakpoints/stepping/eval console at
-  `/admin/debug/{sessionId}`, on a small dedicated executor — see `DebugSessionManager`)
+- interactive debug re-runs of finished runs (the shared syntax-highlighted source editor with
+  entry-point pause, separate red source-error marker, clickable gutter breakpoints, stepping, and
+  a playground-style Output/Variables workbench with clean Run stdout/stderr and eval at
+  `/admin/debug/{sessionId}`, on a small dedicated executor; live sessions can
+  be restarted from entry or resumed from the admin `Debug` page or either
+  related Run, and every re-execution of one source Run resets and reuses its single debug Run —
+  or admins can Debug the Version Source's current unsaved buffer with the Run Script panel's
+  Props and iteration settings but no retained Run/Task history — see `DebugSessionManager`)
 - external task tracking through `ManagedTaskEngine`
-- persisted run/task indexes with archive and purge support
+- persisted per-run/per-task records with in-memory indexes, archive, and purge support
 
 ## Main Components
 

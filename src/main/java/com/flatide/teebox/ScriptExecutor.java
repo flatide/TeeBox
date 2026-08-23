@@ -81,9 +81,27 @@ public class ScriptExecutor {
                                    TaskRunner taskRunner,
                                    final Callbacks callbacks,
                                    com.flatide.propertee2.interp.DebugHandler debugHandler) {
+        return execute(scriptFile, properties, maxIterations, iterationLimitBehavior, runId,
+            scriptId, version, taskRunner, callbacks, debugHandler, null);
+    }
+
+    /** As above, executing {@code sourceSnapshot} instead of re-reading {@code scriptFile} when
+     *  non-null. Debug hosts use this so the displayed source, entry line, and executed AST remain
+     *  one immutable launch snapshot even if an operator edits the same version concurrently. */
+    public ExecutionResult execute(File scriptFile,
+                                   Map<String, Object> properties,
+                                   int maxIterations,
+                                   String iterationLimitBehavior,
+                                   String runId,
+                                   String scriptId,
+                                   String version,
+                                   TaskRunner taskRunner,
+                                   final Callbacks callbacks,
+                                   com.flatide.propertee2.interp.DebugHandler debugHandler,
+                                   String sourceSnapshot) {
         ProperTeeInterpreter visitor = null;
         try {
-            String scriptText = readFile(scriptFile);
+            String scriptText = sourceSnapshot != null ? sourceSnapshot : readFile(scriptFile);
             List<String> errors = new ArrayList<String>();
             ProperTeeParser.RootContext tree = ScriptParser.parse(scriptText, errors);
             if (tree == null) {
