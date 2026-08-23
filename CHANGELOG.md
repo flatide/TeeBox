@@ -4,11 +4,21 @@ All notable changes to TeeBox are documented here.
 
 ## Unreleased
 
-- **Scripts can be debugged directly from the Run Script panel.** The admin-only Debug action
-  captures the currently edited Version Source (including unsaved changes), Props JSON, Max
-  Iterations, and Warn Loops settings, then pauses at entry (debug remains timeout-exempt). The
-  Debug button names the editor version explicitly; the ordinary Run action continues to use the
-  Version selector. These sessions have no parent Run: their
+- **Debugger now follows `multi` worker frames (propertee2 0.28.0).** Breakpoints and explicit
+  `debug` statements inside worker functions pause with their logical `threadId`/`threadName`,
+  worker-scoped stepping, locals, globals, and call stack. The status API also carries the Run's
+  complete logical-thread lifecycle list and marks the one currently inspectable frame; the UI
+  shows that list beside Variables and includes thread identity in its pause key, so two workers
+  stopping on the same source line remain distinct. Monitor bodies remain intentionally excluded.
+- **Debugger Globals now includes `_PROPS`.** propertee2 stores host properties outside its
+  ordinary globals map, so `DebugFrame.globals()` omitted `_PROPS` even though scripts and eval
+  could read it. TeeBox now reconstructs the launch value from the session's immutable input
+  snapshot; if script/eval code shadows `_PROPS`, the live frame value takes precedence.
+- **Scripts can be debugged directly from Version Source.** The admin-only Debug action and its
+  dedicated Debug Props JSON field live with the editor, removing ambiguity with ordinary Run.
+  It captures the currently edited source (including unsaved changes) and Debug Props, then pauses
+  at entry (debug remains timeout-exempt). Versionless script shells use an unwritten synthetic
+  draft context. These sessions have no parent Run: their
   temporary Run is never persisted or included in Runs list/count results, and its Task rows are
   removed after the session captures terminal output/error/result. Restart replays the same
   captured source and Props with a fresh temporary Run; the final console remains viewable for the

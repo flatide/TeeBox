@@ -26,8 +26,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Interactive debug re-runs of finished runs, over the engine's debug hooks (propertee2 0.26.0:
- * {@code ProperTeeInterpreter.setDebugHandler}/{@code debugBreakpoints()}). Deliberately separate
+ * Interactive debug re-runs of finished runs, over the engine's debug hooks (propertee2 0.28.0:
+ * {@code ProperTeeInterpreter.setDebugHandler}/{@code debugBreakpoints()} plus worker frames).
+ * Deliberately separate
  * from {@link RunManager}'s run pool: a debug run pauses at breaks for as long as the operator
  * thinks — parked on the engine fiber, holding the run frozen — so it executes on this manager's
  * own small dedicated executor and never occupies a production run slot, and abandonment is
@@ -146,8 +147,8 @@ public class DebugSessionManager {
     }
 
     /**
-     * Start a debug session from the script page's Run Script panel. Unlike {@link #open}, this
-     * has no source Run; it captures the selected version, props, and iteration controls, while
+     * Start a debug session from the script page's Version Source editor. Unlike {@link #open},
+     * this has no source Run; it captures the current source and dedicated Debug Props, while
      * its execution Run remains session-scoped and is removed after terminal snapshot capture.
      */
     public Session openScript(String scriptId, String version, String sourceSnapshot,
@@ -208,7 +209,7 @@ public class DebugSessionManager {
             throw new IllegalStateException("Server is shutting down; debug sessions are rejected");
         }
         TeeBoxLog.info("DebugSession", "Opened " + session.sessionId
-            + (sourceRunId != null ? " re-running " + sourceRunId : " from Run Script panel")
+            + (sourceRunId != null ? " re-running " + sourceRunId : " from Version Source editor")
             + " as " + session.runId + " (breakpoints " + session.breakpoints + ")");
         return session;
     }
@@ -554,7 +555,7 @@ public class DebugSessionManager {
         public final String scriptId;
         public final String version;
         public final String sourceCode;
-        /** Inputs captured from the Run Script panel; Restart deep-copies and reuses them. */
+        /** Debug Props captured from Version Source; Restart deep-copies and reuses them. */
         public final Map<String, Object> inputProperties;
         public final int maxIterations;
         public final boolean warnLoops;
@@ -700,7 +701,7 @@ public class DebugSessionManager {
 
         @Override
         public void onBreak(DebugFrame frame) {
-            Map<String, Object> snapshot = buildSnapshot(frame);
+            Map<String, Object> snapshot = buildSnapshot(frame, session);
             // Every state transition happens under the session monitor — command()'s
             // check+capture+enqueue and finalizeSession's ENDED+drain serialize against it.
             synchronized (session) {
@@ -754,7 +755,7 @@ public class DebugSessionManager {
                             cmd.error = e.getMessage() != null ? e.getMessage() : e.toString();
                         }
                         // The eval may have written locals/globals — republish the snapshot.
-                        session.paused = buildSnapshot(frame);
+                        session.paused = buildSnapshot(frame, session);
                         finishCommand(session, cmd);
                         break;   // stay paused
                     case Command.STEP_OVER:
@@ -865,9 +866,11 @@ public class DebugSessionManager {
 
     // ===================== snapshots / helpers =====================
 
-    private Map<String, Object> buildSnapshot(DebugFrame frame) {
+    private Map<String, Object> buildSnapshot(DebugFrame frame, Session session) {
         Map<String, Object> snapshot = new LinkedHashMap<String, Object>();
         snapshot.put("reason", frame.reason().name());
+        snapshot.put("threadId", Integer.valueOf(frame.threadId()));
+        snapshot.put("threadName", frame.threadName());
         snapshot.put("line", Integer.valueOf(frame.line()));
         snapshot.put("column", Integer.valueOf(frame.column()));
         snapshot.put("statement", frame.statementText());
@@ -881,8 +884,28 @@ public class DebugSessionManager {
         }
         snapshot.put("callStack", stack);
         snapshot.put("locals", displayMap(frame.locals()));
-        snapshot.put("globals", displayMap(frame.globals()));
+        snapshot.put("globals", displayGlobals(frame, session));
         return snapshot;
+    }
+
+    /**
+     * propertee2 keeps host properties (including its synthetic {@code _PROPS}) outside the
+     * program globals map, so DebugFrame.globals() alone omits the value even though name lookup
+     * and eval can read it. Reconstruct the engine's initial _PROPS value from the immutable
+     * session inputs. If the script/eval has assigned _PROPS, it is present in frame.globals() and
+     * wins — matching the engine's copy-on-write shadowing semantics.
+     */
+    private Map<String, String> displayGlobals(DebugFrame frame, Session session) {
+        Map<String, String> frameGlobals = displayMap(frame.globals());
+        if (frameGlobals.containsKey("_PROPS")) {
+            return frameGlobals;
+        }
+        Map<String, String> display = new LinkedHashMap<String, String>();
+        Object propsValue = session.inputProperties.containsKey("_PROPS")
+            ? session.inputProperties.get("_PROPS") : session.inputProperties;
+        display.put("_PROPS", display(propsValue, VALUE_DISPLAY_MAX));
+        display.putAll(frameGlobals);
+        return display;
     }
 
     private Map<String, String> displayMap(Map<String, Object> values) {
@@ -945,6 +968,7 @@ public class DebugSessionManager {
         }
         if (run != null) {
             map.put("runStatus", run.status != null ? run.status.name() : null);
+            map.put("threads", threadSnapshots(run.threads, pausedSnapshot));
             // The console polls this status endpoint already, so carry the RunRegistry's bounded
             // output tails with it instead of making the browser issue two more requests every
             // second. Total counts let the page avoid duplicates and report ring-buffer gaps.
@@ -965,6 +989,45 @@ public class DebugSessionManager {
             }
         }
         return map;
+    }
+
+    /**
+     * Copy the RunRegistry's logical-thread lifecycle view into the debug status response. The
+     * scheduler deliberately keeps its underlying state (normally RUNNING while a frame is
+     * paused); {@code paused} is an orthogonal debugger state derived from the live DebugFrame.
+     * That keeps the lifecycle API truthful while letting the UI identify the one inspectable
+     * frame. All other workers are display-only because propertee2 exposes no cross-worker frame
+     * selection API.
+     */
+    private List<Map<String, Object>> threadSnapshots(List<RunThreadInfo> threads,
+                                                       Map<String, Object> pausedSnapshot) {
+        Integer pausedThreadId = null;
+        if (pausedSnapshot != null && pausedSnapshot.get("threadId") instanceof Number) {
+            pausedThreadId = Integer.valueOf(
+                ((Number) pausedSnapshot.get("threadId")).intValue());
+        }
+        List<Map<String, Object>> snapshots = new ArrayList<Map<String, Object>>();
+        if (threads == null) {
+            return snapshots;
+        }
+        for (RunThreadInfo thread : threads) {
+            Map<String, Object> snapshot = new LinkedHashMap<String, Object>();
+            snapshot.put("threadId", Integer.valueOf(thread.threadId));
+            snapshot.put("name", thread.name);
+            snapshot.put("state", thread.state);
+            snapshot.put("parentId", thread.parentId);
+            snapshot.put("resultKeyName", thread.resultKeyName);
+            snapshot.put("paused", Boolean.valueOf(
+                pausedThreadId != null && pausedThreadId.intValue() == thread.threadId));
+            if (thread.resultSummary != null) {
+                snapshot.put("resultSummary", thread.resultSummary);
+            }
+            if (thread.errorMessage != null) {
+                snapshot.put("errorMessage", thread.errorMessage);
+            }
+            snapshots.add(snapshot);
+        }
+        return snapshots;
     }
 
     private List<Integer> sortedBreakpoints(Session session) {

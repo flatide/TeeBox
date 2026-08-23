@@ -29,9 +29,10 @@ import java.util.Map;
 
 /**
  * Interactive debug re-runs (1.25.0): a finished run re-executed under the engine debugger
- * (propertee2 0.26.0 façade hooks) on the dedicated debug executor, driven over the admin API —
- * entry pause, live breakpoints, eval/step/continue/restart, current-attempt error markers, quit
- * and cancel both ending as CANCELLED (never FAILED), the capacity cap, and the idle sweep.
+ * (propertee2 0.28.0 façade hooks and worker frames) on the dedicated debug executor, driven over
+ * the admin API — entry pause, live breakpoints, main/worker identity, eval/step/continue/restart,
+ * current-attempt error markers, quit and cancel both ending as CANCELLED (never FAILED), the
+ * capacity cap, and the idle sweep.
  */
 public class DebugSessionTest {
     private final Gson gson = new Gson();
@@ -70,6 +71,11 @@ public class DebugSessionTest {
             Assert.assertEquals(1.0, ((Number) frame.get("line")).doubleValue(), 0.0);
             Assert.assertEquals("ENTRY", frame.get("reason"));
             Assert.assertTrue(String.valueOf(frame.get("statement")).contains("_PROPS.who"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> entryGlobals = (Map<String, Object>) frame.get("globals");
+            Assert.assertTrue("host _PROPS is missing from debugger Globals",
+                entryGlobals.containsKey("_PROPS"));
+            Assert.assertTrue(String.valueOf(entryGlobals.get("_PROPS")).contains("ops"));
 
             // Step from entry: line 1 executes, then line 2 pauses before FAIL.
             command(testServer, sessionId, "stepOver", null, 200);
@@ -224,6 +230,111 @@ public class DebugSessionTest {
             Assert.assertEquals(Arrays.asList("2"), ended.get("stdoutLines"));
             Assert.assertEquals(1.0, ((Number) ended.get("stdoutTotalLines")).doubleValue(), 0.0);
             Assert.assertEquals(java.util.Collections.emptyList(), ended.get("stderrLines"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void workerBreaksExposeTheCurrentFrameAndAllLogicalThreads() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            String source =
+                "function worker(n) do\n" +
+                "    value = n\n" +
+                "    value = value + 1\n" +
+                "    return value\n" +
+                "end\n" +
+                "multi results limit 1 do\n" +
+                "    thread alpha: worker(7)\n" +
+                "    thread beta: worker(10)\n" +
+                "monitor 1\n" +
+                "    debug\n" +
+                "end\n" +
+                "PRINT(results.alpha.value, results.beta.value)\n";
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("dbg_workers", "v1", source, "workers",
+                Arrays.asList("test"), true);
+            String sourceRunId = (String) client.submitRun("dbg_workers", null,
+                new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(client, sourceRunId, "COMPLETED", 10000L);
+
+            Map<String, Object> session = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug",
+                "{\"breakpoints\":[3]}", 201);
+            String sessionId = (String) session.get("sessionId");
+
+            Map<String, Object> atEntry =
+                waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            Map<?, ?> entryFrame = (Map<?, ?>) atEntry.get("paused");
+            Assert.assertEquals(0.0, ((Number) entryFrame.get("threadId")).doubleValue(), 0.0);
+            Assert.assertEquals("main", entryFrame.get("threadName"));
+
+            command(testServer, sessionId, "continue", null, 200);
+            Map<String, Object> first = waitForPausedAtLine(testServer, sessionId, 3, 10000L);
+            Map<?, ?> firstFrame = (Map<?, ?>) first.get("paused");
+            int firstWorkerId = ((Number) firstFrame.get("threadId")).intValue();
+            Assert.assertTrue("a worker frame needs a positive logical id", firstWorkerId > 0);
+            Assert.assertEquals("worker", firstFrame.get("threadName"));
+            Map<?, ?> firstLocals = (Map<?, ?>) firstFrame.get("locals");
+            Assert.assertEquals("7", firstLocals.get("n"));
+            Assert.assertEquals("7", firstLocals.get("value"));
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> firstThreads =
+                (List<Map<String, Object>>) first.get("threads");
+            Assert.assertEquals("main plus both declared workers", 3, firstThreads.size());
+            Map<String, Object> highlighted = null;
+            int highlightedCount = 0;
+            for (Map<String, Object> thread : firstThreads) {
+                if (Boolean.TRUE.equals(thread.get("paused"))) {
+                    highlighted = thread;
+                    highlightedCount++;
+                }
+            }
+            Assert.assertEquals("exactly one frame is inspectable", 1, highlightedCount);
+            Assert.assertNotNull(highlighted);
+            Assert.assertEquals(firstWorkerId,
+                ((Number) highlighted.get("threadId")).intValue());
+            Assert.assertEquals("alpha", highlighted.get("resultKeyName"));
+            Assert.assertEquals("the lifecycle state is preserved separately from paused",
+                "RUNNING", highlighted.get("state"));
+
+            // A step armed in a worker stays on that worker. The limit keeps beta pending until
+            // alpha completes, so no sibling breakpoint can legitimately pre-empt this step.
+            command(testServer, sessionId, "stepOver", null, 200);
+            Map<String, Object> stepped = waitForPausedAtLine(testServer, sessionId, 4, 10000L);
+            Map<?, ?> steppedFrame = (Map<?, ?>) stepped.get("paused");
+            Assert.assertEquals("STEP", steppedFrame.get("reason"));
+            Assert.assertEquals(firstWorkerId,
+                ((Number) steppedFrame.get("threadId")).intValue());
+
+            // Continue lets beta reach the same source breakpoint. It must publish a new worker
+            // identity even though line/column/reason are identical to alpha's earlier pause.
+            command(testServer, sessionId, "continue", null, 200);
+            Map<String, Object> second = waitForPausedAtLine(testServer, sessionId, 3, 10000L);
+            Map<?, ?> secondFrame = (Map<?, ?>) second.get("paused");
+            Assert.assertNotEquals(firstWorkerId,
+                ((Number) secondFrame.get("threadId")).intValue());
+            Assert.assertEquals("worker", secondFrame.get("threadName"));
+
+            // The monitor's explicit debug statement is deliberately ignored by propertee2.
+            command(testServer, sessionId, "continue", null, 200);
+            Map<String, Object> ended =
+                waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+            Assert.assertEquals("COMPLETED", ended.get("runStatus"));
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> endedThreads =
+                (List<Map<String, Object>>) ended.get("threads");
+            for (Map<String, Object> thread : endedThreads) {
+                Assert.assertEquals(Boolean.FALSE, thread.get("paused"));
+            }
+
+            String page = getBody(testServer.baseUrl + "/admin/debug/" + sessionId, 200);
+            Assert.assertTrue(page.contains("Paused Thread"));
+            Assert.assertTrue(page.contains("Logical Threads"));
+            Assert.assertTrue(page.contains("<code>thread</code> workers"));
+            Assert.assertFalse(page.contains("Breaks fire on the main thread only"));
         } finally {
             testServer.close();
         }
@@ -579,7 +690,7 @@ public class DebugSessionTest {
     }
 
     @Test
-    public void runScriptPanelDebugUsesPropsWithoutParentOrRunHistory() throws Exception {
+    public void scriptEditorDebugUsesDedicatedPropsWithoutParentOrRunHistory() throws Exception {
         File dataDir = Files.createTempDirectory("propertee-teebox-script-debug").toFile();
         TestServer testServer = createServer(dataDir, null);
         try {
@@ -591,27 +702,24 @@ public class DebugSessionTest {
                 testServer.baseUrl + "/admin/scripts/editor_dbg?version=v1", 200);
             int sourceCard = scriptPage.indexOf("id='version-source'");
             int runCard = scriptPage.indexOf("<h2>Run Script</h2>");
-            int propsInput = scriptPage.indexOf("name='propsJson'");
+            int propsInput = scriptPage.indexOf("Debug Props (JSON)");
             int debugAction = scriptPage.indexOf("formaction='/admin/scripts/editor_dbg/debug'");
-            Assert.assertTrue("Debug action is not in the Run Script panel",
-                sourceCard >= 0 && sourceCard < runCard && runCard < propsInput
-                    && propsInput < debugAction);
-            Assert.assertEquals("Debug action still appears in the source editor", -1,
-                scriptPage.substring(sourceCard, runCard).indexOf("/admin/scripts/editor_dbg/debug"));
+            Assert.assertTrue("Debug action and its Props are not in Version Source",
+                sourceCard >= 0 && sourceCard < propsInput && propsInput < debugAction
+                    && debugAction < runCard);
+            Assert.assertEquals("Debug action still appears in Run Script", -1,
+                scriptPage.substring(runCard).indexOf("/admin/scripts/editor_dbg/debug"));
             Assert.assertTrue("Debug does not identify the editor version",
                 scriptPage.contains("name='debugVersion' value='v1'"));
-            Assert.assertTrue("unsaved editor source is not wired into Debug",
-                scriptPage.contains("onclick='return ptPrepareScriptDebug(this)'"));
-            Assert.assertTrue("Debug/Run version semantics are not explained",
-                scriptPage.contains("Debug uses the unsaved Version Source above"));
+            Assert.assertTrue("dedicated Debug Props input is missing",
+                scriptPage.substring(sourceCard, runCard).contains("name='propsJson' value='{}'"));
 
             String draft = "PRINT(\"draft-\" + _PROPS.who)\n";
             String location = postFormExpectingRedirect(
                 testServer.baseUrl + "/admin/scripts/editor_dbg/debug",
                 "debugVersion=v1&content=" + URLEncoder.encode(draft, "UTF-8")
                     + "&propsJson="
-                    + URLEncoder.encode("{\"who\":\"ops\"}", "UTF-8")
-                    + "&maxIterations=37&warnLoops=on&timeoutMs=1");
+                    + URLEncoder.encode("{\"who\":\"ops\"}", "UTF-8"));
             Assert.assertTrue("unexpected redirect: " + location,
                 location.startsWith("/admin/debug/"));
             String sessionId = location.substring("/admin/debug/".length());
@@ -627,8 +735,8 @@ public class DebugSessionTest {
                 testServer.server.getRunManager().getRun(transientRunId));
             RunInfo liveRun = testServer.server.getRunManager().getRun(transientRunId);
             Assert.assertEquals("ops", liveRun.properties.get("who"));
-            Assert.assertEquals(37, liveRun.maxIterations);
-            Assert.assertEquals("warn", liveRun.iterationLimitBehavior);
+            Assert.assertEquals(1000, liveRun.maxIterations);
+            Assert.assertEquals("error", liveRun.iterationLimitBehavior);
             Assert.assertEquals("debug run timeout must remain disabled", 0L, liveRun.timeoutMs);
             Assert.assertEquals("transient debug leaked into Runs while active", 0,
                 testServer.server.getRunManager()
@@ -637,17 +745,37 @@ public class DebugSessionTest {
                 new File(new File(dataDir, "runs"), transientRunId + ".json").exists());
 
             String consolePage = getBody(testServer.baseUrl + location, 200);
-            Assert.assertTrue(consolePage.contains("unsaved Version Source and Props captured"));
+            Assert.assertTrue(consolePage.contains("unsaved Version Source and Debug Props captured"));
             Assert.assertTrue(consolePage.contains("temporary; not retained in Runs"));
             Assert.assertFalse("no-parent debugger rendered a null Run link",
                 consolePage.contains("/admin/runs/null"));
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> pausedFrame = (Map<String, Object>) paused.get("paused");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> globals = (Map<String, Object>) pausedFrame.get("globals");
+            Assert.assertTrue("Debug Props are missing from debugger Globals",
+                globals.containsKey("_PROPS"));
+            Assert.assertTrue(String.valueOf(globals.get("_PROPS")).contains("ops"));
+
+            // Once eval shadows the builtin _PROPS into a real global, the live frame value must
+            // win over the immutable session-input fallback used for the initial pause.
+            command(testServer, sessionId, "eval", "_PROPS.who = \"debug\"", 200);
+            Map<String, Object> afterEval = getJsonMap(
+                testServer.baseUrl + "/api/admin/debug/" + sessionId, 200);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> evalFrame = (Map<String, Object>) afterEval.get("paused");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> evalGlobals = (Map<String, Object>) evalFrame.get("globals");
+            Assert.assertTrue("eval-updated _PROPS was replaced by the launch fallback",
+                String.valueOf(evalGlobals.get("_PROPS")).contains("debug"));
 
             command(testServer, sessionId, "continue", null, 200);
             Map<String, Object> ended =
                 waitForSessionState(testServer, sessionId, "ENDED", 10000L);
             Assert.assertEquals("COMPLETED", ended.get("runStatus"));
-            Assert.assertTrue("unsaved editor source or Run Script Props were not passed",
-                ((List<?>) ended.get("stdoutLines")).contains("draft-ops"));
+            Assert.assertTrue("eval-updated _PROPS was not used by the script",
+                ((List<?>) ended.get("stdoutLines")).contains("draft-debug"));
             Assert.assertNull("terminal transient Run was not removed",
                 testServer.server.getRunManager().getRun(transientRunId));
             Assert.assertFalse("terminal transient Run was persisted",
@@ -675,6 +803,29 @@ public class DebugSessionTest {
                 waitForSessionState(testServer, restartedId, "ENDED", 10000L);
             Assert.assertTrue("Restart did not replay the captured source and Props",
                 ((List<?>) restartedEnd.get("stdoutLines")).contains("draft-ops"));
+
+            // A new script shell has no saved version yet. Version Source must still offer Debug
+            // and execute the posted draft without creating a placeholder version file.
+            testServer.server.getRunManager().createScript("shell_editor_dbg", null);
+            String shellPage = getBody(
+                testServer.baseUrl + "/admin/scripts/shell_editor_dbg", 200);
+            Assert.assertTrue("versionless Version Source has no Debug action",
+                shellPage.contains("formaction='/admin/scripts/shell_editor_dbg/debug'"));
+            String shellLocation = postFormExpectingRedirect(
+                testServer.baseUrl + "/admin/scripts/shell_editor_dbg/debug",
+                "content=" + URLEncoder.encode("PRINT(_PROPS.message)\n", "UTF-8")
+                    + "&propsJson=" + URLEncoder.encode("{\"message\":\"shell-draft\"}", "UTF-8"));
+            String shellSessionId = shellLocation.substring("/admin/debug/".length());
+            Map<String, Object> shellPaused =
+                waitForSessionState(testServer, shellSessionId, "PAUSED", 10000L);
+            Assert.assertEquals("<draft>", shellPaused.get("version"));
+            command(testServer, shellSessionId, "continue", null, 200);
+            Map<String, Object> shellEnded =
+                waitForSessionState(testServer, shellSessionId, "ENDED", 10000L);
+            Assert.assertTrue(((List<?>) shellEnded.get("stdoutLines")).contains("shell-draft"));
+            Assert.assertFalse("synthetic editor context must not be written",
+                new File(new File(new File(dataDir, "script-registry"), "shell_editor_dbg"),
+                    ".editor-draft.tee").exists());
         } finally {
             testServer.close();
         }

@@ -851,7 +851,8 @@ public class RunManager {
         }, maintenanceIntervalMs, maintenanceIntervalMs, TimeUnit.MILLISECONDS);
     }
 
-    // --- debug re-run support (engine 0.26.0 debug hooks; sessions owned by DebugSessionManager) ---
+    // --- debug re-run support (engine 0.28.0 debug hooks + worker frames; sessions owned by
+    //     DebugSessionManager) ---
 
     /** Debug-session wiring for a debug re-run — implemented by DebugSessionManager. */
     public interface DebugAttach {
@@ -971,11 +972,11 @@ public class RunManager {
     }
 
     /**
-     * Prepare a debugger attempt directly from the script page's Run Script panel. The currently
-     * edited source (possibly unsaved) and caller-supplied input properties/iteration settings are
-     * captured for the attempt, and there is deliberately no parent Run. A null
-     * {@code sourceSnapshot} is the no-JS fallback (load the selected saved version); Restart
-     * supplies the previous session's immutable snapshot.
+     * Prepare a debugger attempt directly from the script page's Version Source editor. The
+     * currently edited source (possibly unsaved) and caller-supplied Debug Props/settings are
+     * captured for the attempt, and there is deliberately no parent Run. A custom caller may omit
+     * {@code sourceSnapshot} to load the selected saved version; Restart supplies the previous
+     * session's immutable snapshot.
      * The RunRegistry entry exists only while the session executes: it is neither persisted nor
      * returned by run list/count APIs.
      */
@@ -985,7 +986,7 @@ public class RunManager {
         if (draining || shutdownRequested) {
             throw new IllegalStateException("Server is shutting down; new runs are rejected");
         }
-        ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolve(scriptId, version);
+        ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolveEditorDebug(scriptId, version);
         String sourceCode = sourceSnapshot != null ? sourceSnapshot
             : scriptRegistry.readVersionContent(resolved.scriptId, resolved.version);
         List<String> errors = scriptRegistry.validateContent(sourceCode);

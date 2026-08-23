@@ -380,6 +380,29 @@ public class ScriptRegistry {
         return resolved;
     }
 
+    /**
+     * Resolve the source context for a Version Source debug attempt. A newly-created script shell
+     * has no version file yet, but the debugger executes the posted editor snapshot and only needs
+     * a stable in-registry File identity; the synthetic file is never written.
+     */
+    public synchronized ResolvedScript resolveEditorDebug(String scriptId, String version) {
+        if (version != null && version.trim().length() > 0 && !"<draft>".equals(version.trim())) {
+            return resolve(scriptId, version);
+        }
+        ScriptInfo info = requireScript(scriptId);
+        if (info.deletedAt > 0) {
+            throw new IllegalArgumentException("Script is deleted: " + scriptId);
+        }
+        ResolvedScript resolved = new ResolvedScript();
+        resolved.scriptId = scriptId;
+        // '<'/'>' are outside the valid persisted version alphabet, so this identity can never
+        // shadow a real version and remains unambiguous across Restart.
+        resolved.version = "<draft>";
+        resolved.file = new File(scriptDir(scriptId), ".editor-draft.tee");
+        resolved.displayPath = scriptId + "@<draft>";
+        return resolved;
+    }
+
     public synchronized ScriptInfo updateScriptSettings(String scriptId, int maxConcurrentRuns, boolean immediate) {
         ScriptInfo info = requireScript(scriptId);
         info.maxConcurrentRuns = maxConcurrentRuns;

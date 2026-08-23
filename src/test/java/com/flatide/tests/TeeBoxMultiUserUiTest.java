@@ -51,9 +51,9 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertFalse("regular owner must not receive the arbitrary-code debugger action",
                     getBody(base, "/admin/scripts/alice_script?version=1", alice)
                         .contains("/admin/scripts/alice_script/debug"));
-            assertForbidden("regular owner cannot start debug from Run Script", postForm(base,
+            assertForbidden("regular owner cannot start debug from Version Source", postForm(base,
                     "/admin/scripts/alice_script/debug",
-                    "version=1&content=" + enc(SCRIPT_BODY), alice));
+                    "debugVersion=1&content=" + enc(SCRIPT_BODY) + "&propsJson=" + enc("{}"), alice));
 
             // --- bob: cannot touch alice's script ---
             String bob = login(base, "bob", "bob-pw");

@@ -64,10 +64,11 @@ public class ScriptExecutor {
     }
 
     /**
-     * Debug variant (engine 0.26.0 hooks): with a non-null {@code debugHandler} the run becomes a
-     * debug mode — {@code debug} statements, line breakpoints, and stepping pause the run and hand
-     * a {@code DebugFrame} to the handler ON the paused engine fiber (the whole run is frozen while
-     * the handler blocks). The handler receives the live breakpoint set via
+     * Debug variant (engine 0.28.0 hooks): with a non-null {@code debugHandler} the run becomes a
+     * debug mode — {@code debug} statements, line breakpoints, and stepping pause the main or a
+     * {@code multi} worker and hand a thread-identified {@code DebugFrame} to the handler ON the
+     * paused engine fiber (the whole run is frozen while the handler blocks; monitor bodies stay
+     * excluded). The handler receives the live breakpoint set via
      * {@link Callbacks#onDebugReady} before the run starts. {@code DebugFrame.quit()} ends the run
      * as {@link ExecutionResult#cancelled()} — an operator decision, never a script failure.
      */

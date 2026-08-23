@@ -968,14 +968,15 @@ public class AdminPageRenderer {
         sb.append("<div class='callout callout-warn'>This debug session <b>executes the script</b> — ");
         sb.append("SHELL/HTTP/file side effects happen again. ");
         if (session.transientDebug) {
-            sb.append("It uses snapshots of the unsaved Version Source and Props captured when ");
+            sb.append("It uses snapshots of the unsaved Version Source and Debug Props captured when ");
             sb.append("Debug was clicked. Its temporary Run and Tasks are not retained. ");
         } else {
             sb.append("It runs the <b>current</b> content of the script version, so edits made after ");
             sb.append("the original failure are included (by design — fix, then re-debug). ");
         }
-        sb.append("Breaks fire on the main thread only ");
-        sb.append("(<code>thread</code> worker and <code>monitor</code> bodies do not pause).</div>");
+        sb.append("Breaks fire on the main thread and inside <code>thread</code> workers; ");
+        sb.append("<code>monitor</code> bodies remain excluded. A pause freezes all logical threads, ");
+        sb.append("and the highlighted worker is the frame available for inspection.</div>");
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Debug session ").append(escape(shortId(sessionId))).append("</h2>");
@@ -1000,6 +1001,7 @@ public class AdminPageRenderer {
               .append(escape(shortId(session.runId))).append("</a> <span class='dim'>(output/threads/tasks live there)</span></div></div>");
         }
         sb.append("<div class='detail-item'><div class='detail-label'>State</div><div class='detail-value'><span id='dbg-status'>&mdash;</span></div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Paused Thread</div><div class='detail-value mono' id='dbg-thread'>&mdash;</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Paused At</div><div class='detail-value mono' id='dbg-line'>&mdash;</div></div>");
         sb.append("</div></div>");
 
@@ -1051,8 +1053,11 @@ public class AdminPageRenderer {
         sb.append("<button class='btn btn-sm' onclick='dbgEval()'>Evaluate</button></div>");
         sb.append("</section>");
         sb.append("<section class='dbg-pane dbg-vars-pane' aria-label='Debug variables'>");
-        sb.append("<div class='dbg-pane-header'><span class='dbg-pane-title'>Variables</span></div>");
+        sb.append("<div class='dbg-pane-header'><span class='dbg-pane-title'>Workers &amp; Variables</span></div>");
         sb.append("<div class='dbg-vars-scroll'>");
+        sb.append("<div class='dbg-var-section'><h3>Logical Threads</h3>");
+        sb.append("<p class='dim dbg-worker-hint'>The highlighted thread owns the current inspectable frame.</p>");
+        sb.append("<div id='dbg-workers'><p class='empty'>&mdash;</p></div></div>");
         sb.append("<div class='dbg-var-section'><h3>Locals</h3><div id='dbg-locals'><p class='empty'>&mdash;</p></div></div>");
         sb.append("<div class='dbg-var-section'><h3>Globals</h3><div id='dbg-globals'><p class='empty'>&mdash;</p></div></div>");
         sb.append("</div></section></div>");
@@ -1141,8 +1146,16 @@ public class AdminPageRenderer {
         sb.append("var h=\"<table class='data-table'><tbody>\";");
         sb.append("for(var i=0;i<keys.length;i++){h+=\"<tr><td class='mono'>\"+esc(keys[i])+\"</td><td class='mono'>\"+esc(obj[keys[i]])+\"</td></tr>\";}");
         sb.append("return h+'</tbody></table>';}");
+        sb.append("function threadLabel(t){var id=Number(t&&t.threadId);if(id===0)return 'main #0';");
+        sb.append("return String(t&&t.threadName!=null?t.threadName:(t&&t.name)||'worker')+' #'+id;}");
+        sb.append("function workersTable(rows){rows=rows||[];if(!rows.length)return \"<p class='empty'>none</p>\";");
+        sb.append("var h=\"<table class='data-table dbg-workers-table'><thead><tr><th>Thread</th><th>Key</th><th>State</th></tr></thead><tbody>\";");
+        sb.append("for(var i=0;i<rows.length;i++){var w=rows[i];var label=Number(w.threadId)===0?'main #0':String(w.name||'worker')+' #'+w.threadId;");
+        sb.append("var state=w.paused?'PAUSED':(w.state||'\\u2014');h+=\"<tr\"+(w.paused?\" class='dbg-worker-current'\":\"\")+\"><td class='mono'>\"+esc(label)+\"</td><td class='mono'>\"+esc(w.resultKeyName||'\\u2014')+\"</td><td>\"+esc(state)+\"</td></tr>\";}");
+        sb.append("return h+'</tbody></table>';}");
         sb.append("function render(s){");
         sb.append("syncRunOutput(s);");
+        sb.append("el('dbg-workers').innerHTML=workersTable(s.threads);");
         sb.append("var paused=!!s.paused;var ended=s.state==='ENDED';");
         sb.append("curGen=paused?s.pauseGeneration:null;");
         sb.append("el('dbg-status').textContent=s.state+(s.runStatus?' (run '+s.runStatus+')':'');");
@@ -1154,8 +1167,9 @@ public class AdminPageRenderer {
         sb.append("latestErrorLine=s.errorLine||null;");
         sb.append("if(!bpSending){bpDesired=latestBreakpoints.slice();showBreakpoints(bpDesired);}");
         sb.append("if(paused){");
-        sb.append("var p=s.paused;var key=p.line+':'+p.column+':'+p.reason;");
+        sb.append("var p=s.paused;var key=s.pauseGeneration+':'+p.threadId+':'+p.line+':'+p.column+':'+p.reason;");
         sb.append("latestDebugLine=p.line;");
+        sb.append("el('dbg-thread').textContent=threadLabel(p);");
         sb.append("el('dbg-line').textContent='line '+p.line+':'+p.column+' ('+p.reason+')';");
         sb.append("el('dbg-paused-card').style.display='';");
         sb.append("el('dbg-stmt').textContent=p.statement||'';");
@@ -1169,7 +1183,7 @@ public class AdminPageRenderer {
         sb.append("if(newPause){pausedKey=key;}");
         sb.append("}else{");
         sb.append("pausedKey=null;latestDebugLine=null;syncSourceEditor(false);");
-        sb.append("el('dbg-line').textContent='\\u2014';el('dbg-paused-card').style.display='none';");
+        sb.append("el('dbg-thread').textContent='\\u2014';el('dbg-line').textContent='\\u2014';el('dbg-paused-card').style.display='none';");
         sb.append("}");
         sb.append("if(ended){");
         sb.append("showEndOnce(s);");
@@ -1626,6 +1640,13 @@ public class AdminPageRenderer {
                 sb.append("<div class='form-row' style='flex:1'><label>Task Index <span class='dim'>(SHELL execution order; 0 = first)</span></label><input type='number' name='taskIndex' value='").append(activeRule != null ? activeRule.taskIndex : 0).append("' min='0' style='width:80px;'/></div>");
                 sb.append("<div class='form-row' style='flex:1'><label>Max Captures <span class='dim'>(1 = first match only, 0 = unlimited)</span></label><input type='number' name='maxCaptures' value='").append(activeRule != null ? activeRule.maxCaptures : 1).append("' min='0' style='width:80px;'/></div>");
                 sb.append("</div></div></details>");
+                if (isAdmin()) {
+                    sb.append("<div class='form-row' style='margin-top:8px;'>");
+                    sb.append("<label>Debug Props (JSON) <span class='dim'>(Debug only)</span></label>");
+                    sb.append("<input type='text' name='propsJson' value='{}' ")
+                      .append("title='Input properties used only by Debug; Save ignores this field'/>");
+                    sb.append("</div>");
+                }
                 sb.append("<div class='form-row-inline' style='align-items:center;'>");
                 // Prefilled with the selected version's description so plain Save updates it in
                 // place (clearing the field clears the description); Save-as-new records whatever
@@ -1643,6 +1664,14 @@ public class AdminPageRenderer {
                 sb.append("<label class='checkbox-label' title='Applies only to \"Save as new version\"'><input type='checkbox' name='activate'/> Set new version active</label>");
                 // Outlined (not gray) so it reads as an enabled secondary action, not a disabled button.
                 sb.append("<button type='button' id='check-syntax-btn' style='background:#fff;color:#2563eb;border:1px solid #2563eb;' onclick='ptCheckSyntax()' title='Check the editor content with the server parser without saving'>Check syntax</button>");
+                if (isAdmin()) {
+                    sb.append("<button type='submit'");
+                    if (hasSelected) {
+                        sb.append(" name='debugVersion' value='").append(escape(selectedVersion)).append("'");
+                    }
+                    sb.append(" formaction='/admin/scripts/").append(urlPath(scriptId))
+                      .append("/debug' style='background:#7c3aed;' title='Debug this unsaved Version Source with the Debug Props above; no Run history is retained'>Debug</button>");
+                }
                 if (hasSelected) {
                     // The label names the overwrite target: whatever confusion exists about which
                     // version the editor is on, the destructive button always says where it writes.
@@ -1666,7 +1695,7 @@ public class AdminPageRenderer {
         if (runNoActive) {
             sb.append("<div class='callout'>No active version yet &mdash; pick a specific version to run, or <strong>Set active</strong> one first.</div>");
         }
-        sb.append("<form method='post' action='/admin/submit' class='form-grid' id='run-script-form'>");
+        sb.append("<form method='post' action='/admin/submit' class='form-grid'>");
         sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
         sb.append("<div class='form-row'><label>Version").append(runNoActive ? "" : " (blank = active)").append("</label><select name='version' style='padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;'>");
         if (runNoActive) {
@@ -1681,16 +1710,8 @@ public class AdminPageRenderer {
         sb.append("<div class='form-row'><label>Props (JSON)</label><input type='text' name='propsJson' value='{}'/></div>");
         sb.append("<div class='form-row-inline'>");
         sb.append("<div><label>Max Iterations</label><input type='text' name='maxIterations' value='1000' style='width:100px'/></div>");
-        sb.append("<div><label>Timeout (ms, Run only; 0 = server default)</label><input type='text' name='timeoutMs' value='0' style='width:100px'/></div>");
+        sb.append("<div><label>Timeout (ms, 0 = server default)</label><input type='text' name='timeoutMs' value='0' style='width:100px'/></div>");
         sb.append("<label class='checkbox-label'><input type='checkbox' name='warnLoops'/> Warn Loops</label>");
-        if (isAdmin()) {
-            sb.append("<button type='submit' name='debugVersion' value='")
-              .append(escape(selectedVersion)).append("' formaction='/admin/scripts/")
-              .append(urlPath(scriptId)).append("/debug' onclick='return ptPrepareScriptDebug(this)' ")
-              .append("style='background:#7c3aed;' title='Debug the unsaved Version Source with these Props and iteration settings; no Run history is retained'>Debug Editor (")
-              .append(escape(selectedVersion)).append(")</button>");
-            sb.append("<span class='dim' style='font-size:11px;'>Debug uses the unsaved Version Source above; Run uses the Version selector.</span>");
-        }
         sb.append("<button type='submit'>Run</button>");
         sb.append("</div></form></div>");
         } // end canModify check for Run Script
@@ -2171,6 +2192,9 @@ public class AdminPageRenderer {
         sb.append(".dbg-var-section{padding:10px 12px;} .dbg-var-section+.dbg-var-section{border-top:1px solid #e2e8f0;} ");
         sb.append(".dbg-var-section h3{margin:0 0 6px;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.5px;} ");
         sb.append(".dbg-var-section .empty{padding:16px 0;} .dbg-var-section td{overflow-wrap:anywhere;} ");
+        sb.append(".dbg-worker-hint{margin:0 0 7px;font-size:11px;} ");
+        sb.append(".dbg-workers-table th,.dbg-workers-table td{padding:6px 7px;font-size:11px;} ");
+        sb.append(".dbg-workers-table .dbg-worker-current td{background:#fef3c7;color:#854d0e;font-weight:600;} ");
         sb.append("@media(max-width:850px){.dbg-workbench{grid-template-columns:1fr;}.dbg-vars-pane{border-left:0;border-top:1px solid #cbd5e1;}} ");
         sb.append(EDITOR_CSS);
         sb.append("</style></head><body>");
@@ -2245,20 +2269,6 @@ public class AdminPageRenderer {
         sb.append(".then(function(r){return r.json();})");
         sb.append(".then(function(d){ptRenderCheck(d,box);if(done)done(d.ok===true);})");
         sb.append(".catch(function(){box.style.display='none';if(done)done(true);});");
-        sb.append("}");
-        // The Debug action lives in Run Script so it shares Props/iteration inputs, but executes
-        // the source editor's current (possibly unsaved) buffer. Add that buffer to the Run form
-        // only for this submit; without JS the server safely falls back to the saved version.
-        sb.append("function ptPrepareScriptDebug(button){");
-        sb.append("var sourceForm=document.getElementById('version-source-form');");
-        sb.append("var ta=sourceForm?sourceForm.querySelector(\"textarea[name='content']\"):null;");
-        sb.append("if(!ta||!button||!button.form)return true;");
-        sb.append("var local=ptClientCheck(ta.value);var box=document.getElementById('syntax-result');");
-        sb.append("if(local&&!local.ok){ptRenderCheck(local,box);location.hash='version-source';return false;}");
-        sb.append("if(local&&box)ptRenderCheck(local,box);");
-        sb.append("var hidden=document.getElementById('debug-source-content');");
-        sb.append("if(!hidden){hidden=document.createElement('input');hidden.type='hidden';hidden.name='content';hidden.id='debug-source-content';button.form.appendChild(hidden);}");
-        sb.append("hidden.value=ta.value;return true;");
         sb.append("}");
         sb.append("(function(){");
         sb.append("var form=document.getElementById('version-source-form');");

@@ -577,7 +577,8 @@ public class TeeBoxServer {
                         && path.endsWith("/debug")) {
                     // Like the existing Run debugger, this can eval arbitrary code with the
                     // server's SHELL access. Script ownership is therefore insufficient: admins
-                    // only. The Run Script inputs are executed without creating Run history.
+                    // only. The Version Source + its dedicated Debug Props are executed without
+                    // creating Run history.
                     if (!isAdmin(session)) {
                         forbidden(exchange);
                         return;
@@ -585,9 +586,9 @@ public class TeeBoxServer {
                     String scriptId = path.substring("/admin/scripts/".length(),
                         path.length() - "/debug".length());
                     Map<String, String> form = parseForm(exchange);
-                    // Debug Editor targets the version currently open in Source Editor, not the
-                    // ordinary Run selector. JS also posts that editor's unsaved content; a direct
-                    // no-JS POST omits it and RunManager loads the saved version as a fallback.
+                    // Debug targets the version currently open in Source Editor, not the ordinary
+                    // Run selector. Its form posts the editor's unsaved content directly; a custom
+                    // POST may omit it and RunManager loads the saved version as a fallback.
                     String version = trimToNull(form.get("debugVersion"));
                     if (version == null) {
                         version = trimToNull(form.get("version"));
