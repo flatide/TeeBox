@@ -2,7 +2,10 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.26.0
+
+The debug workbench release — playground-grade debugging in the admin UI, on the
+propertee2 0.28.0 engine (spec v0.22.0 worker-thread debugging):
 
 - **Debugger now follows `multi` worker frames (propertee2 0.28.0).** Breakpoints and explicit
   `debug` statements inside worker functions pause with their logical `threadId`/`threadName`,
