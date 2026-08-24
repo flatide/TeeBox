@@ -2,7 +2,9 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.28.0
+
+Debugger access control by role/ownership, plus script-level display aliases:
 
 - Replaced per-version labels with an optional script-level `alias`. Publisher/admin registration,
   settings, duplication, persistence, API responses, the standalone client, and Scripts UI now
