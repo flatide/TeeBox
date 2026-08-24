@@ -195,6 +195,7 @@
 
     // Tab indent / Shift-Tab dedent / Enter auto-indent / Ctrl-slash comment toggle.
     function handleKey(e, ta, refresh) {
+        if (ta.readOnly) return;
         if (e.key === 'Tab') {
             e.preventDefault();
             var start = ta.selectionStart, end = ta.selectionEnd, value = ta.value;
@@ -376,14 +377,18 @@
                 updateLineMarkers();
                 if (errorLine && reveal) revealLine(errorLine);
             },
+            setReadOnly: function (readOnly) {
+                ta.readOnly = !!readOnly;
+            },
             refresh: refresh
         };
         ta.ptEditor = api;
         ta.addEventListener('input', refresh);
         ta.addEventListener('scroll', syncScroll);
-        if (!ta.readOnly) {
-            ta.addEventListener('keydown', function (e) { handleKey(e, ta, refresh); });
-        }
+        // Debug consoles switch between editable PAUSED/ENDED and locked RUNNING states without
+        // rebuilding the editor. Keep the key handler installed and let handleKey honor the live
+        // textarea.readOnly property.
+        ta.addEventListener('keydown', function (e) { handleKey(e, ta, refresh); });
         if (breakpointMode) {
             gutter.addEventListener('click', function (e) {
                 var target = e.target;

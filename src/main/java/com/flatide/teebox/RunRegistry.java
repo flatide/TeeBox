@@ -183,12 +183,13 @@ public class RunRegistry {
         return countRuns(status, immediate, search, null);
     }
 
-    /** Filtered count with an optional case-insensitive run origin ({@code api/ui/debug}). */
+    /** Filtered count with optional comma-separated, case-insensitive run origins. */
     public int countRuns(String status, Boolean immediate, String search, String origin) {
+        Set<String> origins = parseOriginFilter(origin);
         int count = 0;
         for (RunInfo run : runs.values()) {
             synchronized (run) {
-                if (matches(run, status, null, immediate, search, origin)) {
+                if (matches(run, status, null, immediate, search, origins)) {
                     count++;
                 }
             }
@@ -217,13 +218,14 @@ public class RunRegistry {
         return listRuns(status, scriptId, immediate, search, null, offset, limit);
     }
 
-    /** As above, with an optional case-insensitive run origin ({@code api/ui/debug}). */
+    /** As above, with optional comma-separated, case-insensitive run origins. */
     public List<RunInfo> listRuns(String status, String scriptId, Boolean immediate, String search,
                                   String origin, int offset, int limit) {
+        Set<String> origins = parseOriginFilter(origin);
         List<RunInfo> matched = new ArrayList<RunInfo>();
         for (RunInfo run : runs.values()) {
             synchronized (run) {
-                if (matches(run, status, scriptId, immediate, search, origin)) {
+                if (matches(run, status, scriptId, immediate, search, origins)) {
                     matched.add(run);
                 }
             }
@@ -245,7 +247,7 @@ public class RunRegistry {
     // The sort runs outside it — createdAt/runId are immutable after register and safely published
     // by the ConcurrentHashMap put.
     private static boolean matches(RunInfo run, String status, String scriptId,
-                                   Boolean immediate, String search, String origin) {
+                                   Boolean immediate, String search, Set<String> origins) {
         if (run.transientDebug) {
             return false;
         }
@@ -258,7 +260,8 @@ public class RunRegistry {
         if (immediate != null && run.immediate != immediate.booleanValue()) {
             return false;
         }
-        if (origin != null && (run.origin == null || !origin.equalsIgnoreCase(run.origin))) {
+        if (origins != null && (run.origin == null
+                || !origins.contains(run.origin.toLowerCase(Locale.ROOT)))) {
             return false;
         }
         if (search != null) {
@@ -270,6 +273,21 @@ public class RunRegistry {
             }
         }
         return true;
+    }
+
+    /** Null means no origin filter; an empty set deliberately matches nothing. */
+    private static Set<String> parseOriginFilter(String origin) {
+        if (origin == null) {
+            return null;
+        }
+        Set<String> origins = new HashSet<String>();
+        for (String item : origin.split(",")) {
+            String normalized = item.trim().toLowerCase(Locale.ROOT);
+            if (normalized.length() > 0) {
+                origins.add(normalized);
+            }
+        }
+        return origins;
     }
 
     private static void sortNewestFirst(List<RunInfo> list) {

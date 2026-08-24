@@ -13,11 +13,13 @@ TeeBox is the ProperTee execution service module. It exposes an HTTP admin UI an
   entry-point pause, separate red source-error marker, clickable gutter breakpoints, stepping, and
   a playground-style Output/Variables workbench with clean Run stdout/stderr and eval at
   `/admin/debug/{sessionId}`, on a small dedicated executor; live sessions can
-  be restarted from entry or resumed from the admin `Debug` page or either
+  be resumed from the admin `Debug` page or either
   related Run, and every re-execution of one source Run resets and reuses its single debug Run —
   or admins can Debug the Version Source's current unsaved buffer with its own Debug Props but no
-  retained Run/Task history; main and `multi` worker pauses show the current logical thread and the
-  full worker lifecycle list, while monitor bodies remain excluded — see `DebugSessionManager`)
+  retained Run/Task history; session source is editable while paused/ended and Restart executes
+  that unsaved buffer from entry (locked while running); main and `multi` worker pauses show the current logical thread, the
+  full worker lifecycle list, and function returns crossed by the latest step, while monitor
+  bodies remain excluded — see `DebugSessionManager`)
 - debugger Globals includes the effective `_PROPS` object, including live eval changes
 - external task tracking through `ManagedTaskEngine`
 - persisted per-run/per-task records with in-memory indexes, archive, and purge support
@@ -98,8 +100,8 @@ Useful settings:
 `propertee-teebox-dist.zip` is the recommended GitHub release artifact. It does not include a Java runtime, so deploy targets should install a Linux x86_64 Java 25 runtime separately under `runtime/`. (As of 1.0.0, TeeBox runs on the ProperTee v2 runtime, which requires Java 25.)
 
 ```bash
-git tag v1.26.0
-git push origin v1.26.0
+git tag v1.27.0
+git push origin v1.27.0
 ```
 
 If you need a prebundled internal package instead, build `propertee-teebox-dist-with-runtime.zip` locally with:

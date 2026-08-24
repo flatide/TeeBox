@@ -707,6 +707,18 @@ public class TeeBoxMultiUserUiTest {
             String apiOnly = getBody(base, "/admin/fragments/all-runs?origin=api", admin);
             Assert.assertTrue(apiOnly.contains(apiRunId));
             Assert.assertFalse(apiOnly.contains(uiRunId));
+            String apiAndUi = getBody(base,
+                    "/admin/fragments/all-runs?origin=api%2Cui", admin);
+            Assert.assertTrue(apiAndUi.contains(apiRunId));
+            Assert.assertTrue(apiAndUi.contains(uiRunId));
+            String noOrigins = getBody(base,
+                    "/admin/fragments/all-runs?origin=none", admin);
+            Assert.assertFalse(noOrigins.contains(apiRunId));
+            Assert.assertFalse(noOrigins.contains(uiRunId));
+            String apiAndUiJson = getBody(base,
+                    "/api/admin/runs?origin=api%2Cui", null);
+            Assert.assertTrue(apiAndUiJson.contains(apiRunId));
+            Assert.assertTrue(apiAndUiJson.contains(uiRunId));
 
             String runsPage = getBody(base, "/admin/runs", admin);
             Assert.assertTrue("Runs defaults to API", runsPage.contains(apiRunId));

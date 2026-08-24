@@ -442,12 +442,13 @@ public class AdminPageRenderer {
         sb.append("</div></div>");
         sb.append("<div class='filter-bar'>");
         sb.append("<label style='font-size:13px;color:#64748b;'>Origin:</label>");
-        sb.append("<select id='origin-filter' onchange='filterRuns()'>");
-        sb.append("<option value='api' selected>API</option>");
-        sb.append("<option value='ui'>UI</option>");
-        sb.append("<option value='debug'>Debug</option>");
-        sb.append("<option value=''>All</option>");
-        sb.append("</select>");
+        sb.append("<span id='origin-filter' class='origin-filter-options' role='group' aria-label='Origin'>");
+        sb.append("<label class='checkbox-label'><input type='checkbox' value='api' checked ");
+        sb.append("onchange='filterRuns()'/> API</label>");
+        sb.append("<label class='checkbox-label'><input type='checkbox' value='ui' ");
+        sb.append("onchange='filterRuns()'/> UI</label>");
+        sb.append("<label class='checkbox-label'><input type='checkbox' value='debug' ");
+        sb.append("onchange='filterRuns()'/> Debug</label></span>");
         sb.append("<label style='font-size:13px;color:#64748b;'>Status:</label>");
         sb.append("<select id='status-filter' onchange='filterRuns()'>");
         sb.append("<option value=''>All</option>");
@@ -485,12 +486,15 @@ public class AdminPageRenderer {
         sb.append("}};xhr.send();}");
         sb.append("window.goToPage=function(p){currentPage=p;refreshRunsPage();};");
         sb.append("window.refreshRunsPage=function(){");
-        sb.append("var origin=document.getElementById('origin-filter').value;");
+        sb.append("var originInputs=document.querySelectorAll('#origin-filter input[type=checkbox]');");
+        sb.append("var origins=[];for(var i=0;i<originInputs.length;i++){");
+        sb.append("if(originInputs[i].checked)origins.push(originInputs[i].value);}");
+        sb.append("var origin=origins.length?origins.join(','):'none';");
         sb.append("var status=document.getElementById('status-filter').value;");
         sb.append("var includeInstant=document.getElementById('instant-filter').checked;");
         sb.append("var q=document.getElementById('runs-search').value.trim();");
         sb.append("var url='/admin/fragments/all-runs?page='+currentPage;");
-        sb.append("if(origin)url+='&origin='+encodeURIComponent(origin);");
+        sb.append("url+='&origin='+encodeURIComponent(origin);");
         sb.append("if(status)url+='&status='+encodeURIComponent(status);");
         sb.append("if(!includeInstant)url+='&instant=exclude';");
         sb.append("if(q)url+='&q='+encodeURIComponent(q);");
@@ -687,10 +691,7 @@ public class AdminPageRenderer {
         if (terminal && !run.archived && isAdmin() && debugSessionManager != null
                 && activeDebugSessions.isEmpty()) {
             sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/debug' ");
-            sb.append("style='display:inline;margin-left:6px' ");
-            sb.append("onsubmit=\"return confirm('Re-run this run under the debugger? ");
-            sb.append("Runs the CURRENT content of this script version (edits since the failure included). ");
-            sb.append("SHELL/HTTP/file side effects will execute again.');\">");
+            sb.append("style='display:inline;margin-left:6px'>");
             sb.append("<button type='submit' class='btn btn-sm'>Debug Re-run</button></form>");
         }
         sb.append("</div>");
@@ -965,19 +966,6 @@ public class AdminPageRenderer {
         sb.append("<span>Debug ").append(escape(shortId(sessionId))).append("</span>");
         sb.append("</div>");
 
-        sb.append("<div class='callout callout-warn'>This debug session <b>executes the script</b> — ");
-        sb.append("SHELL/HTTP/file side effects happen again. ");
-        if (session.transientDebug) {
-            sb.append("It uses snapshots of the unsaved Version Source and Debug Props captured when ");
-            sb.append("Debug was clicked. Its temporary Run and Tasks are not retained. ");
-        } else {
-            sb.append("It runs the <b>current</b> content of the script version, so edits made after ");
-            sb.append("the original failure are included (by design — fix, then re-debug). ");
-        }
-        sb.append("Breaks fire on the main thread and inside <code>thread</code> workers; ");
-        sb.append("<code>monitor</code> bodies remain excluded. A pause freezes all logical threads, ");
-        sb.append("and the highlighted worker is the frame available for inspection.</div>");
-
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Debug session ").append(escape(shortId(sessionId))).append("</h2>");
         sb.append("</div>");
@@ -1000,37 +988,16 @@ public class AdminPageRenderer {
             sb.append("<a href='/admin/runs/").append(urlPath(session.runId)).append("' class='mono'>")
               .append(escape(shortId(session.runId))).append("</a> <span class='dim'>(output/threads/tasks live there)</span></div></div>");
         }
-        sb.append("<div class='detail-item'><div class='detail-label'>State</div><div class='detail-value'><span id='dbg-status'>&mdash;</span></div></div>");
-        sb.append("<div class='detail-item'><div class='detail-label'>Paused Thread</div><div class='detail-value mono' id='dbg-thread'>&mdash;</div></div>");
-        sb.append("<div class='detail-item'><div class='detail-label'>Paused At</div><div class='detail-value mono' id='dbg-line'>&mdash;</div></div>");
         sb.append("</div></div>");
 
-        sb.append("<div class='card' id='dbg-paused-card' style='display:none'><h2>Paused Statement</h2>");
-        sb.append("<pre id='dbg-stmt'></pre>");
-        sb.append("<div id='dbg-stack' class='dim mono'></div>");
-        sb.append("</div>");
-
         sb.append("<div class='card'><div class='card-header'><h2>Execution Source</h2>");
-        sb.append("<a class='btn btn-sm' href='/admin/scripts/").append(urlPath(session.scriptId))
-          .append("?version=").append(urlParam(session.version)).append("#version-source'>Open Script Editor</a>");
         sb.append("</div>");
-        sb.append("<p class='dim' style='margin-bottom:10px'><span class='mono'>")
-          .append(escape(session.scriptId)).append("@").append(escape(session.version)).append("</span> — ");
-        sb.append("the yellow line is the current pause; a positioned error is red. ");
-        if (session.transientDebug) {
-            sb.append("The error marker appears only if this attempt fails at a positioned line. ");
-        } else {
-            sb.append("The marker starts from the source Run and, when this attempt ends, moves to ");
-            sb.append("its actual failure or clears. ");
-        }
-        sb.append("Click a line number to toggle a breakpoint. The source is read-only for this ");
-        sb.append(session.transientDebug
-            ? "session; Restart replays the same captured source and Props.</p>"
-            : "session; edit the script version and start a new debug re-run to execute changes.</p>");
-        sb.append("<p class='dim' style='margin-bottom:10px'>Current breakpoints: ");
-        sb.append("<span id='dbg-bp-current' class='mono'>&mdash;</span></p>");
         sb.append("<textarea id='dbg-source' rows='24' class='pt-editor-fallback' data-pt-editor ");
-        sb.append("data-pt-panel data-pt-breakpoints readonly aria-label='Debug execution source'>")
+        sb.append("data-pt-panel data-pt-breakpoints ");
+        if (DebugSessionManager.Session.RUNNING.equals(session.state)) {
+            sb.append("readonly ");
+        }
+        sb.append("aria-label='Debug execution source'>")
           .append(escape(session.sourceCode)).append("</textarea>");
         // Match the ProperTee playground's editor -> Output flow. The right-hand Variables pane
         // shares the same workbench so frame inspection never pushes program output off-screen.
@@ -1053,11 +1020,13 @@ public class AdminPageRenderer {
         sb.append("<button class='btn btn-sm' onclick='dbgEval()'>Evaluate</button></div>");
         sb.append("</section>");
         sb.append("<section class='dbg-pane dbg-vars-pane' aria-label='Debug variables'>");
-        sb.append("<div class='dbg-pane-header'><span class='dbg-pane-title'>Workers &amp; Variables</span></div>");
+        sb.append("<div class='dbg-pane-header'><span class='dbg-pane-title'>Debug State</span></div>");
         sb.append("<div class='dbg-vars-scroll'>");
         sb.append("<div class='dbg-var-section'><h3>Logical Threads</h3>");
         sb.append("<p class='dim dbg-worker-hint'>The highlighted thread owns the current inspectable frame.</p>");
         sb.append("<div id='dbg-workers'><p class='empty'>&mdash;</p></div></div>");
+        sb.append("<div class='dbg-var-section' id='dbg-returns-section' style='display:none'>");
+        sb.append("<h3>Function Returns</h3><div id='dbg-returns'></div></div>");
         sb.append("<div class='dbg-var-section'><h3>Locals</h3><div id='dbg-locals'><p class='empty'>&mdash;</p></div></div>");
         sb.append("<div class='dbg-var-section'><h3>Globals</h3><div id='dbg-globals'><p class='empty'>&mdash;</p></div></div>");
         sb.append("</div></section></div>");
@@ -1073,6 +1042,8 @@ public class AdminPageRenderer {
         sb.append("var latestBreakpoints=[];var bpDesired=[];var bpSending=false;");
         sb.append("var latestDebugLine=null;var latestErrorLine=null;");
         sb.append("function el(id){return document.getElementById(id);}");
+        sb.append("function setSourceLocked(locked){var source=el('dbg-source');");
+        sb.append("if(source.ptEditor){source.ptEditor.setReadOnly(locked);}else{source.readOnly=!!locked;}}");
         sb.append("function esc(s){var d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}");
         sb.append("function logLine(s){var c=el('dbg-console');c.textContent+=(c.textContent?'\\n':'')+s;c.scrollTop=c.scrollHeight;}");
         sb.append("function syncRunStream(lines,total,stderr){lines=lines||[];total=Number(total)||lines.length;");
@@ -1090,7 +1061,8 @@ public class AdminPageRenderer {
         // Disable the resume buttons the moment one is sent: a double-click would queue a second
         // resume that the server then refuses as superseded — don't even let it be sent.
         sb.append("if(op!=='eval'){var ops=['continue','stepOver','stepIn','stepOut'];");
-        sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=true;}}");
+        sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=true;}");
+        sb.append("if(op!=='quit'){setSourceLocked(true);}}");
         // Send the pause generation this page is showing: the server refuses the command if the
         // session paused somewhere else meanwhile, instead of acting on a frame we never saw.
         sb.append("var body={op:op,source:source||null};");
@@ -1106,11 +1078,11 @@ public class AdminPageRenderer {
         sb.append("else if(st!==200){logLine('! HTTP '+st);}");
         sb.append("refresh();});};");
         sb.append("window.dbgRestart=function(){if(restarting)return;");
-        sb.append("if(!confirm('Restart this debug run from the entry point? Side effects will run again.'))return;");
         sb.append("restarting=true;el('dbg-btn-restart').disabled=true;el('dbg-btn-quit').disabled=true;");
+        sb.append("setSourceLocked(true);");
         sb.append("var ops=['continue','stepOver','stepIn','stepOut'];");
         sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=true;}");
-        sb.append("post(base+'/restart',{},function(st,r){");
+        sb.append("post(base+'/restart',{source:el('dbg-source').value},function(st,r){");
         sb.append("if(st===201&&r&&r.sessionId){window.location.assign('/admin/debug/'+encodeURIComponent(r.sessionId));return;}");
         sb.append("restarting=false;logLine('! '+(r&&r.error?r.error:'HTTP '+st));refresh();});};");
         // Poll a timed-out command's outcome by id (the command keeps executing server-side).
@@ -1126,7 +1098,6 @@ public class AdminPageRenderer {
         sb.append("window.dbgEval=function(){var i=el('dbg-input');var s=i.value;if(!s)return;i.value='';dbgCmd('eval',s);};");
         sb.append("function sameLines(a,b){if(a.length!==b.length)return false;");
         sb.append("for(var i=0;i<a.length;i++){if(a[i]!==b[i])return false;}return true;}");
-        sb.append("function showBreakpoints(lines){el('dbg-bp-current').textContent=lines.length?lines.join(', '):'none';}");
         sb.append("function syncSourceEditor(reveal){var source=el('dbg-source');if(!source.ptEditor)return;");
         sb.append("source.ptEditor.setBreakpoints(bpSending?bpDesired:latestBreakpoints);");
         sb.append("source.ptEditor.setDebugLine(latestDebugLine,reveal);");
@@ -1134,56 +1105,51 @@ public class AdminPageRenderer {
         sb.append("function flushBreakpoints(){if(bpSending)return;var sent=bpDesired.slice();bpSending=true;");
         sb.append("post(base+'/breakpoints',{lines:sent},function(st,r){bpSending=false;");
         sb.append("if(st!==200||!r){logLine('! '+(r&&r.error?r.error:'HTTP '+st));");
-        sb.append("bpDesired=latestBreakpoints.slice();showBreakpoints(bpDesired);syncSourceEditor(false);refresh();return;}");
+        sb.append("bpDesired=latestBreakpoints.slice();syncSourceEditor(false);refresh();return;}");
         sb.append("latestBreakpoints=(r.breakpoints||[]).slice();");
         sb.append("if(!sameLines(bpDesired,sent)){flushBreakpoints();return;}");
-        sb.append("bpDesired=latestBreakpoints.slice();showBreakpoints(bpDesired);syncSourceEditor(false);});}");
+        sb.append("bpDesired=latestBreakpoints.slice();syncSourceEditor(false);});}");
         sb.append("el('dbg-source').addEventListener('pt-breakpoints-change',function(e){");
-        sb.append("bpDesired=(e.detail&&e.detail.lines?e.detail.lines:[]).slice();showBreakpoints(bpDesired);flushBreakpoints();});");
+        sb.append("bpDesired=(e.detail&&e.detail.lines?e.detail.lines:[]).slice();flushBreakpoints();});");
         sb.append("el('dbg-source').addEventListener('pt-editor-ready',function(){syncSourceEditor(false);});");
         sb.append("function varsTable(obj){var keys=Object.keys(obj||{});");
         sb.append("if(!keys.length)return \"<p class='empty'>none</p>\";");
         sb.append("var h=\"<table class='data-table'><tbody>\";");
         sb.append("for(var i=0;i<keys.length;i++){h+=\"<tr><td class='mono'>\"+esc(keys[i])+\"</td><td class='mono'>\"+esc(obj[keys[i]])+\"</td></tr>\";}");
         sb.append("return h+'</tbody></table>';}");
-        sb.append("function threadLabel(t){var id=Number(t&&t.threadId);if(id===0)return 'main #0';");
-        sb.append("return String(t&&t.threadName!=null?t.threadName:(t&&t.name)||'worker')+' #'+id;}");
         sb.append("function workersTable(rows){rows=rows||[];if(!rows.length)return \"<p class='empty'>none</p>\";");
         sb.append("var h=\"<table class='data-table dbg-workers-table'><thead><tr><th>Thread</th><th>Key</th><th>State</th></tr></thead><tbody>\";");
         sb.append("for(var i=0;i<rows.length;i++){var w=rows[i];var label=Number(w.threadId)===0?'main #0':String(w.name||'worker')+' #'+w.threadId;");
         sb.append("var state=w.paused?'PAUSED':(w.state||'\\u2014');h+=\"<tr\"+(w.paused?\" class='dbg-worker-current'\":\"\")+\"><td class='mono'>\"+esc(label)+\"</td><td class='mono'>\"+esc(w.resultKeyName||'\\u2014')+\"</td><td>\"+esc(state)+\"</td></tr>\";}");
         sb.append("return h+'</tbody></table>';}");
+        sb.append("function returnsTable(rows){var h=\"<table class='data-table'><tbody>\";");
+        sb.append("for(var i=0;i<rows.length;i++){h+=\"<tr><td class='mono'>(return) \"+esc(rows[i].function)+\"</td><td class='mono'>\"+esc(rows[i].value)+\"</td></tr>\";}");
+        sb.append("return h+'</tbody></table>';}");
         sb.append("function render(s){");
         sb.append("syncRunOutput(s);");
         sb.append("el('dbg-workers').innerHTML=workersTable(s.threads);");
         sb.append("var paused=!!s.paused;var ended=s.state==='ENDED';");
+        sb.append("setSourceLocked(restarting||s.state==='RUNNING');");
         sb.append("curGen=paused?s.pauseGeneration:null;");
-        sb.append("el('dbg-status').textContent=s.state+(s.runStatus?' (run '+s.runStatus+')':'');");
         sb.append("var ops=['continue','stepOver','stepIn','stepOut'];");
         sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=!paused||restarting;}");
         sb.append("el('dbg-btn-restart').disabled=restarting;");
         sb.append("el('dbg-btn-quit').disabled=ended||restarting;");
         sb.append("latestBreakpoints=(s.breakpoints||[]).slice();");
         sb.append("latestErrorLine=s.errorLine||null;");
-        sb.append("if(!bpSending){bpDesired=latestBreakpoints.slice();showBreakpoints(bpDesired);}");
+        sb.append("if(!bpSending){bpDesired=latestBreakpoints.slice();}");
         sb.append("if(paused){");
         sb.append("var p=s.paused;var key=s.pauseGeneration+':'+p.threadId+':'+p.line+':'+p.column+':'+p.reason;");
         sb.append("latestDebugLine=p.line;");
-        sb.append("el('dbg-thread').textContent=threadLabel(p);");
-        sb.append("el('dbg-line').textContent='line '+p.line+':'+p.column+' ('+p.reason+')';");
-        sb.append("el('dbg-paused-card').style.display='';");
-        sb.append("el('dbg-stmt').textContent=p.statement||'';");
-        sb.append("var stack='';if(p.callStack&&p.callStack.length){var parts=[];");
-        sb.append("for(var i=0;i<p.callStack.length;i++){var c=p.callStack[i];parts.push(c.function+' @ '+c.line+':'+c.column);}");
-        sb.append("stack='call stack: '+parts.join(' \\u2192 ');}");
-        sb.append("el('dbg-stack').textContent=stack;");
+        sb.append("var rets=p.returns||[];el('dbg-returns-section').style.display=rets.length?'':'none';");
+        sb.append("el('dbg-returns').innerHTML=rets.length?returnsTable(rets):'';");
         sb.append("el('dbg-locals').innerHTML=varsTable(p.locals);");
         sb.append("el('dbg-globals').innerHTML=varsTable(p.globals);");
         sb.append("var newPause=key!==pausedKey;syncSourceEditor(newPause);");
         sb.append("if(newPause){pausedKey=key;}");
         sb.append("}else{");
         sb.append("pausedKey=null;latestDebugLine=null;syncSourceEditor(false);");
-        sb.append("el('dbg-thread').textContent='\\u2014';el('dbg-line').textContent='\\u2014';el('dbg-paused-card').style.display='none';");
+        sb.append("el('dbg-returns-section').style.display='none';el('dbg-returns').innerHTML='';");
         sb.append("}");
         sb.append("if(ended){");
         sb.append("showEndOnce(s);");
@@ -2161,8 +2127,10 @@ public class AdminPageRenderer {
         sb.append(".tag-nav{background:#334155;color:#94a3b8;font-size:11px;} ");
         sb.append(".btn-refresh{background:#fff;color:#334155;border:1px solid #cbd5e1;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;} ");
         sb.append(".btn-refresh:hover{background:#f1f5f9;} ");
-        sb.append(".filter-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;} ");
+        sb.append(".filter-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;} ");
         sb.append(".filter-bar select{padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;} ");
+        sb.append(".origin-filter-options{display:flex;align-items:center;gap:10px;} ");
+        sb.append(".origin-filter-options .checkbox-label{padding-bottom:0;font-size:13px;color:#64748b;} ");
         sb.append(".auto-toggle{font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:4px;margin-left:12px;cursor:pointer;} ");
         sb.append(".pagination{display:flex;align-items:center;justify-content:space-between;padding:12px 0 4px 0;} ");
         sb.append(".pagination-info{font-size:13px;color:#64748b;} ");

@@ -4,6 +4,7 @@ import com.flatide.propertee2.core.ScriptParser;
 import com.flatide.propertee2.interp.DebugCallSite;
 import com.flatide.propertee2.interp.DebugFrame;
 import com.flatide.propertee2.interp.DebugHandler;
+import com.flatide.propertee2.interp.DebugReturn;
 import com.flatide.propertee2.parser.ProperTeeParser;
 import com.flatide.propertee2.runtime.TypeChecker;
 
@@ -26,8 +27,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Interactive debug re-runs of finished runs, over the engine's debug hooks (propertee2 0.28.0:
- * {@code ProperTeeInterpreter.setDebugHandler}/{@code debugBreakpoints()} plus worker frames).
+ * Interactive debug re-runs of finished runs, over the engine's debug hooks (propertee2 0.29.0:
+ * {@code ProperTeeInterpreter.setDebugHandler}/{@code debugBreakpoints()}, worker frames, and
+ * step-crossed function returns).
  * Deliberately separate
  * from {@link RunManager}'s run pool: a debug run pauses at breaks for as long as the operator
  * thinks — parked on the engine fiber, holding the run frozen — so it executes on this manager's
@@ -109,6 +111,12 @@ public class DebugSessionManager {
      * @throws IllegalStateException    capacity reached, non-terminal/archived source, shutdown
      */
     public Session open(String sourceRunId, String requestedBy, List<Integer> breakpoints) {
+        return open(sourceRunId, requestedBy, breakpoints, null);
+    }
+
+    /** Open from the stored version, or from a validated unsaved source supplied by Restart. */
+    private Session open(String sourceRunId, String requestedBy, List<Integer> breakpoints,
+                         String sourceSnapshot) {
         synchronized (openLock) {
             if (shutdownRequested) {
                 throw new IllegalStateException("Server is shutting down; debug sessions are rejected");
@@ -137,7 +145,8 @@ public class DebugSessionManager {
                     + ") — close or quit an existing session first");
             }
             RunInfo source = runManager.getRun(sourceRunId);
-            RunManager.DebugTarget target = runManager.prepareDebugRun(sourceRunId, requestedBy);
+            RunManager.DebugTarget target =
+                runManager.prepareDebugRun(sourceRunId, requestedBy, sourceSnapshot);
             removeEndedSessionsForSource(sourceRunId);
             String capturedSource = target.sourceCode != null ? target.sourceCode : "";
             Integer errorLine = source != null && source.status == RunStatus.FAILED
@@ -216,13 +225,18 @@ public class DebugSessionManager {
 
     /**
      * Stop one attempt and immediately open its source Run again, preserving the user's live
-     * breakpoints. The replacement gets a fresh session id/source snapshot and pauses at entry,
-     * while {@link RunManager#prepareDebugRun} resets the same canonical debug run id.
+     * breakpoints. The replacement gets a fresh session id, executes the supplied debugger-editor
+     * source (or the prior snapshot when omitted), and pauses at entry, while
+     * {@link RunManager#prepareDebugRun} resets the same canonical debug run id.
      *
      * <p>The whole transition is serialized with {@link #open}: another request cannot observe the
      * old attempt as ended and start a competing replacement between our stop and re-open.
      */
     public Session restart(String sessionId, String requestedBy) {
+        return restart(sessionId, requestedBy, null);
+    }
+
+    public Session restart(String sessionId, String requestedBy, String sourceSnapshot) {
         synchronized (openLock) {
             if (shutdownRequested) {
                 throw new IllegalStateException("Server is shutting down; debug restart is rejected");
@@ -231,6 +245,17 @@ public class DebugSessionManager {
             if (previous == null) {
                 throw new IllegalArgumentException("Debug session not found: " + sessionId);
             }
+            String restartSource = sourceSnapshot != null ? sourceSnapshot : previous.sourceCode;
+            synchronized (previous) {
+                if (sourceSnapshot != null && Session.RUNNING.equals(previous.state)
+                        && !previous.sourceCode.equals(sourceSnapshot)) {
+                    throw new IllegalStateException(
+                        "Debug source can only be edited while the session is paused or ended");
+                }
+            }
+            // Reject a broken edit while the old PAUSED/ENDED session is still intact. Both
+            // prepare paths validate again as their own boundary before registering a new Run.
+            runManager.validateDebugSource(restartSource);
             List<Integer> preservedBreakpoints = sortedBreakpoints(previous);
             if (!Session.ENDED.equals(previous.state)) {
                 kill(previous.sessionId, "Restarted from the debugger");
@@ -245,12 +270,12 @@ public class DebugSessionManager {
             }
             if (previous.transientDebug) {
                 Session restarted = openScript(previous.scriptId, previous.version,
-                    previous.sourceCode, previous.inputProperties, previous.maxIterations,
+                    restartSource, previous.inputProperties, previous.maxIterations,
                     previous.warnLoops, requestedBy, preservedBreakpoints);
                 sessions.remove(previous.sessionId, previous);
                 return restarted;
             }
-            return open(previous.sourceRunId, requestedBy, preservedBreakpoints);
+            return open(previous.sourceRunId, requestedBy, preservedBreakpoints, restartSource);
         }
     }
 
@@ -874,6 +899,14 @@ public class DebugSessionManager {
         snapshot.put("line", Integer.valueOf(frame.line()));
         snapshot.put("column", Integer.valueOf(frame.column()));
         snapshot.put("statement", frame.statementText());
+        List<Map<String, String>> returns = new ArrayList<Map<String, String>>();
+        for (DebugReturn returned : frame.returns()) {
+            Map<String, String> entry = new LinkedHashMap<String, String>();
+            entry.put("function", returned.function());
+            entry.put("value", display(returned.value(), VALUE_DISPLAY_MAX));
+            returns.add(entry);
+        }
+        snapshot.put("returns", returns);
         List<Map<String, Object>> stack = new ArrayList<Map<String, Object>>();
         for (DebugCallSite site : frame.callStack()) {
             Map<String, Object> entry = new LinkedHashMap<String, Object>();
@@ -1019,9 +1052,6 @@ public class DebugSessionManager {
             snapshot.put("resultKeyName", thread.resultKeyName);
             snapshot.put("paused", Boolean.valueOf(
                 pausedThreadId != null && pausedThreadId.intValue() == thread.threadId));
-            if (thread.resultSummary != null) {
-                snapshot.put("resultSummary", thread.resultSummary);
-            }
             if (thread.errorMessage != null) {
                 snapshot.put("errorMessage", thread.errorMessage);
             }

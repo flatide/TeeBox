@@ -361,10 +361,14 @@ public class TeeBoxServerTest {
             // The Runs page defaults to API origin and excludes instant runs.
             String page = getHtml(testServer.baseUrl + "/admin/runs", 200);
             Assert.assertTrue(page.contains("id='origin-filter'"));
-            Assert.assertTrue("API must be the selected origin",
-                page.contains("<option value='api' selected>API</option>"));
-            Assert.assertTrue(page.contains("<option value='ui'>UI</option>"));
-            Assert.assertTrue(page.contains("<option value='debug'>Debug</option>"));
+            Assert.assertTrue("API origin checkbox must default checked",
+                page.contains("type='checkbox' value='api' checked"));
+            Assert.assertTrue(page.contains("type='checkbox' value='ui'"));
+            Assert.assertTrue(page.contains("type='checkbox' value='debug'"));
+            Assert.assertTrue("multiple origins are not serialized as a union",
+                page.contains("origins.join(',')"));
+            Assert.assertTrue("no checked origins must produce an empty result",
+                page.contains("origins.length?origins.join(','):'none'"));
             Assert.assertTrue(page.contains("Include instant"));
             Assert.assertFalse("checkbox must default to unchecked",
                 page.contains("id='instant-filter' checked"));

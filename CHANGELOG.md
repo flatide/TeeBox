@@ -2,6 +2,32 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.27.0
+
+Editable debugger sessions and automatic step-return inspection, on the propertee2 0.29.0 engine:
+
+- **Runs Origin is now a multi-select checkbox filter.** API remains checked by default, while UI
+  and Debug can be independently added or removed; selected origins are combined as a union and
+  clearing every checkbox shows no rows. The admin fragment/API origin filter accepts the backward-
+  compatible single value or a comma-separated list such as `origin=api,ui`.
+- **Debug source can be edited between executions.** Opening a Run debugger and pressing Restart
+  no longer show browser confirmation popups. The debug-session header warning and redundant
+  Paused Statement card are also removed, along with the top Paused At field and Open Script
+  Editor action. The session summary now contains only Source and Debug Run; Execution Source has
+  no explanatory or Current breakpoints rows, leaving the full-line editor marker and gutter as
+  the compact debugging surface. The session editor is writable while PAUSED or ENDED and locked
+  while RUNNING (including the resume/restart transition); Restart sends and validates its current
+  buffer, then executes that unsaved snapshot at the entry pause without changing the registered
+  script version. Retained and script-editor/transient sessions share this behavior and keep their
+  existing Props and breakpoints. A changed-source Restart submitted against a RUNNING session is
+  rejected, and invalid source is rejected before the existing paused/ended session is stopped.
+- **Function return values appear automatically after stepping (propertee2 0.29.0).** TeeBox
+  carries `DebugFrame.returns()` into each pause snapshot and shows its chronological
+  `(return) function = value` entries in a transient Function Returns section above Locals.
+  The same path handles main and `multi` worker frames; DEBUG_STATEMENT/BREAKPOINT stops and
+  steps that crossed no return keep the section hidden. The logical-thread table remains a
+  lifecycle view instead of sourcing completed worker results through `RunThreadInfo`.
+
 ## 1.26.0
 
 The debug workbench release — playground-grade debugging in the admin UI, on the

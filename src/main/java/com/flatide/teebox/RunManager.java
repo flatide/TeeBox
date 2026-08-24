@@ -402,7 +402,7 @@ public class RunManager {
         return runRegistry.countRuns(status, immediate, search);
     }
 
-    /** Filtered count with an optional run origin ({@code api/ui/debug}). */
+    /** Filtered count with optional comma-separated run origins ({@code api,ui,debug}). */
     public int countRuns(String status, Boolean immediate, String search, String origin) {
         return runRegistry.countRuns(status, immediate, search, origin);
     }
@@ -424,7 +424,7 @@ public class RunManager {
         return runRegistry.listRuns(status, null, immediate, search, offset, limit);
     }
 
-    /** Filtered listing with an optional run origin ({@code api/ui/debug}). */
+    /** Filtered listing with optional comma-separated run origins ({@code api,ui,debug}). */
     public List<RunInfo> listRuns(String status, Boolean immediate, String search, String origin,
                                   int offset, int limit) {
         return runRegistry.listRuns(status, null, immediate, search, origin, offset, limit);
@@ -851,8 +851,8 @@ public class RunManager {
         }, maintenanceIntervalMs, maintenanceIntervalMs, TimeUnit.MILLISECONDS);
     }
 
-    // --- debug re-run support (engine 0.28.0 debug hooks + worker frames; sessions owned by
-    //     DebugSessionManager) ---
+    // --- debug re-run support (engine 0.29.0 debug hooks + worker frames/step returns; sessions
+    //     owned by DebugSessionManager) ---
 
     /** Debug-session wiring for a debug re-run — implemented by DebugSessionManager. */
     public interface DebugAttach {
@@ -882,11 +882,10 @@ public class RunManager {
      * Build and register a debug re-run of a terminal run: the same script <b>version</b>, the
      * source run's input properties, and its iteration settings. One canonical debug runId is
      * reused for every execution of the same source Run; each execution completely resets its
-     * prior lifecycle/output/result/task state. The version executes by its <b>current stored
-     * content</b> — deliberately (user decision): editing the version after the failure and
-     * re-debugging the fix is a supported workflow. The trade-off is that the failing-line auto
-     * breakpoint assumes the text has not moved; a future step is editing the source from within
-     * a debug session and re-running it.
+     * prior lifecycle/output/result/task state. A first open executes the version's <b>current
+     * stored content</b> — deliberately (user decision): editing the version after the failure and
+     * re-debugging the fix is a supported workflow. Restart may instead supply the debug editor's
+     * current source without saving it back to the version.
      *
      * <p>Deliberately exempt from the run timeout (a debug session pauses for as long as the
      * operator thinks; DebugSessionManager's idle timeout owns abandonment) and from per-script
@@ -899,6 +898,12 @@ public class RunManager {
      *                                  properties, so a faithful re-run is no longer possible)
      */
     public DebugTarget prepareDebugRun(String sourceRunId, String requestedBy) {
+        return prepareDebugRun(sourceRunId, requestedBy, null);
+    }
+
+    /** Prepare a retained debug Run, optionally from an unsaved debugger-editor snapshot. */
+    public DebugTarget prepareDebugRun(String sourceRunId, String requestedBy,
+                                       String sourceSnapshot) {
         if (draining || shutdownRequested) {
             throw new IllegalStateException("Server is shutting down; new runs are rejected");
         }
@@ -926,14 +931,17 @@ public class RunManager {
             sourceMaxIterations = source.maxIterations;
             sourceIterationLimitBehavior = source.iterationLimitBehavior;
         }
-        // The failed version, not the active one — but by its current content (see javadoc).
+        // Keep the failed version context, not the active one. First open reads its current
+        // content; Restart may provide an unsaved debugger-editor snapshot (see javadoc).
         ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolve(source.scriptId, source.version);
-        // One launch snapshot: editing this version remains allowed, but cannot move the source/
-        // entry mapping underneath an already-open debug session.
-        String sourceCode = scriptRegistry.readVersionContent(resolved.scriptId, resolved.version);
+        // One launch snapshot: later edits cannot move the source/entry mapping underneath this
+        // attempt; applying another edit requires Restart and therefore creates a new attempt.
+        String sourceCode = sourceSnapshot != null ? sourceSnapshot
+            : scriptRegistry.readVersionContent(resolved.scriptId, resolved.version);
         if (sourceCode == null) {
             sourceCode = "";
         }
+        validateDebugSource(sourceCode);
         RunInfo previous = runRegistry.findDebugRun(sourceRunId);
         RunInfo run = new RunInfo();
         run.runId = previous != null ? previous.runId : createRunId();
@@ -971,12 +979,21 @@ public class RunManager {
         return new DebugTarget(run, resolved.file, sourceCode);
     }
 
+    /** Parser backstop for source submitted by the debug console. Kept separate from the editor's
+     * unknown-builtin lint because custom host functions may be valid at execution time. */
+    void validateDebugSource(String sourceCode) {
+        List<String> errors = scriptRegistry.validateContent(sourceCode != null ? sourceCode : "");
+        if (!errors.isEmpty()) {
+            throw new IllegalArgumentException("Cannot debug invalid script: " + errors.get(0));
+        }
+    }
+
     /**
      * Prepare a debugger attempt directly from the script page's Version Source editor. The
      * currently edited source (possibly unsaved) and caller-supplied Debug Props/settings are
      * captured for the attempt, and there is deliberately no parent Run. A custom caller may omit
-     * {@code sourceSnapshot} to load the selected saved version; Restart supplies the previous
-     * session's immutable snapshot.
+     * {@code sourceSnapshot} to load the selected saved version; Restart supplies the debug
+     * console's current buffer.
      * The RunRegistry entry exists only while the session executes: it is neither persisted nor
      * returned by run list/count APIs.
      */
@@ -989,10 +1006,10 @@ public class RunManager {
         ScriptRegistry.ResolvedScript resolved = scriptRegistry.resolveEditorDebug(scriptId, version);
         String sourceCode = sourceSnapshot != null ? sourceSnapshot
             : scriptRegistry.readVersionContent(resolved.scriptId, resolved.version);
-        List<String> errors = scriptRegistry.validateContent(sourceCode);
-        if (!errors.isEmpty()) {
-            throw new IllegalArgumentException("Cannot debug invalid script: " + errors.get(0));
+        if (sourceCode == null) {
+            sourceCode = "";
         }
+        validateDebugSource(sourceCode);
         RunInfo run = new RunInfo();
         run.runId = createRunId();
         run.scriptPath = resolved.displayPath;

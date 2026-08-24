@@ -721,8 +721,10 @@ public class TeeBoxServer {
                         }
                         String requestedBy = session != null ? session.username : "admin";
                         try {
+                            Map<String, Object> body = parseJsonBodyOptional(exchange);
+                            String source = optionalRestartSource(body);
                             DebugSessionManager.Session restarted =
-                                debugSessionManager.restart(sessionId, requestedBy);
+                                debugSessionManager.restart(sessionId, requestedBy, source);
                             writeJson(exchange, HttpURLConnection.HTTP_CREATED,
                                 debugSessionManager.statusMap(restarted));
                         } catch (IllegalArgumentException e) {
@@ -1185,7 +1187,7 @@ public class TeeBoxServer {
         if ("GET".equals(method) && "/api/admin/runs".equals(path)) {
             Map<String, String> query = parseQuery(exchange);
             String status = trimToNull(query.get("status"));
-            // Same filters as the admin-UI Runs page: origin=api|ui|debug,
+            // Same filters as the admin-UI Runs page: origin=api,ui,debug (one or more),
             // instant=exclude|only, q=<runId/scriptId substring>.
             String origin = trimToNull(query.get("origin"));
             Boolean immediate = parseInstantFilter(query.get("instant"));
@@ -1264,8 +1266,9 @@ public class TeeBoxServer {
                         errorMap("Debug session not found"));
                     return;
                 }
+                Map<String, Object> body = parseJsonBodyOptional(exchange);
                 DebugSessionManager.Session restarted =
-                    debugSessionManager.restart(sessionId, "admin");
+                    debugSessionManager.restart(sessionId, "admin", optionalRestartSource(body));
                 writeJson(exchange, HttpURLConnection.HTTP_CREATED,
                     debugSessionManager.statusMap(restarted));
                 return;
@@ -1685,6 +1688,19 @@ public class TeeBoxServer {
             return null;
         }
         return parseJsonObject(body);
+    }
+
+    /** Optional Restart payload: an absent source preserves the session snapshot; when present it
+     *  must be a string (including the deliberately valid empty string). */
+    private String optionalRestartSource(Map<String, Object> body) {
+        if (body == null || !body.containsKey("source")) {
+            return null;
+        }
+        Object source = body.get("source");
+        if (!(source instanceof String)) {
+            throw new IllegalArgumentException("source must be a string");
+        }
+        return (String) source;
     }
 
     /** Malformed JSON is the caller's mistake — a 400, not a 500 (Gson's parse exception is a

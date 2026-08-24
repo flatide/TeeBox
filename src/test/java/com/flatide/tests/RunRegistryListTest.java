@@ -91,6 +91,12 @@ public class RunRegistryListTest {
         Assert.assertEquals("origin=debug",
                 "[r3]", ids(registry.listRuns(null, null, null, null, "debug", 0, -1)).toString());
         Assert.assertEquals(2, registry.countRuns(null, null, null, "api"));
+        Assert.assertEquals("comma-separated origins form a case-insensitive union",
+                "[r4, r2, r1]",
+                ids(registry.listRuns(null, null, null, null, "api,UI", 0, -1)).toString());
+        Assert.assertEquals(3, registry.countRuns(null, null, null, "API,ui"));
+        Assert.assertEquals("an empty checkbox sentinel matches no origin", 0,
+                registry.countRuns(null, null, null, "none"));
 
         Assert.assertEquals("scriptId filter is exact",
                 "[r2, r1]", ids(registry.listRuns(null, "alpha", 0, -1)).toString());

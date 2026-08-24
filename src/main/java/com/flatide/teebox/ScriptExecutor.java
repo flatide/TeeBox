@@ -64,7 +64,7 @@ public class ScriptExecutor {
     }
 
     /**
-     * Debug variant (engine 0.28.0 hooks): with a non-null {@code debugHandler} the run becomes a
+     * Debug variant (engine 0.29.0 hooks): with a non-null {@code debugHandler} the run becomes a
      * debug mode — {@code debug} statements, line breakpoints, and stepping pause the main or a
      * {@code multi} worker and hand a thread-identified {@code DebugFrame} to the handler ON the
      * paused engine fiber (the whole run is frozen while the handler blocks; monitor bodies stay
