@@ -2,6 +2,15 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- Added the read-only `monitor` admin-UI role: monitors can inspect ordinary scripts and Runs/Tasks
+  across owners, but cannot mutate/execute resources or view Debug UI, sessions, or debug-origin
+  Runs/Tasks. Regular `user` accounts can now debug their owned Version Source and their own
+  UI-submitted Runs; every debug-session route reapplies the same ownership check.
+- Runs persisted before the origin field existed are treated as API-origin Runs consistently in
+  filtering, UI labels, and API responses, so the default API checkbox no longer hides history.
+
 ## 1.27.0
 
 Editable debugger sessions and automatic step-return inspection, on the propertee2 0.29.0 engine:

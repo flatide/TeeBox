@@ -113,6 +113,14 @@ public class AdminPageRenderer {
         return !loginRequired() || UserStore.ROLE_ADMIN.equals(currentRole());
     }
 
+    private boolean isMonitor() {
+        return loginRequired() && UserStore.ROLE_MONITOR.equals(currentRole());
+    }
+
+    private boolean canUseDebugger() {
+        return isAdmin() || (loggedIn() && !isMonitor());
+    }
+
     /** A logged-in admin in roster mode — the only viewer who sees/uses user management. Open mode
      *  deliberately does NOT count: it has no users to manage. */
     private boolean isRosterAdmin() {
@@ -124,6 +132,9 @@ public class AdminPageRenderer {
         if (isReadOnly()) {
             return false;
         }
+        if (isMonitor()) {
+            return false;
+        }
         if (isAdmin()) {
             return true;
         }
@@ -133,6 +144,9 @@ public class AdminPageRenderer {
     /** Ownership check when only a scriptId is on hand (runs/tasks); loads the script to read its owner. */
     private boolean canModifyScriptId(String scriptId) {
         if (isReadOnly()) {
+            return false;
+        }
+        if (isMonitor()) {
             return false;
         }
         if (isAdmin()) {
@@ -150,11 +164,18 @@ public class AdminPageRenderer {
         return canModify(info);
     }
 
+    private boolean canDebugScriptId(String scriptId) {
+        return canUseDebugger() && canModifyScriptId(scriptId);
+    }
+
     /** Whether the viewer may kill/cancel a run (display only — the server is the gate). Admins:
      *  any run. Regular users: only runs they submitted from the TeeBox UI themselves; API runs
      *  (origin "api"/null) are admin-only even on their own scripts. */
     private boolean canModifyRunId(String runId) {
         if (isReadOnly()) {
+            return false;
+        }
+        if (isMonitor()) {
             return false;
         }
         if (isAdmin()) {
@@ -165,6 +186,25 @@ public class AdminPageRenderer {
             return false;
         }
         return "ui".equals(run.origin) && currentUser() != null && currentUser().equals(run.submittedBy);
+    }
+
+    private boolean canDebugRunId(String runId) {
+        return canUseDebugger() && canModifyRunId(runId);
+    }
+
+    private boolean canAccessDebugSession(java.util.Map<String, Object> session) {
+        if (!canUseDebugger() || session == null) {
+            return false;
+        }
+        if (isAdmin()) {
+            return true;
+        }
+        Object sourceRunId = session.get("sourceRunId");
+        if (sourceRunId instanceof String) {
+            return canDebugRunId((String) sourceRunId);
+        }
+        Object scriptId = session.get("scriptId");
+        return scriptId instanceof String && canDebugScriptId((String) scriptId);
     }
 
     private String ownerLabel(String owner) {
@@ -182,8 +222,8 @@ public class AdminPageRenderer {
         sb.append("<a href='/admin' class='top-nav-link").append("dashboard".equals(activePage) ? " active" : "").append("'>Dashboard</a>");
         sb.append("<a href='/admin/scripts' class='top-nav-link").append("scripts".equals(activePage) ? " active" : "").append("'>Scripts</a>");
         sb.append("<a href='/admin/runs' class='top-nav-link").append("runs".equals(activePage) ? " active" : "").append("'>Runs</a>");
-        if (isAdmin() && debugSessionManager != null) {
-            int debugCount = debugSessionManager.activeCount();
+        if (canUseDebugger() && debugSessionManager != null) {
+            int debugCount = visibleDebugSessionCount(true);
             sb.append("<a href='/admin/debug' class='top-nav-link")
               .append("debug".equals(activePage) ? " active" : "").append("'>Debug");
             if (debugCount > 0) {
@@ -209,6 +249,8 @@ public class AdminPageRenderer {
                       .append(escape(currentUser()));
                     if (UserStore.ROLE_ADMIN.equals(currentRole())) {
                         sb.append(" <span class='tag tag-nav'>admin</span>");
+                    } else if (UserStore.ROLE_MONITOR.equals(currentRole())) {
+                        sb.append(" <span class='tag tag-nav'>monitor</span>");
                     }
                     sb.append("</span>");
                 }
@@ -224,9 +266,13 @@ public class AdminPageRenderer {
     }
 
     public String renderIndexPage() {
-        List<RunInfo> running = runManager.listRuns("RUNNING", 0, -1);
-        List<RunInfo> queued = runManager.listRuns("QUEUED", 0, -1);
-        List<RunInfo> pending = runManager.listRuns("PENDING", 0, -1);
+        String visibleOrigins = isAdmin() ? null : "api,ui";
+        List<RunInfo> running = runManager.listRuns("RUNNING", null, null,
+            visibleOrigins, 0, -1);
+        List<RunInfo> queued = runManager.listRuns("QUEUED", null, null,
+            visibleOrigins, 0, -1);
+        List<RunInfo> pending = runManager.listRuns("PENDING", null, null,
+            visibleOrigins, 0, -1);
         List<RunInfo> activeRuns = new java.util.ArrayList<RunInfo>(running);
         activeRuns.addAll(queued);
         activeRuns.addAll(pending);
@@ -339,9 +385,9 @@ public class AdminPageRenderer {
             } else {
                 sb.append("<span class='dim'>&mdash;</span>");
             }
-            if ("ui".equals(run.origin)) {
+            if ("ui".equalsIgnoreCase(run.effectiveOrigin())) {
                 sb.append(" <span class='tag' title='Submitted from the TeeBox admin UI'>ui</span>");
-            } else if ("api".equals(run.origin)) {
+            } else if ("api".equalsIgnoreCase(run.effectiveOrigin())) {
                 sb.append(" <span class='tag' title='Submitted through the client API'>api</span>");
             }
             sb.append("</td>");
@@ -447,8 +493,11 @@ public class AdminPageRenderer {
         sb.append("onchange='filterRuns()'/> API</label>");
         sb.append("<label class='checkbox-label'><input type='checkbox' value='ui' ");
         sb.append("onchange='filterRuns()'/> UI</label>");
-        sb.append("<label class='checkbox-label'><input type='checkbox' value='debug' ");
-        sb.append("onchange='filterRuns()'/> Debug</label></span>");
+        if (isAdmin()) {
+            sb.append("<label class='checkbox-label'><input type='checkbox' value='debug' ");
+            sb.append("onchange='filterRuns()'/> Debug</label>");
+        }
+        sb.append("</span>");
         sb.append("<label style='font-size:13px;color:#64748b;'>Status:</label>");
         sb.append("<select id='status-filter' onchange='filterRuns()'>");
         sb.append("<option value=''>All</option>");
@@ -666,7 +715,7 @@ public class AdminPageRenderer {
         sb.append("<div class='card-header'><h2>").append(escape(runId)).append("</h2>");
         List<java.util.Map<String, Object>> activeDebugSessions =
             new ArrayList<java.util.Map<String, Object>>();
-        if (isAdmin() && debugSessionManager != null) {
+        if (canUseDebugger() && debugSessionManager != null) {
             activeDebugSessions = activeDebugSessionsForRun(runId);
             for (java.util.Map<String, Object> debugSession : activeDebugSessions) {
                 String debugSessionId = String.valueOf(debugSession.get("sessionId"));
@@ -688,7 +737,7 @@ public class AdminPageRenderer {
         }
         boolean terminal = run.status != RunStatus.QUEUED && run.status != RunStatus.PENDING
             && run.status != RunStatus.RUNNING;
-        if (terminal && !run.archived && isAdmin() && debugSessionManager != null
+        if (terminal && !run.archived && canDebugRunId(run.runId) && debugSessionManager != null
                 && activeDebugSessions.isEmpty()) {
             sb.append("<form method='post' action='/admin/runs/").append(urlPath(runId)).append("/debug' ");
             sb.append("style='display:inline;margin-left:6px'>");
@@ -703,9 +752,9 @@ public class AdminPageRenderer {
         }
         sb.append("<div class='detail-item'><div class='detail-label'>Status</div><div class='detail-value'>").append(renderRunStatusWithTaskWarnings(run, taskStatuses)).append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Origin</div><div class='detail-value'>")
-          .append("ui".equals(run.origin) ? "TeeBox UI"
-              : ("api".equals(run.origin) ? "Client API"
-              : ("debug".equals(run.origin) ? "Debugger" : "<span class='dim'>&mdash;</span>")))
+          .append("ui".equalsIgnoreCase(run.effectiveOrigin()) ? "TeeBox UI"
+              : ("api".equalsIgnoreCase(run.effectiveOrigin()) ? "Client API"
+              : ("debug".equalsIgnoreCase(run.effectiveOrigin()) ? "Debugger" : "<span class='dim'>&mdash;</span>")))
           .append("</div></div>");
         if (run.debug && run.debugOf != null) {
             sb.append("<div class='detail-item'><div class='detail-label'>Debug Re-run Of</div><div class='detail-value'>");
@@ -850,10 +899,7 @@ public class AdminPageRenderer {
         if (debugSessionManager == null || runId == null) {
             return result;
         }
-        for (java.util.Map<String, Object> session : debugSessionManager.list()) {
-            if (DebugSessionManager.Session.ENDED.equals(session.get("state"))) {
-                continue;
-            }
+        for (java.util.Map<String, Object> session : visibleDebugSessions(true)) {
             if (runId.equals(session.get("sourceRunId")) || runId.equals(session.get("runId"))) {
                 result.add(session);
             }
@@ -861,20 +907,40 @@ public class AdminPageRenderer {
         return result;
     }
 
-    /** Admin landing page for returning to a live debugger after navigating elsewhere. Ended
-     *  sessions are shown too while they remain retained, which keeps their final console/view
-     *  reachable without implying that they can be resumed. */
+    private List<java.util.Map<String, Object>> visibleDebugSessions(boolean activeOnly) {
+        List<java.util.Map<String, Object>> result = new ArrayList<java.util.Map<String, Object>>();
+        if (debugSessionManager == null || !canUseDebugger()) {
+            return result;
+        }
+        for (java.util.Map<String, Object> session : debugSessionManager.list()) {
+            if (!canAccessDebugSession(session)) {
+                continue;
+            }
+            if (activeOnly && DebugSessionManager.Session.ENDED.equals(session.get("state"))) {
+                continue;
+            }
+            result.add(session);
+        }
+        return result;
+    }
+
+    private int visibleDebugSessionCount(boolean activeOnly) {
+        return visibleDebugSessions(activeOnly).size();
+    }
+
+    /** Debugger landing page. Admins see all sessions; users see sessions for their owned source
+     *  Runs/scripts. Ended sessions remain reachable while retained. */
     public String renderDebugSessionsPage() {
         if (debugSessionManager == null) {
             return renderErrorPage("Debugger unavailable", "Debug sessions are not configured");
         }
-        List<java.util.Map<String, Object>> sessions = debugSessionManager.list();
+        List<java.util.Map<String, Object>> sessions = visibleDebugSessions(false);
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Debug Sessions - TeeBox Admin"));
         sb.append(renderTopNav("debug"));
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Debug Sessions</h2>");
-        sb.append("<span class='dim'>active ").append(debugSessionManager.activeCount())
+        sb.append("<span class='dim'>active ").append(visibleDebugSessionCount(true))
           .append(" / ").append(debugSessionManager.getMaxSessions()).append("</span></div>");
         if (sessions.isEmpty()) {
             sb.append("<p class='empty'>No debug sessions</p>");
@@ -947,6 +1013,9 @@ public class AdminPageRenderer {
                 sessionId + " — the session may have ended and been swept");
         }
         DebugSessionManager.Session session = debugSessionManager.find(sessionId);
+        if (!canAccessDebugSession(debugSessionManager.statusMap(session))) {
+            return renderErrorPage("Forbidden", "You do not have permission to view this debug session.");
+        }
         StringBuilder sb = new StringBuilder();
         sb.append(pageStart("Debug " + sessionId));
         sb.append(renderTopNav("debug"));
@@ -1606,7 +1675,7 @@ public class AdminPageRenderer {
                 sb.append("<div class='form-row' style='flex:1'><label>Task Index <span class='dim'>(SHELL execution order; 0 = first)</span></label><input type='number' name='taskIndex' value='").append(activeRule != null ? activeRule.taskIndex : 0).append("' min='0' style='width:80px;'/></div>");
                 sb.append("<div class='form-row' style='flex:1'><label>Max Captures <span class='dim'>(1 = first match only, 0 = unlimited)</span></label><input type='number' name='maxCaptures' value='").append(activeRule != null ? activeRule.maxCaptures : 1).append("' min='0' style='width:80px;'/></div>");
                 sb.append("</div></div></details>");
-                if (isAdmin()) {
+                if (canDebugScriptId(scriptId)) {
                     sb.append("<div class='form-row' style='margin-top:8px;'>");
                     sb.append("<label>Debug Props (JSON) <span class='dim'>(Debug only)</span></label>");
                     sb.append("<input type='text' name='propsJson' value='{}' ")
@@ -1630,7 +1699,7 @@ public class AdminPageRenderer {
                 sb.append("<label class='checkbox-label' title='Applies only to \"Save as new version\"'><input type='checkbox' name='activate'/> Set new version active</label>");
                 // Outlined (not gray) so it reads as an enabled secondary action, not a disabled button.
                 sb.append("<button type='button' id='check-syntax-btn' style='background:#fff;color:#2563eb;border:1px solid #2563eb;' onclick='ptCheckSyntax()' title='Check the editor content with the server parser without saving'>Check syntax</button>");
-                if (isAdmin()) {
+                if (canDebugScriptId(scriptId)) {
                     sb.append("<button type='submit'");
                     if (hasSelected) {
                         sb.append(" name='debugVersion' value='").append(escape(selectedVersion)).append("'");
@@ -1747,7 +1816,15 @@ public class AdminPageRenderer {
                 sb.append(" <span class='dim'>(you)</span>");
             }
             sb.append("</td>");
-            sb.append("<td>").append(user.isAdmin() ? "<span class='tag tag-nav'>admin</span>" : "user").append("</td>");
+            sb.append("<td>");
+            if (user.isAdmin()) {
+                sb.append("<span class='tag tag-nav'>admin</span>");
+            } else if (user.isMonitor()) {
+                sb.append("<span class='tag tag-nav'>monitor</span>");
+            } else {
+                sb.append("user");
+            }
+            sb.append("</td>");
             sb.append("<td>").append(userStore.hasPassword(user.username)
                     ? "set" : "<span class='dim'>set on first login</span>").append("</td>");
             sb.append("<td><div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap;'>");
@@ -1759,7 +1836,8 @@ public class AdminPageRenderer {
             sb.append(">");
             sb.append("<input type='hidden' name='username' value='").append(escape(user.username)).append("'/>");
             sb.append("<select name='role' style='font-size:12px;'>");
-            sb.append("<option value='user'").append(!user.isAdmin() ? " selected" : "").append(">user</option>");
+            sb.append("<option value='user'").append(!user.isAdmin() && !user.isMonitor() ? " selected" : "").append(">user</option>");
+            sb.append("<option value='monitor'").append(user.isMonitor() ? " selected" : "").append(">monitor</option>");
             sb.append("<option value='admin'").append(user.isAdmin() ? " selected" : "").append(">admin</option>");
             sb.append("</select> ");
             sb.append("<button type='submit' class='btn btn-sm'>Set role</button>");
@@ -1795,6 +1873,7 @@ public class AdminPageRenderer {
         sb.append("<input type='text' name='username' required pattern='[A-Za-z0-9._-]{1,64}'/></div>");
         sb.append("<div class='form-row'><label>Role</label><select name='role'>");
         sb.append("<option value='user' selected>user</option>");
+        sb.append("<option value='monitor'>monitor</option>");
         sb.append("<option value='admin'>admin</option>");
         sb.append("</select></div>");
         sb.append("<div class='form-row'><label>Initial password <span class='dim'>(optional)</span></label>");

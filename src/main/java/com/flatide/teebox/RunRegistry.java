@@ -260,8 +260,8 @@ public class RunRegistry {
         if (immediate != null && run.immediate != immediate.booleanValue()) {
             return false;
         }
-        if (origins != null && (run.origin == null
-                || !origins.contains(run.origin.toLowerCase(Locale.ROOT)))) {
+        if (origins != null
+                && !origins.contains(run.effectiveOrigin().toLowerCase(Locale.ROOT))) {
             return false;
         }
         if (search != null) {

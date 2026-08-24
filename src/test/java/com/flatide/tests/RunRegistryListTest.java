@@ -63,7 +63,8 @@ public class RunRegistryListTest {
         RunInfo r4 = run("r4", "beta", RunStatus.FAILED, 4, false);
         r4.origin = "API"; // case-insensitive filter
         registry.register(r4);
-        // same createdAt as r4: tie breaks by runId ascending
+        // Same createdAt as r4: tie breaks by runId ascending. No origin models a run persisted
+        // before the field existed; it must remain visible under the default API filter.
         registry.register(run("r0", "gamma", RunStatus.COMPLETED, 4, false));
 
         Assert.assertEquals("newest first, runId tiebreak",
@@ -85,16 +86,16 @@ public class RunRegistryListTest {
         Assert.assertEquals(2, registry.countRuns(null, null, "beta"));
 
         Assert.assertEquals("origin=api is case-insensitive",
-                "[r4, r1]", ids(registry.listRuns(null, null, null, null, "api", 0, -1)).toString());
+                "[r0, r4, r1]", ids(registry.listRuns(null, null, null, null, "api", 0, -1)).toString());
         Assert.assertEquals("origin=ui",
                 "[r2]", ids(registry.listRuns(null, null, null, null, "UI", 0, -1)).toString());
         Assert.assertEquals("origin=debug",
                 "[r3]", ids(registry.listRuns(null, null, null, null, "debug", 0, -1)).toString());
-        Assert.assertEquals(2, registry.countRuns(null, null, null, "api"));
+        Assert.assertEquals(3, registry.countRuns(null, null, null, "api"));
         Assert.assertEquals("comma-separated origins form a case-insensitive union",
-                "[r4, r2, r1]",
+                "[r0, r4, r2, r1]",
                 ids(registry.listRuns(null, null, null, null, "api,UI", 0, -1)).toString());
-        Assert.assertEquals(3, registry.countRuns(null, null, null, "API,ui"));
+        Assert.assertEquals(4, registry.countRuns(null, null, null, "API,ui"));
         Assert.assertEquals("an empty checkbox sentinel matches no origin", 0,
                 registry.countRuns(null, null, null, "none"));
 

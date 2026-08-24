@@ -59,6 +59,7 @@ public class UserStoreTest {
         File dataDir = newDataDir();
         writeRoster(dataDir, "[{\"username\":\"alice\",\"role\":\"user\"},"
                 + "{\"username\":\"boss\",\"role\":\"admin\"},"
+                + "{\"username\":\"watcher\",\"role\":\"monitor\"},"
                 + "{\"username\":\"weird\",\"role\":\"superhero\"},"
                 + "{\"username\":\"  \",\"role\":\"user\"}]");
         UserStore store = new UserStore(dataDir);
@@ -67,7 +68,7 @@ public class UserStoreTest {
         Assert.assertFalse(store.isEmpty());
 
         List<UserStore.User> users = store.listUsers();
-        Assert.assertEquals(3, users.size()); // blank username dropped
+        Assert.assertEquals(4, users.size()); // blank username dropped
 
         UserStore.User alice = store.findUser("alice");
         Assert.assertNotNull(alice);
@@ -76,6 +77,11 @@ public class UserStoreTest {
 
         UserStore.User boss = store.findUser("boss");
         Assert.assertTrue(boss.isAdmin());
+
+        UserStore.User watcher = store.findUser("watcher");
+        Assert.assertEquals(UserStore.ROLE_MONITOR, watcher.role);
+        Assert.assertTrue(watcher.isMonitor());
+        Assert.assertFalse(watcher.isAdmin());
 
         // Unknown role normalizes to plain user.
         UserStore.User weird = store.findUser("weird");

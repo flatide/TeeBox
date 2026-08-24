@@ -575,16 +575,15 @@ public class TeeBoxServer {
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/scripts/")
                         && path.endsWith("/debug")) {
-                    // Like the existing Run debugger, this can eval arbitrary code with the
-                    // server's SHELL access. Script ownership is therefore insufficient: admins
-                    // only. The Version Source + its dedicated Debug Props are executed without
-                    // creating Run history.
-                    if (!isAdmin(session)) {
+                    String scriptId = path.substring("/admin/scripts/".length(),
+                        path.length() - "/debug".length());
+                    // A user may debug source they own; monitor is deliberately read-only and may
+                    // not enter the debugger at all. The Version Source + its dedicated Debug
+                    // Props execute without creating retained Run history.
+                    if (!canDebugScript(session, scriptId)) {
                         forbidden(exchange);
                         return;
                     }
-                    String scriptId = path.substring("/admin/scripts/".length(),
-                        path.length() - "/debug".length());
                     Map<String, String> form = parseForm(exchange);
                     // Debug targets the version currently open in Source Editor, not the ordinary
                     // Run selector. Its form posts the editor's unsaved content directly; a custom
@@ -610,7 +609,7 @@ public class TeeBoxServer {
                     return;
                 }
                 if ("GET".equals(method) && path.startsWith("/admin/fragments/")) {
-                    handleAdminFragment(exchange, path);
+                    handleAdminFragment(exchange, path, session);
                     return;
                 }
                 if ("GET".equals(method) && path.startsWith("/admin/scripts/")) {
@@ -623,6 +622,10 @@ public class TeeBoxServer {
                     String suffix = path.substring("/admin/runs/".length());
                     if (suffix.endsWith("/kill-tasks") || suffix.endsWith("/cancel")) {
                         writeText(exchange, HttpURLConnection.HTTP_BAD_METHOD, "Use POST");
+                        return;
+                    }
+                    if (!canViewRun(session, suffix)) {
+                        forbidden(exchange);
                         return;
                     }
                     Map<String, String> query = parseQuery(exchange);
@@ -659,10 +662,10 @@ public class TeeBoxServer {
                     return;
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/runs/") && path.endsWith("/debug")) {
-                    // Debug re-run: eval executes arbitrary script code with the server's SHELL
-                    // access — admins only, regardless of run ownership.
                     String runId = path.substring("/admin/runs/".length(), path.length() - "/debug".length());
-                    if (!isAdmin(session)) {
+                    // A regular user may debug only a Run they submitted from the UI themselves.
+                    // API-origin Runs remain admin-only; monitor cannot use the debugger.
+                    if (!canDebugRun(session, runId)) {
                         forbidden(exchange);
                         return;
                     }
@@ -673,7 +676,7 @@ public class TeeBoxServer {
                     return;
                 }
                 if ("GET".equals(method) && "/admin/debug".equals(path)) {
-                    if (!isAdmin(session)) {
+                    if (!canUseDebugger(session)) {
                         forbidden(exchange);
                         return;
                     }
@@ -682,11 +685,13 @@ public class TeeBoxServer {
                     return;
                 }
                 if (path.startsWith("/admin/debug/")) {
-                    if (!isAdmin(session)) {
+                    String suffix = path.substring("/admin/debug/".length());
+                    int slash = suffix.indexOf('/');
+                    String requestedSessionId = slash >= 0 ? suffix.substring(0, slash) : suffix;
+                    if (!canAccessDebugSession(session, requestedSessionId)) {
                         forbidden(exchange);
                         return;
                     }
-                    String suffix = path.substring("/admin/debug/".length());
                     if ("GET".equals(method) && suffix.endsWith("/state")) {
                         String sessionId = suffix.substring(0, suffix.length() - "/state".length());
                         Map<String, Object> status = debugSessionManager.status(sessionId);
@@ -774,6 +779,10 @@ public class TeeBoxServer {
                         writeText(exchange, HttpURLConnection.HTTP_BAD_METHOD, "Use POST");
                         return;
                     }
+                    if (!canViewTask(session, suffix)) {
+                        forbidden(exchange);
+                        return;
+                    }
                     boolean killRequested = "1".equals(parseQuery(exchange).get("killRequested"));
                     writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderTaskPage(suffix, killRequested));
                     return;
@@ -815,11 +824,21 @@ public class TeeBoxServer {
     // ---- Admin UI authorization ----
     // In "open mode" (no user roster ⇒ login not required) every action is allowed, preserving the
     // historical open-by-default posture. When a roster exists, admins do anything; a regular user may
-    // only act on scripts they own. The /api/* namespaces are unaffected (token-gated, unrestricted).
+    // act on owned resources, while monitor is read-only and cannot inspect debugger state. The
+    // /api/* namespaces are unaffected (token-gated, unrestricted).
 
     /** Open mode or an admin session. */
     private boolean isAdmin(AdminSessionManager.Session session) {
         return !sessionManager.isLoginRequired() || (session != null && session.isAdmin());
+    }
+
+    private boolean isMonitor(AdminSessionManager.Session session) {
+        return sessionManager.isLoginRequired() && session != null && session.isMonitor();
+    }
+
+    /** Open mode, admins, and regular users may enter the debugger; monitor never may. */
+    private boolean canUseDebugger(AdminSessionManager.Session session) {
+        return isAdmin(session) || (session != null && !session.isMonitor());
     }
 
     /**
@@ -832,6 +851,9 @@ public class TeeBoxServer {
             return true;
         }
         if (session == null) {
+            return false;
+        }
+        if (session.isMonitor()) {
             return false;
         }
         if (session.isAdmin()) {
@@ -852,6 +874,23 @@ public class TeeBoxServer {
         return info.owner != null && info.owner.equals(session.username);
     }
 
+    /** Script-editor debugging follows ownership, but excludes the read-only monitor role. */
+    private boolean canDebugScript(AdminSessionManager.Session session, String scriptId) {
+        if (isAdmin(session)) {
+            return true;
+        }
+        if (session == null || session.isMonitor() || scriptId == null) {
+            return false;
+        }
+        ScriptInfo info;
+        try {
+            info = runManager.getScript(scriptId.trim());
+        } catch (RuntimeException e) {
+            return false;
+        }
+        return info != null && info.owner != null && info.owner.equals(session.username);
+    }
+
     /** Whether the session may act on a run's tasks (resolved via the run's script owner). */
     /**
      * Whether the session may act on a run (kill-tasks / cancel). Admins (and open mode): any run.
@@ -863,7 +902,7 @@ public class TeeBoxServer {
         if (isAdmin(session)) {
             return true;
         }
-        if (session == null) {
+        if (session == null || session.isMonitor()) {
             return false;
         }
         RunInfo run = runId != null ? runManager.getRun(runId) : null;
@@ -873,10 +912,64 @@ public class TeeBoxServer {
         return "ui".equals(run.origin) && session.username.equals(run.submittedBy);
     }
 
+    /** Run re-debugging uses the existing definition of an owned UI Run. */
+    private boolean canDebugRun(AdminSessionManager.Session session, String runId) {
+        return canUseDebugger(session) && canModifyRun(session, runId);
+    }
+
+    /** Debug Runs are hidden from monitor and scoped to their source/script for regular users. */
+    private boolean canViewRun(AdminSessionManager.Session session, String runId) {
+        RunInfo run = runId != null ? runManager.getRun(runId) : null;
+        if (run == null) {
+            return true; // Preserve the renderer's ordinary not-found page.
+        }
+        if (!"debug".equalsIgnoreCase(run.effectiveOrigin())) {
+            return true;
+        }
+        if (isAdmin(session)) {
+            return true;
+        }
+        if (session == null || session.isMonitor()) {
+            return false;
+        }
+        return run.debugOf != null
+            ? canDebugRun(session, run.debugOf)
+            : canDebugScript(session, run.scriptId);
+    }
+
+    private boolean canViewTask(AdminSessionManager.Session session, String taskId) {
+        TaskInfo task = taskId != null ? runManager.getTask(taskId) : null;
+        if (task == null) {
+            return true; // Preserve the ordinary not-found page.
+        }
+        // Fail closed for orphan task records: without the parent Run its origin/ownership cannot
+        // be established (important for a task left behind after a debug Run is purged).
+        if (task.runId == null || runManager.getRun(task.runId) == null) {
+            return isAdmin(session);
+        }
+        return canViewRun(session, task.runId);
+    }
+
+    private boolean canAccessDebugSession(AdminSessionManager.Session session, String sessionId) {
+        if (!canUseDebugger(session)) {
+            return false;
+        }
+        DebugSessionManager.Session debug = debugSessionManager.find(sessionId);
+        if (debug == null || isAdmin(session)) {
+            return debug != null;
+        }
+        return debug.sourceRunId != null
+            ? canDebugRun(session, debug.sourceRunId)
+            : canDebugScript(session, debug.scriptId);
+    }
+
     /** Whether the session may act on a task (resolved via task → run → script owner). */
     private boolean canModifyTask(AdminSessionManager.Session session, String taskId) {
         if (isAdmin(session)) {
             return true;
+        }
+        if (session == null || session.isMonitor()) {
+            return false;
         }
         TaskInfo task = taskId != null ? runManager.getTask(taskId) : null;
         if (task == null || task.runId == null) {
@@ -887,15 +980,19 @@ public class TeeBoxServer {
 
     private void forbidden(HttpExchange exchange) throws IOException {
         writeHtml(exchange, HttpURLConnection.HTTP_FORBIDDEN,
-                pageRenderer.renderErrorPage("Forbidden", "You do not have permission to modify this resource."));
+                pageRenderer.renderErrorPage("Forbidden", "You do not have permission to access this resource."));
     }
 
-    private void handleAdminFragment(HttpExchange exchange, String path) throws IOException {
+    private void handleAdminFragment(HttpExchange exchange, String path,
+                                     AdminSessionManager.Session session) throws IOException {
         String fragment = path.substring("/admin/fragments/".length());
         String html;
         if ("dashboard-runs".equals(fragment)) {
-            List<RunInfo> running = runManager.listRuns("RUNNING", 0, -1);
-            List<RunInfo> queued = runManager.listRuns("QUEUED", 0, -1);
+            String visibleOrigins = isAdmin(session) ? null : "api,ui";
+            List<RunInfo> running = runManager.listRuns("RUNNING", null, null,
+                visibleOrigins, 0, -1);
+            List<RunInfo> queued = runManager.listRuns("QUEUED", null, null,
+                visibleOrigins, 0, -1);
             List<RunInfo> active = new ArrayList<RunInfo>(running);
             active.addAll(queued);
             html = pageRenderer.renderRunsTableFragment(active);
@@ -919,6 +1016,7 @@ public class TeeBoxServer {
                 search = trimToNull(query.get("q"));
                 page = parseInt(query.get("page"), 1);
             }
+            origin = visibleOriginFilter(session, origin);
             if (page < 1) page = 1;
             int offset = (page - 1) * pageSize;
             int totalCount = runManager.countRuns(status, immediate, search, origin);
@@ -926,15 +1024,41 @@ public class TeeBoxServer {
             html = pageRenderer.renderRunsTableWithPagination(runs, page, pageSize, totalCount);
         } else if (fragment.startsWith("run-detail/")) {
             String runId = fragment.substring("run-detail/".length());
+            if (!canViewRun(session, runId)) {
+                forbidden(exchange);
+                return;
+            }
             html = pageRenderer.renderRunDetailFragment(runId);
         } else if (fragment.startsWith("task-detail/")) {
             String taskId = fragment.substring("task-detail/".length());
+            if (!canViewTask(session, taskId)) {
+                forbidden(exchange);
+                return;
+            }
             html = pageRenderer.renderTaskDetailFragment(taskId);
         } else {
             writeText(exchange, HttpURLConnection.HTTP_NOT_FOUND, "Not found");
             return;
         }
         writeHtml(exchange, HttpURLConnection.HTTP_OK, html);
+    }
+
+    /** Non-admin Runs views never enumerate debug-origin Runs, even through a hand-written URL. */
+    private String visibleOriginFilter(AdminSessionManager.Session session, String requested) {
+        if (isAdmin(session)) {
+            return requested;
+        }
+        if (requested == null) {
+            return "api,ui";
+        }
+        List<String> visible = new ArrayList<String>();
+        for (String item : requested.split(",")) {
+            String origin = item.trim().toLowerCase(java.util.Locale.ROOT);
+            if (("api".equals(origin) || "ui".equals(origin)) && !visible.contains(origin)) {
+                visible.add(origin);
+            }
+        }
+        return visible.isEmpty() ? "none" : String.join(",", visible);
     }
 
     private class ApiHandler implements HttpHandler {
@@ -1890,7 +2014,7 @@ public class TeeBoxServer {
         status.put("version", run.version);
         status.put("status", run.status != null ? run.status.name() : null);
         status.put("submittedBy", run.submittedBy);
-        status.put("origin", run.origin);
+        status.put("origin", run.effectiveOrigin());
         status.put("createdAt", Long.valueOf(run.createdAt));
         status.put("startedAt", run.startedAt);
         status.put("endedAt", run.endedAt);
@@ -1910,7 +2034,7 @@ public class TeeBoxServer {
         result.put("version", run.version);
         result.put("status", run.status != null ? run.status.name() : null);
         result.put("submittedBy", run.submittedBy);
-        result.put("origin", run.origin);
+        result.put("origin", run.effectiveOrigin());
         result.put("hasExplicitReturn", Boolean.valueOf(run.hasExplicitReturn));
         // A stream-result descriptor carries an internal server path; expose only a redacted hint
         // ({stream, contentType, size}). Clients fetch the bytes via GET .../result-stream.
@@ -2128,7 +2252,7 @@ public class TeeBoxServer {
         summary.put("version", run.version);
         summary.put("status", run.status != null ? run.status.name() : null);
         summary.put("submittedBy", run.submittedBy);
-        summary.put("origin", run.origin);
+        summary.put("origin", run.effectiveOrigin());
         summary.put("createdAt", Long.valueOf(run.createdAt));
         summary.put("startedAt", run.startedAt);
         summary.put("endedAt", run.endedAt);

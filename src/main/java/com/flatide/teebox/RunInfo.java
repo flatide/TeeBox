@@ -24,7 +24,7 @@ public class RunInfo {
     public String submittedBy;
     /** How the run was submitted: "ui" (TeeBox admin UI) or "api" (external client API). Drives
      *  the regular-user kill/cancel permission (own UI runs only) and the runs-list origin tag.
-     *  Null on runs persisted before the field existed (treated like external). */
+     *  Null on runs persisted before the field existed (treated as API/external). */
     public String origin;
     /** Caller IP at submit time (first X-Forwarded-For hop when present, else the socket peer;
      *  null = unknown). Shown on the run detail page; audit only. */
@@ -61,6 +61,11 @@ public class RunInfo {
     public Map<String, Object> published;
     /** Run-terminal webhook callback target carried from submit (null = none). Persisted. */
     public WebhookTarget callback;
+
+    /** Effective submission origin, including the compatibility value for pre-origin run files. */
+    public String effectiveOrigin() {
+        return origin == null || origin.length() == 0 ? "api" : origin;
+    }
 
     public RunInfo copy() {
         RunInfo copy = new RunInfo();

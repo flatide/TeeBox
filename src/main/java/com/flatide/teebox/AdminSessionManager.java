@@ -33,6 +33,10 @@ public class AdminSessionManager {
         public boolean isAdmin() {
             return UserStore.ROLE_ADMIN.equals(role);
         }
+
+        public boolean isMonitor() {
+            return UserStore.ROLE_MONITOR.equals(role);
+        }
     }
 
     private final UserStore userStore;

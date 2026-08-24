@@ -2,6 +2,8 @@ package com.flatide.tests;
 
 import com.flatide.teebox.TeeBoxServer;
 import com.flatide.teebox.TeeBoxConfig;
+import com.flatide.teebox.RunInfo;
+import com.flatide.teebox.RunStatus;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -48,12 +50,9 @@ public class TeeBoxMultiUserUiTest {
                     "scriptId=alice_script&propsJson=" + enc("{}") + "&maxIterations=1000", alice));
             assertRedirect("alice edits her script source", postForm(base, "/admin/scripts/update-source",
                     "scriptId=alice_script&version=1&content=" + enc(SCRIPT_BODY), alice));
-            Assert.assertFalse("regular owner must not receive the arbitrary-code debugger action",
+            Assert.assertTrue("regular owner should receive the debugger action for owned source",
                     getBody(base, "/admin/scripts/alice_script?version=1", alice)
                         .contains("/admin/scripts/alice_script/debug"));
-            assertForbidden("regular owner cannot start debug from Version Source", postForm(base,
-                    "/admin/scripts/alice_script/debug",
-                    "debugVersion=1&content=" + enc(SCRIPT_BODY) + "&propsJson=" + enc("{}"), alice));
 
             // --- bob: cannot touch alice's script ---
             String bob = login(base, "bob", "bob-pw");
@@ -92,6 +91,134 @@ public class TeeBoxMultiUserUiTest {
             int anon = postForm(base, "/admin/scripts/delete/bob_script", "", null);
             Assert.assertTrue("anonymous mutating POST should redirect to login, got " + anon,
                     anon >= 300 && anon < 400);
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    public void userCanDebugOnlyOwnedScriptAndOwnUiRun() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-user-debug").toFile();
+        writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"},"
+                + "{\"username\":\"alice\",\"role\":\"user\"},"
+                + "{\"username\":\"bob\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "alice-pw");
+            String bob = login(base, "bob", "bob-pw");
+            String admin = login(base, "admin", "admin-pw");
+
+            assertRedirect("alice registers her debug source", postForm(base,
+                    "/admin/scripts/register", "scriptId=alice_debug&content="
+                    + enc(SCRIPT_BODY) + "&activate=on", alice));
+            String sourcePage = getBody(base, "/admin/scripts/alice_debug?version=1", alice);
+            Assert.assertTrue("owner sees Version Source Debug action",
+                    sourcePage.contains("formaction='/admin/scripts/alice_debug/debug'"));
+            Assert.assertFalse("another user must not see the source Debug action",
+                    getBody(base, "/admin/scripts/alice_debug?version=1", bob)
+                        .contains("formaction='/admin/scripts/alice_debug/debug'"));
+            assertForbidden("another user cannot forge source Debug POST", postForm(base,
+                    "/admin/scripts/alice_debug/debug",
+                    "debugVersion=1&content=" + enc(SCRIPT_BODY) + "&propsJson=" + enc("{}"), bob));
+
+            String runLocation = postFormLocation(base, "/admin/submit",
+                    "scriptId=alice_debug&propsJson=" + enc("{}") + "&maxIterations=1000", alice);
+            String runId = runLocation.substring(runLocation.lastIndexOf('/') + 1);
+            awaitTerminal(server, runId);
+            Assert.assertTrue("owner sees Debug Re-run on their terminal UI Run",
+                    getBody(base, "/admin/runs/" + runId, alice).contains("Debug Re-run"));
+            assertForbidden("another user cannot debug alice's Run", postForm(base,
+                    "/admin/runs/" + runId + "/debug", "", bob));
+
+            String debugLocation = postFormLocation(base, "/admin/runs/" + runId + "/debug", "", alice);
+            String debugSessionId = debugLocation.substring(debugLocation.lastIndexOf('/') + 1);
+            Assert.assertEquals("owner can enter the debug console", 200,
+                    get(base, "/admin/debug/" + debugSessionId, alice));
+            assertForbidden("another user cannot inspect alice's debug console",
+                    get(base, "/admin/debug/" + debugSessionId, bob));
+            Assert.assertTrue("owner's Debug list contains their session",
+                    getBody(base, "/admin/debug", alice).contains(debugSessionId));
+            Assert.assertFalse("another user's Debug list hides alice's session",
+                    getBody(base, "/admin/debug", bob).contains(debugSessionId));
+            Assert.assertEquals("admin retains access to every debug session", 200,
+                    get(base, "/admin/debug/" + debugSessionId, admin));
+
+            String scriptDebugLocation = postFormLocation(base,
+                    "/admin/scripts/alice_debug/debug",
+                    "debugVersion=1&content=" + enc(SCRIPT_BODY) + "&propsJson=" + enc("{}"), alice);
+            Assert.assertTrue("owner can start transient Version Source debugging",
+                    scriptDebugLocation.startsWith("/admin/debug/"));
+
+            String apiSubmit = postFormWithBody(base, "/api/client/scripts/alice_debug/runs",
+                    "{\"props\": {}}", null)[1];
+            int idStart = apiSubmit.indexOf("run-");
+            String apiRunId = apiSubmit.substring(idStart, apiSubmit.indexOf('"', idStart));
+            awaitTerminal(server, apiRunId);
+            assertForbidden("API-origin Run remains admin-only even on alice's script",
+                    postForm(base, "/admin/runs/" + apiRunId + "/debug", "", alice));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
+    public void monitorCanReadScriptsAndNormalRunsButCannotMutateOrViewDebug() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-monitor-role").toFile();
+        writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"},"
+                + "{\"username\":\"watcher\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String watcher = login(base, "watcher", "watcher-pw");
+            String admin = login(base, "admin", "admin-pw");
+            assertRedirect("watcher creates source before becoming monitor", postForm(base,
+                    "/admin/scripts/register", "scriptId=watched_script&content="
+                    + enc(SCRIPT_BODY) + "&activate=on", watcher));
+            String runLocation = postFormLocation(base, "/admin/submit",
+                    "scriptId=watched_script&propsJson=" + enc("{}") + "&maxIterations=1000", watcher);
+            String runId = runLocation.substring(runLocation.lastIndexOf('/') + 1);
+            awaitTerminal(server, runId);
+
+            assertRedirect("admin changes watcher to monitor", postForm(base,
+                    "/admin/users/role", "username=watcher&role=monitor", admin));
+            assertRedirect("role change invalidates the old session", get(base, "/admin", watcher));
+            watcher = login(base, "watcher", "watcher-pw");
+            Assert.assertNotNull(watcher);
+
+            Assert.assertEquals("monitor can list scripts", 200, get(base, "/admin/scripts", watcher));
+            String scriptPage = getBody(base, "/admin/scripts/watched_script?version=1", watcher);
+            Assert.assertTrue("monitor can read script source", scriptPage.contains("return"));
+            Assert.assertFalse("monitor has no script Debug action",
+                    scriptPage.contains("/admin/scripts/watched_script/debug"));
+            Assert.assertEquals("monitor can list normal Runs", 200, get(base, "/admin/runs", watcher));
+            Assert.assertEquals("monitor can read a normal Run", 200,
+                    get(base, "/admin/runs/" + runId, watcher));
+            Assert.assertFalse("monitor Runs page has no Debug origin control",
+                    getBody(base, "/admin/runs", watcher).contains("value='debug'"));
+
+            assertForbidden("monitor cannot edit even a formerly owned script", postForm(base,
+                    "/admin/scripts/update-source",
+                    "scriptId=watched_script&version=1&content=" + enc(SCRIPT_BODY), watcher));
+            assertForbidden("monitor cannot execute a script", postForm(base, "/admin/submit",
+                    "scriptId=watched_script&propsJson=" + enc("{}") + "&maxIterations=1000", watcher));
+            assertForbidden("monitor cannot debug a script", postForm(base,
+                    "/admin/scripts/watched_script/debug",
+                    "debugVersion=1&content=" + enc(SCRIPT_BODY) + "&propsJson=" + enc("{}"), watcher));
+            assertForbidden("monitor cannot debug a Run", postForm(base,
+                    "/admin/runs/" + runId + "/debug", "", watcher));
+
+            String debugLocation = postFormLocation(base, "/admin/runs/" + runId + "/debug", "", admin);
+            String debugSessionId = debugLocation.substring(debugLocation.lastIndexOf('/') + 1);
+            String debugRunId = server.getDebugSessionManager().find(debugSessionId).runId;
+            assertForbidden("monitor cannot open the Debug list", get(base, "/admin/debug", watcher));
+            assertForbidden("monitor cannot open a debug session",
+                    get(base, "/admin/debug/" + debugSessionId, watcher));
+            assertForbidden("monitor cannot open a debug-origin Run",
+                    get(base, "/admin/runs/" + debugRunId, watcher));
+            Assert.assertFalse("forged Debug origin filter returns no debug Runs",
+                    getBody(base, "/admin/fragments/all-runs?origin=debug", watcher)
+                        .contains(debugRunId));
         } finally {
             server.stop();
         }
@@ -399,6 +526,8 @@ public class TeeBoxMultiUserUiTest {
                     getBody(base, "/admin", admin).contains("href='/admin/users'"));
             String page = getBody(base, "/admin/users", admin);
             Assert.assertTrue("users page lists alice", page.contains("alice"));
+            Assert.assertTrue("users page offers the monitor role",
+                    page.contains("<option value='monitor'"));
 
             // --- add: new user can log in (password set on first login) ---
             assertRedirect("admin adds bob", postForm(base, "/admin/users/add",
@@ -915,6 +1044,21 @@ public class TeeBoxMultiUserUiTest {
         int code = conn.getResponseCode();
         conn.disconnect();
         return code;
+    }
+
+    private void awaitTerminal(TeeBoxServer server, String runId) throws Exception {
+        long deadline = System.currentTimeMillis() + 10000L;
+        while (System.currentTimeMillis() < deadline) {
+            RunInfo run = server.getRunManager().getRun(runId);
+            if (run != null && run.status != RunStatus.QUEUED
+                    && run.status != RunStatus.PENDING && run.status != RunStatus.RUNNING) {
+                return;
+            }
+            Thread.sleep(20L);
+        }
+        RunInfo run = server.getRunManager().getRun(runId);
+        Assert.fail("Run did not become terminal: " + runId + " status="
+                + (run != null ? run.status : null));
     }
 
     private void assertRedirect(String what, int code) {

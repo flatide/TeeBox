@@ -39,6 +39,7 @@ import javax.crypto.spec.PBEKeySpec;
  */
 public class UserStore {
     public static final String ROLE_ADMIN = "admin";
+    public static final String ROLE_MONITOR = "monitor";
     public static final String ROLE_USER = "user";
 
     private static final String PBKDF2_ALGO = "pbkdf2-sha256";
@@ -50,7 +51,7 @@ public class UserStore {
     /** A roster entry. Deserialized directly from users.json. */
     public static class User {
         public String username;
-        public String role; // "admin" or "user"
+        public String role; // "admin", "monitor", or "user"
 
         public User() {
         }
@@ -62,6 +63,10 @@ public class UserStore {
 
         public boolean isAdmin() {
             return ROLE_ADMIN.equals(role);
+        }
+
+        public boolean isMonitor() {
+            return ROLE_MONITOR.equals(role);
         }
     }
 
@@ -168,7 +173,7 @@ public class UserStore {
                 if (u == null || u.username == null || u.username.trim().length() == 0) {
                     continue;
                 }
-                out.add(new User(u.username.trim(), ROLE_ADMIN.equals(u.role) ? ROLE_ADMIN : ROLE_USER));
+                out.add(new User(u.username.trim(), normalizeRole(u.role)));
             }
             return out;
         } catch (Exception e) {
@@ -230,7 +235,7 @@ public class UserStore {
     private static final java.util.regex.Pattern USERNAME_PATTERN =
             java.util.regex.Pattern.compile("[A-Za-z0-9._-]{1,64}");
 
-    /** Add a roster entry. Fails on a duplicate or an invalid username; role normalizes to user. */
+    /** Add a roster entry. Fails on a duplicate or invalid username; unknown roles normalize to user. */
     public synchronized void addUser(String username, String role) {
         addUser(username, role, null);
     }
@@ -345,7 +350,13 @@ public class UserStore {
     }
 
     private static String normalizeRole(String role) {
-        return ROLE_ADMIN.equals(role) ? ROLE_ADMIN : ROLE_USER;
+        if (ROLE_ADMIN.equals(role)) {
+            return ROLE_ADMIN;
+        }
+        if (ROLE_MONITOR.equals(role)) {
+            return ROLE_MONITOR;
+        }
+        return ROLE_USER;
     }
 
     private static int countAdmins(List<User> users) {
