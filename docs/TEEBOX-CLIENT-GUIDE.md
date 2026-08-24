@@ -155,8 +155,9 @@ teebox.setClientApiToken("client-secret")
 
 ### 6.1 Version policy (important)
 
-- **Auto-increment when the version is omitted**: integer labels `"1"`, `"2"`, … are assigned automatically (existing maximum integer + 1). Explicit labels (including strings like `"v1"`) can also be used as-is.
+- **Auto-increment when the version is omitted**: integer version identifiers `"1"`, `"2"`, … are assigned automatically (existing maximum integer + 1). Explicit identifiers (including strings like `"v1"`) can also be used as-is.
 - **Active version concept**: when you omit the version at run time, the **"active" version is run, not the newest version**. Even after adding a new version, the existing active version keeps being served until you activate it with `activate=true` (for staging/rollback purposes).
+- **Alias is script-level metadata**: the optional human-readable `alias` is shared by all versions. Calls and runs continue to identify a script by `scriptId`.
 
 ### 6.2 Register
 
@@ -168,8 +169,9 @@ Map<String, Object> detail = teebox.registerScript("calc_sum", source, true);
 // (B) Explicit version
 teebox.registerScript("calc_sum", "v1", source, true);
 
-// (C) Specify description / labels as well
-teebox.registerScript("calc_sum", "v1", source, "Compute the sum", labels, true);
+// (C) Specify a version description and script-level alias as well
+teebox.registerScriptWithAlias(
+    "calc_sum", "v1", source, "Compute the sum", "Sum Calculator", true);
 ```
 
 ### 6.3 Add a version (= update)
@@ -217,6 +219,7 @@ Map<String, Object> oneActive = teebox.getActiveScript("calc_sum");
 ```jsonc
 {
   "scriptId": "calc_sum",
+  "alias": "Sum Calculator",  // optional script-level display name
   "activeVersion": "1",         // when the version is omitted at run time, this version runs
   "createdAt": 1781670773694,   // epoch ms (Double in Java)
   "updatedAt": 1781670773741,
@@ -227,7 +230,6 @@ Map<String, Object> oneActive = teebox.getActiveScript("calc_sum");
     {
       "version": "2",
       "description": "",
-      "labels": [],
       "sha256": "3dd7c382...",  // version content hash
       "createdAt": 1781670773729,
       "active": false
@@ -235,7 +237,6 @@ Map<String, Object> oneActive = teebox.getActiveScript("calc_sum");
     {
       "version": "1",
       "description": "Sum of two numbers",
-      "labels": [],
       "sha256": "8def0777...",
       "createdAt": 1781670773694,
       "active": true            // = activeVersion
@@ -774,11 +775,14 @@ The full list of public methods. For detailed response shapes/examples, see §4�
 | `registerScript(scriptId, content, activate)` | `Map` | Register + version auto-increment |
 | `registerScript(scriptId, content, activate, outputRules)` | `Map` | Auto-increment + output capture rules |
 | `registerScript(scriptId, version, content, activate)` | `Map` | Register with explicit version |
-| `registerScript(scriptId, version, content, description, labels, activate)` | `Map` | Specify version + description/labels |
+| `registerScriptWithAlias(scriptId, content, alias, activate)` | `Map` | Auto-increment + set the script-level alias |
+| `registerScriptWithAlias(scriptId, version, content, description, alias, activate)` | `Map` | Specify version description + script-level alias |
+| `registerScript(scriptId, version, content, description, labels, activate)` | `Map` | Deprecated compatibility overload; `labels` are ignored |
 | `addScriptVersion(scriptId, content, activate)` | `Map` | Add a version (auto-increment) |
 | `addScriptVersion(scriptId, content, activate, outputRules)` | `Map` | Auto-increment + output rules |
 | `addScriptVersion(scriptId, version, content, activate)` | `Map` | Add with explicit version |
 | `activateScriptVersion(scriptId, version)` | `Map` | Change the active version |
+| `updateScriptSettings(scriptId, maxConcurrentRuns, immediate, alias)` | `Map` | Replace execution settings and set/clear the script-level alias |
 | `listScripts()` | `List<Object>` | Full script list |
 | `listActiveScripts()` | `List<Object>` | List (each script's `versions[]` reduced to the active version only) |
 | `getScript(scriptId)` | `Map` | Script detail (versions/active/settings) |

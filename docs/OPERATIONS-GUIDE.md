@@ -382,9 +382,9 @@ script id) and race in-flight runs. To rename, duplicate instead:
 
 1. **Duplicate** — the **Duplicate Script** card at the bottom of the script detail page, or
    `POST /api/publisher/scripts/{id}/duplicate` with `{"newScriptId": "..."}`. Copies every version
-   (content + description/labels/sha256/output rules), the active-version choice, and the execution
-   settings; the copy is immediately runnable. In the admin UI the duplicating user becomes the
-   copy's owner.
+   (content + description/sha256/output rules), the script alias, the active-version choice, and
+   the execution settings; the copy is immediately runnable. In the admin UI the duplicating user
+   becomes the copy's owner.
 2. **Point callers at the new id.**
 3. **Delete the old script** once traffic has moved. Run history stays with the source — historical
    runs keep the old script id.

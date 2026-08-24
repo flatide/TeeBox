@@ -1390,7 +1390,7 @@ public class AdminPageRenderer {
 
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Registered Scripts (").append(scripts.size()).append(")</h2>");
-        if (!isReadOnly()) {
+        if (!isReadOnly() && !isMonitor()) {
             sb.append("<div class='card-actions'><button class='btn btn-sm' onclick='document.getElementById(\"register-modal\").style.display=\"flex\"'>Register Script</button></div>");
         }
         sb.append("</div>");
@@ -1398,7 +1398,7 @@ public class AdminPageRenderer {
             sb.append("<p class='empty'>No scripts registered</p>");
         } else {
             sb.append("<div class='table-wrap'><table><thead><tr>");
-            sb.append("<th>Script ID</th><th>Owner</th><th>Active Version</th><th>Versions</th><th>Created</th><th>Updated</th><th></th>");
+            sb.append("<th>Script ID</th><th>Alias</th><th>Owner</th><th>Active Version</th><th>Versions</th><th>Created</th><th>Updated</th><th></th>");
             sb.append("</tr></thead><tbody>");
             for (ScriptInfo script : scripts) {
                 sb.append("<tr>");
@@ -1409,6 +1409,8 @@ public class AdminPageRenderer {
                     sb.append(" <span class='tag' title='Instant run (immediate script — bypasses the global queue)'>instant</span>");
                 }
                 sb.append("</td>");
+                sb.append("<td>").append(script.alias != null
+                    ? escape(script.alias) : "<span class='dim'>&mdash;</span>").append("</td>");
                 sb.append("<td class='dim'>").append(ownerLabel(script.owner)).append("</td>");
                 sb.append("<td>");
                 if (script.activeVersion != null && script.activeVersion.length() > 0) {
@@ -1440,11 +1442,13 @@ public class AdminPageRenderer {
             sb.append("<div class='card-header'><h2>Deleted Scripts (").append(deletedScripts.size()).append(")</h2>");
             sb.append("<span class='dim' style='font-size:12px;'>Scheduled for permanent removal</span></div>");
             sb.append("<div class='table-wrap'><table><thead><tr>");
-            sb.append("<th>Script ID</th><th>Owner</th><th>Deleted At</th><th></th>");
+            sb.append("<th>Script ID</th><th>Alias</th><th>Owner</th><th>Deleted At</th><th></th>");
             sb.append("</tr></thead><tbody>");
             for (ScriptInfo script : deletedScripts) {
                 sb.append("<tr>");
                 sb.append("<td><span class='mono dim'>").append(escape(script.scriptId)).append("</span></td>");
+                sb.append("<td>").append(script.alias != null
+                    ? escape(script.alias) : "<span class='dim'>&mdash;</span>").append("</td>");
                 sb.append("<td class='dim'>").append(ownerLabel(script.owner)).append("</td>");
                 sb.append("<td class='dim'>").append(escape(formatTime(script.deletedAt))).append("</td>");
                 if (canModify(script)) {
@@ -1470,6 +1474,7 @@ public class AdminPageRenderer {
         // untested first version. No editor / file upload here on purpose.
         sb.append("<form method='post' action='/admin/scripts/register' class='form-grid' id='register-form'>");
         sb.append("<div class='form-row'><label>Script ID</label><input type='text' name='scriptId' placeholder='calc_sum' required autofocus/></div>");
+        sb.append("<div class='form-row'><label>Alias <span class='dim'>(optional)</span></label><input type='text' name='alias' maxlength='128' placeholder='Calculate sum'/></div>");
         sb.append("<p class='dim' style='font-size:12px;margin:-4px 0 0;'>Creates an empty script. You'll add the code and activate a version on the next page.</p>");
         sb.append("<div class='form-row-inline'><button type='submit'>Register</button></div>");
         sb.append("</form>");
@@ -1521,9 +1526,16 @@ public class AdminPageRenderer {
         sb.append("</div>");
 
         sb.append("<div class='card'>");
-        sb.append("<h2>").append(escape(scriptId)).append("</h2>");
+        sb.append("<h2>").append(escape(scriptId));
+        if (script.alias != null) {
+            sb.append(" <span class='dim'>&mdash; ").append(escape(script.alias)).append("</span>");
+        }
+        sb.append("</h2>");
         sb.append("<div class='detail-grid'>");
         sb.append("<div class='detail-item'><div class='detail-label'>Script ID</div><div class='detail-value'><code>").append(escape(scriptId)).append("</code></div></div>");
+        sb.append("<div class='detail-item'><div class='detail-label'>Alias</div><div class='detail-value'>")
+          .append(script.alias != null ? escape(script.alias) : "<span class='dim'>&mdash;</span>")
+          .append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Active Version</div><div class='detail-value'>");
         if (script.activeVersion != null && script.activeVersion.length() > 0) {
             sb.append(statusBadge(script.activeVersion));
@@ -1544,6 +1556,10 @@ public class AdminPageRenderer {
         sb.append("<div class='card'>");
         sb.append("<div class='card-header'><h2>Execution Settings</h2></div>");
         sb.append("<form method='post' action='/admin/scripts/settings/").append(urlPath(scriptId)).append("' class='form-grid'>");
+        sb.append("<div class='form-row'><label>Alias <span class='dim'>(optional)</span></label>");
+        sb.append("<input type='text' name='alias' maxlength='128' value='")
+          .append(escape(script.alias != null ? script.alias : ""))
+          .append("' placeholder='Human-readable script name'/></div>");
         sb.append("<div style='display:flex;gap:16px;align-items:end;'>");
         sb.append("<div class='form-row' style='flex:1'><label>Script Concurrency Limit</label>");
         sb.append("<input type='number' name='maxConcurrentRuns' value='").append(script.maxConcurrentRuns).append("' min='0' style='width:80px;'/>");
@@ -1561,7 +1577,7 @@ public class AdminPageRenderer {
             sb.append("<p class='empty'>No versions</p>");
         } else {
             sb.append("<div class='table-wrap'><table><thead><tr>");
-            sb.append("<th>Version</th><th>Status</th><th>Description</th><th>Labels</th><th>SHA-256</th><th>Created</th>");
+            sb.append("<th>Version</th><th>Status</th><th>Description</th><th>SHA-256</th><th>Created</th>");
             if (canModify(script)) sb.append("<th>Action</th>");
             sb.append("</tr></thead><tbody>");
             for (ScriptVersionInfo version : script.versions) {
@@ -1575,16 +1591,6 @@ public class AdminPageRenderer {
                 }
                 sb.append("</td>");
                 sb.append("<td>").append(escape(version.description)).append("</td>");
-                sb.append("<td>");
-                if (version.labels != null && !version.labels.isEmpty()) {
-                    for (int i = 0; i < version.labels.size(); i++) {
-                        if (i > 0) sb.append(" ");
-                        sb.append("<span class='tag'>").append(escape(version.labels.get(i))).append("</span>");
-                    }
-                } else {
-                    sb.append("<span class='dim'>&mdash;</span>");
-                }
-                sb.append("</td>");
                 sb.append("<td class='mono dim'>");
                 if (version.sha256 != null && version.sha256.length() > 12) {
                     sb.append(escape(version.sha256.substring(0, 12))).append("...");

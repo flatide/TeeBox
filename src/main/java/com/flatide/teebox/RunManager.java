@@ -309,7 +309,20 @@ public class RunManager {
         return scriptRegistry.registerVersion(scriptId, version, content, description, labels, activate, outputRules, owner);
     }
 
-    /** Registration variant reporting the version label actually assigned (explicit or
+    /** Register a version and optionally update the script-level alias (null keeps the current alias). */
+    public ScriptInfo registerScriptVersionWithAlias(String scriptId,
+                                            String version,
+                                            String content,
+                                            String description,
+                                            String alias,
+                                            boolean activate,
+                                            List<OutputPublishRule> outputRules,
+                                            String owner) {
+        return scriptRegistry.registerVersionDetailedWithAlias(scriptId, version, content,
+            description, alias, activate, outputRules, owner).script;
+    }
+
+    /** Registration variant reporting the version identifier actually assigned (explicit or
      *  auto-incremented) — for callers that must point at the new version afterwards. */
     public ScriptRegistry.RegisteredVersion registerScriptVersionDetailed(String scriptId,
                                             String version,
@@ -322,9 +335,25 @@ public class RunManager {
         return scriptRegistry.registerVersionDetailed(scriptId, version, content, description, labels, activate, outputRules, owner);
     }
 
+    public ScriptRegistry.RegisteredVersion registerScriptVersionDetailedWithAlias(String scriptId,
+                                            String version,
+                                            String content,
+                                            String description,
+                                            String alias,
+                                            boolean activate,
+                                            List<OutputPublishRule> outputRules,
+                                            String owner) {
+        return scriptRegistry.registerVersionDetailedWithAlias(scriptId, version, content,
+            description, alias, activate, outputRules, owner);
+    }
+
     /** Create an empty script shell (no versions, not active); code is added later. See ScriptRegistry. */
     public ScriptInfo createScript(String scriptId, String owner) {
         return scriptRegistry.createScript(scriptId, owner);
+    }
+
+    public ScriptInfo createScript(String scriptId, String owner, String alias) {
+        return scriptRegistry.createScript(scriptId, owner, alias);
     }
 
     public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content) {
@@ -343,6 +372,11 @@ public class RunManager {
 
     public ScriptInfo updateScriptSettings(String scriptId, int maxConcurrentRuns, boolean immediate) {
         return scriptRegistry.updateScriptSettings(scriptId, maxConcurrentRuns, immediate);
+    }
+
+    public ScriptInfo updateScriptSettings(String scriptId, int maxConcurrentRuns, boolean immediate,
+                                           String alias) {
+        return scriptRegistry.updateScriptSettings(scriptId, maxConcurrentRuns, immediate, alias);
     }
 
     public boolean deleteScript(String scriptId) {

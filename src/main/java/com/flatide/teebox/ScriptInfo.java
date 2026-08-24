@@ -5,6 +5,8 @@ import java.util.List;
 
 public class ScriptInfo {
     public String scriptId;
+    /** Optional human-readable script name. Script identity and execution still use scriptId. */
+    public String alias;
     public String activeVersion;
     public long createdAt;
     public long updatedAt;
@@ -17,6 +19,7 @@ public class ScriptInfo {
     public ScriptInfo copy() {
         ScriptInfo copy = new ScriptInfo();
         copy.scriptId = scriptId;
+        copy.alias = alias;
         copy.activeVersion = activeVersion;
         copy.createdAt = createdAt;
         copy.updatedAt = updatedAt;

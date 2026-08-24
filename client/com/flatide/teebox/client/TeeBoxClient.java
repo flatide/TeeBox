@@ -141,11 +141,24 @@ public class TeeBoxClient {
     /** Register a script and its first version. Returns the script detail. (POST /api/publisher/scripts) */
     public Map<String, Object> registerScript(String scriptId, String version, String content, boolean activate)
             throws IOException {
-        return registerScript(scriptId, version, content, null, null, activate);
+        return registerScriptWithAlias(scriptId, version, content, null, null, activate);
     }
 
+    /**
+     * @deprecated Version labels are no longer stored. Use {@link #registerScriptWithAlias} for the
+     *             script-level human-readable alias. This overload remains compatible and ignores
+     *             {@code labels}.
+     */
+    @Deprecated
     public Map<String, Object> registerScript(String scriptId, String version, String content,
                                               String description, List<String> labels, boolean activate)
+            throws IOException {
+        return registerScriptWithAlias(scriptId, version, content, description, null, activate);
+    }
+
+    /** Register a version and optionally set the script-level human-readable alias. */
+    public Map<String, Object> registerScriptWithAlias(String scriptId, String version, String content,
+                                                       String description, String alias, boolean activate)
             throws IOException {
         requireText("scriptId", scriptId);
         requireText("version", version);
@@ -157,8 +170,8 @@ public class TeeBoxClient {
         if (description != null) {
             body.put("description", description);
         }
-        if (labels != null) {
-            body.put("labels", labels);
+        if (alias != null) {
+            body.put("alias", alias);
         }
         body.put("activate", Boolean.valueOf(activate));
         return asMap(request("POST", "/api/publisher/scripts", body, 201));
@@ -179,8 +192,23 @@ public class TeeBoxClient {
         return asMap(request("POST", "/api/publisher/scripts", body, 201));
     }
 
+    /** Register an auto-versioned script with a script-level human-readable alias. */
+    public Map<String, Object> registerScriptWithAlias(String scriptId, String content,
+                                                       String alias, boolean activate) throws IOException {
+        requireText("scriptId", scriptId);
+        requireText("content", content);
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("scriptId", scriptId);
+        body.put("content", content);
+        if (alias != null) {
+            body.put("alias", alias);
+        }
+        body.put("activate", Boolean.valueOf(activate));
+        return asMap(request("POST", "/api/publisher/scripts", body, 201));
+    }
+
     /**
-     * Add a new version with an auto-assigned (next integer) version label — the "update" path without
+     * Add a new version with an auto-assigned (next integer) version identifier — the "update" path without
      * managing version strings yourself. Set {@code activate=true} to make it active.
      * (POST /api/publisher/scripts/{id}/versions)
      */
@@ -254,7 +282,7 @@ public class TeeBoxClient {
     }
 
     /**
-     * Add a new version to an existing script (the "update" path) with an explicit version label.
+     * Add a new version to an existing script (the "update" path) with an explicit version identifier.
      * Set {@code activate=true} to also make it the active version. Returns the script detail.
      * (POST /api/publisher/scripts/{id}/versions)
      */
@@ -277,6 +305,17 @@ public class TeeBoxClient {
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("version", version);
         return asMap(request("POST", "/api/publisher/scripts/" + enc(scriptId) + "/activate", body, 200));
+    }
+
+    /** Replace script execution settings and set the script-level alias; an empty alias clears it. */
+    public Map<String, Object> updateScriptSettings(String scriptId, int maxConcurrentRuns,
+                                                    boolean immediate, String alias) throws IOException {
+        requireText("scriptId", scriptId);
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("maxConcurrentRuns", Integer.valueOf(Math.max(0, maxConcurrentRuns)));
+        body.put("immediate", Boolean.valueOf(immediate));
+        body.put("alias", alias != null ? alias : "");
+        return asMap(request("PUT", "/api/publisher/scripts/" + enc(scriptId) + "/settings", body, 200));
     }
 
     /** List all registered scripts. (GET /api/publisher/scripts) */

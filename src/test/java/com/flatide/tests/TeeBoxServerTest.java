@@ -462,6 +462,7 @@ public class TeeBoxServerTest {
             Map<String, Object> settings = new LinkedHashMap<String, Object>();
             settings.put("maxConcurrentRuns", Double.valueOf(3));
             settings.put("immediate", Boolean.TRUE);
+            settings.put("alias", "Duplicated Script");
             assertStatus(testServer.baseUrl + "/api/publisher/scripts/dup_src/settings", "PUT", settings, null, 200);
 
             // The copy carries every version, the active-version choice, and the settings.
@@ -473,6 +474,7 @@ public class TeeBoxServerTest {
             Assert.assertEquals(2, ((List<?>) copy.get("versions")).size());
             Assert.assertEquals(3.0, ((Number) copy.get("maxConcurrentRuns")).doubleValue(), 0.0);
             Assert.assertEquals(Boolean.TRUE, copy.get("immediate"));
+            Assert.assertEquals("Duplicated Script", copy.get("alias"));
 
             // The copy is immediately runnable: the active version by default, the inactive one by pin.
             Map<String, Object> active = client.runAndWait("dup_copy", null, new LinkedHashMap<String, Object>(), 8000L);
@@ -602,6 +604,65 @@ public class TeeBoxServerTest {
                     "scriptId=desc_edit&version=v1&description=&content=" + java.net.URLEncoder.encode("return {\"n\": 1}\n", "UTF-8"), null));
             info = getJsonMap(testServer.baseUrl + "/api/publisher/scripts/desc_edit", 200);
             Assert.assertEquals("", ((Map<?, ?>) ((List<?>) info.get("versions")).get(0)).get("description"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void scriptAliasReplacesVersionLabelsAcrossApiPersistenceAndUi() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            Map<String, Object> payload = new LinkedHashMap<String, Object>();
+            payload.put("scriptId", "alias_demo");
+            payload.put("version", "v1");
+            payload.put("content", "return {\"n\": 1}\n");
+            payload.put("description", "first version");
+            payload.put("alias", "  Friendly Calculator  ");
+            // Pre-alias publishers may still send this field; it is accepted but not retained.
+            payload.put("labels", Arrays.asList("legacy", "prod"));
+            payload.put("activate", Boolean.TRUE);
+            Map<String, Object> created = postJson(
+                    testServer.baseUrl + "/api/publisher/scripts", payload, 201);
+            Assert.assertEquals("Friendly Calculator", created.get("alias"));
+            Map<?, ?> firstVersion = (Map<?, ?>) ((List<?>) created.get("versions")).get(0);
+            Assert.assertFalse("version labels must no longer be serialized",
+                    firstVersion.containsKey("labels"));
+
+            // A fresh GET reloads script.json, proving the alias is script-level persisted state.
+            Map<String, Object> loaded = getJsonMap(
+                    testServer.baseUrl + "/api/publisher/scripts/alias_demo", 200);
+            Assert.assertEquals("Friendly Calculator", loaded.get("alias"));
+            Assert.assertFalse(((Map<?, ?>) ((List<?>) loaded.get("versions")).get(0))
+                    .containsKey("labels"));
+
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            Map<String, Object> updated = client.updateScriptSettings(
+                    "alias_demo", 2, true, "Math Tool");
+            Assert.assertEquals("Math Tool", updated.get("alias"));
+            Assert.assertEquals(2.0,
+                    ((Number) updated.get("maxConcurrentRuns")).doubleValue(), 0.0);
+            Assert.assertEquals(Boolean.TRUE, updated.get("immediate"));
+
+            String detail = getHtml(testServer.baseUrl + "/admin/scripts/alias_demo", 200);
+            Assert.assertTrue("detail shows script alias", detail.contains("Math Tool"));
+            Assert.assertTrue("settings editor carries the alias",
+                    detail.contains("name='alias' maxlength='128' value='Math Tool'"));
+            Assert.assertFalse("Versions table must not retain a Labels column",
+                    detail.contains("<th>Labels</th>"));
+            Assert.assertTrue("scripts list shows alias",
+                    getHtml(testServer.baseUrl + "/admin/scripts", 200).contains("Math Tool"));
+
+            // The old client overload remains callable but its labels are a no-op.
+            Map<String, Object> second = client.registerScript("alias_demo", "v2",
+                    "return {\"n\": 2}\n", "second version", Arrays.asList("ignored"), false);
+            Assert.assertEquals("Math Tool", second.get("alias"));
+            for (Object item : (List<?>) second.get("versions")) {
+                Assert.assertFalse(((Map<?, ?>) item).containsKey("labels"));
+            }
+
+            Map<String, Object> cleared = client.updateScriptSettings("alias_demo", 2, true, "");
+            Assert.assertNull("empty alias clears it", cleared.get("alias"));
         } finally {
             testServer.close();
         }

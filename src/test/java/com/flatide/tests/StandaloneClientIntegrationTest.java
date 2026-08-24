@@ -15,6 +15,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,36 @@ import java.util.concurrent.TimeUnit;
  * {@link TeeBoxServerTest}.
  */
 public class StandaloneClientIntegrationTest {
+
+    @Test
+    public void managesScriptAliasWithoutVersionLabelsThroughDeployableClient() throws Exception {
+        TestServer server = startServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+            Map<String, Object> created = client.registerScriptWithAlias(
+                "alias_client", "v1", "return 1\n", "first version", "Friendly Name", true);
+            Assert.assertEquals("Friendly Name", created.get("alias"));
+            Assert.assertFalse(((Map<?, ?>) ((List<?>) created.get("versions")).get(0))
+                .containsKey("labels"));
+
+            Map<String, Object> updated = client.updateScriptSettings(
+                "alias_client", 3, true, "Updated Name");
+            Assert.assertEquals("Updated Name", updated.get("alias"));
+            Assert.assertEquals(3.0,
+                ((Number) updated.get("maxConcurrentRuns")).doubleValue(), 0.0);
+
+            // A pre-alias compiled caller still links to this method, but labels are discarded.
+            Map<String, Object> second = client.registerScript(
+                "alias_client", "v2", "return 2\n", "second version",
+                Arrays.asList("legacy"), false);
+            Assert.assertEquals("Updated Name", second.get("alias"));
+            for (Object item : (List<?>) second.get("versions")) {
+                Assert.assertFalse(((Map<?, ?>) item).containsKey("labels"));
+            }
+        } finally {
+            server.close();
+        }
+    }
 
     @Test
     public void registersRunsAndReadsResultThroughDeployableClient() throws Exception {

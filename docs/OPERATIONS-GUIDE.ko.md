@@ -396,7 +396,7 @@ id로 제출)이 깨지고 실행 중 run과 경합하기 때문입니다. 이�
 
 1. **복제** — 스크립트 상세 페이지 하단의 **Duplicate Script** 카드, 또는
    `POST /api/publisher/scripts/{id}/duplicate` (`{"newScriptId": "..."}`). 모든 버전
-   (내용 + 설명/라벨/sha256/output rules), active 버전 선택, 실행 설정을 복사하며,
+   (내용 + 설명/sha256/output rules), 스크립트 alias, active 버전 선택, 실행 설정을 복사하며,
    복제본은 즉시 실행 가능합니다. Admin UI에서는 복제한 사용자가 복제본의 owner가 됩니다.
 2. **호출자를 새 id로 전환.**
 3. **트래픽이 옮겨진 뒤 구 스크립트 삭제.** run 히스토리는 원본에 남습니다 — 과거 run은

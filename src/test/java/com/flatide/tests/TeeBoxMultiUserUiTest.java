@@ -412,8 +412,9 @@ public class TeeBoxMultiUserUiTest {
 
             // First registration is metadata-only: no content => an empty script shell (no version).
             assertRedirect("register empty shell", postForm(base, "/admin/scripts/register",
-                    "scriptId=shell_script", alice));
+                    "scriptId=shell_script&alias=" + enc("Shell Display Name"), alice));
             String shell = getBody(base, "/admin/scripts/shell_script", alice);
+            Assert.assertTrue("shell keeps its script-level alias", shell.contains("Shell Display Name"));
             Assert.assertTrue("shell has no versions", shell.contains("Versions (0)"));
             Assert.assertTrue("shell shows the empty-source editor", shell.contains("New Version Source"));
             Assert.assertTrue("shell prompts to add code", shell.contains("no versions yet"));
@@ -433,6 +434,8 @@ public class TeeBoxMultiUserUiTest {
             assertRedirect("add first version", postForm(base, "/admin/scripts/register",
                     "scriptId=shell_script&content=" + enc("PRINT(\"hi\")\n"), alice));
             String withV1 = getBody(base, "/admin/scripts/shell_script?version=1", alice);
+            Assert.assertTrue("adding a version does not clear the alias",
+                    withV1.contains("Shell Display Name"));
             Assert.assertTrue("now has one version", withV1.contains("Versions (1)"));
             Assert.assertTrue("editing version 1", withV1.contains("Version Source (1)"));
             Assert.assertTrue("version 1 is inactive", withV1.contains("inactive"));

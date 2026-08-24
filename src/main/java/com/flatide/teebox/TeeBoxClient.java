@@ -61,18 +61,36 @@ public class TeeBoxClient {
         return getJsonMap(path, 200);
     }
 
+    /**
+     * @deprecated Version labels are no longer stored. Use the alias overload that accepts a
+     *             script-level {@code String alias}; this overload remains binary/source compatible
+     *             and ignores {@code labels}.
+     */
+    @Deprecated
     public Map<String, Object> registerScript(String scriptId,
                                               String version,
                                               String content,
                                               String description,
                                               List<String> labels,
                                               boolean activate) throws IOException {
+        return registerScriptWithAlias(scriptId, version, content, description, null, activate);
+    }
+
+    /** Register a version and optionally set the script-level human-readable alias. */
+    public Map<String, Object> registerScriptWithAlias(String scriptId,
+                                                       String version,
+                                                       String content,
+                                                       String description,
+                                                       String alias,
+                                                       boolean activate) throws IOException {
         Map<String, Object> payload = new LinkedHashMap<String, Object>();
         payload.put("scriptId", scriptId);
         payload.put("version", version);
         payload.put("content", content);
         payload.put("description", description);
-        payload.put("labels", labels);
+        if (alias != null) {
+            payload.put("alias", alias);
+        }
         payload.put("activate", Boolean.valueOf(activate));
         return postJson("/api/publisher/scripts", payload, 201);
     }
@@ -95,7 +113,18 @@ public class TeeBoxClient {
         return postJson("/api/publisher/scripts", payload, 201);
     }
 
-    /** Add a new version with an auto-assigned (next integer) version label. */
+    /** Register an auto-versioned script with a script-level human-readable alias. */
+    public Map<String, Object> registerScriptWithAlias(String scriptId, String content,
+                                                       String alias, boolean activate) throws IOException {
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("scriptId", scriptId);
+        payload.put("content", content);
+        payload.put("alias", alias);
+        payload.put("activate", Boolean.valueOf(activate));
+        return postJson("/api/publisher/scripts", payload, 201);
+    }
+
+    /** Add a new version with an auto-assigned (next integer) version identifier. */
     public Map<String, Object> addScriptVersion(String scriptId, String content, boolean activate) throws IOException {
         Map<String, Object> payload = new LinkedHashMap<String, Object>();
         payload.put("content", content);
@@ -107,6 +136,16 @@ public class TeeBoxClient {
         Map<String, Object> payload = new LinkedHashMap<String, Object>();
         payload.put("version", version);
         return postJson("/api/publisher/scripts/" + urlPath(scriptId) + "/activate", payload, 200);
+    }
+
+    /** Replace script-level settings; an empty alias clears it. */
+    public Map<String, Object> updateScriptSettings(String scriptId, int maxConcurrentRuns,
+                                                    boolean immediate, String alias) throws IOException {
+        Map<String, Object> payload = new LinkedHashMap<String, Object>();
+        payload.put("maxConcurrentRuns", Integer.valueOf(Math.max(0, maxConcurrentRuns)));
+        payload.put("immediate", Boolean.valueOf(immediate));
+        payload.put("alias", alias != null ? alias : "");
+        return putJson("/api/publisher/scripts/" + urlPath(scriptId) + "/settings", payload, 200);
     }
 
     public Map<String, Object> submitRun(String scriptId, String version, Map<String, Object> props) throws IOException {
@@ -247,6 +286,20 @@ public class TeeBoxClient {
 
     private Map<String, Object> postJson(String path, Object payload, int expectedStatus) throws IOException {
         HttpURLConnection conn = open("POST", path);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+        byte[] body = gson.toJson(payload).getBytes("UTF-8");
+        OutputStream out = conn.getOutputStream();
+        try {
+            out.write(body);
+        } finally {
+            out.close();
+        }
+        return readJsonMap(conn, expectedStatus);
+    }
+
+    private Map<String, Object> putJson(String path, Object payload, int expectedStatus) throws IOException {
+        HttpURLConnection conn = open("PUT", path);
         conn.setDoOutput(true);
         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
         byte[] body = gson.toJson(payload).getBytes("UTF-8");

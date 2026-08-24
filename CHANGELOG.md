@@ -4,6 +4,9 @@ All notable changes to TeeBox are documented here.
 
 ## Unreleased
 
+- Replaced per-version labels with an optional script-level `alias`. Publisher/admin registration,
+  settings, duplication, persistence, API responses, the standalone client, and Scripts UI now
+  share the alias; legacy `labels` input remains accepted as an ignored compatibility field.
 - Added the read-only `monitor` admin-UI role: monitors can inspect ordinary scripts and Runs/Tasks
   across owners, but cannot mutate/execute resources or view Debug UI, sessions, or debug-origin
   Runs/Tasks. Regular `user` accounts can now debug their owned Version Source and their own

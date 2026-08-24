@@ -120,7 +120,7 @@ public class ScriptRegistry {
         return registerVersionDetailed(scriptId, version, content, description, labels, activate, outputRules, owner).script;
     }
 
-    /** A registered version: the updated script plus the version label that was assigned. */
+    /** A registered version: the updated script plus the version identifier that was assigned. */
     public static class RegisteredVersion {
         public final ScriptInfo script;
         public final String version;
@@ -133,9 +133,9 @@ public class ScriptRegistry {
 
     /**
      * Like {@link #registerVersion(String, String, String, String, List, boolean, List, String)},
-     * additionally reporting the version label actually assigned (explicit or auto-incremented).
+     * additionally reporting the version identifier actually assigned (explicit or auto-incremented).
      * A caller that must point at the new version afterwards (e.g. the admin UI's post-save
-     * redirect) needs the label from here — inferring "newest" from the sorted versions list is
+     * redirect) needs the identifier from here — inferring "newest" from the sorted versions list is
      * ambiguous when createdAt ties.
      */
     public synchronized RegisteredVersion registerVersionDetailed(String scriptId,
@@ -143,6 +143,20 @@ public class ScriptRegistry {
                                                    String content,
                                                    String description,
                                                    List<String> labels,
+                                                   boolean activate,
+                                                   List<OutputPublishRule> outputRules,
+                                                   String owner) {
+        // Compatibility overload for pre-alias callers. Version labels are intentionally ignored.
+        return registerVersionDetailedWithAlias(scriptId, version, content, description, null,
+            activate, outputRules, owner);
+    }
+
+    /** Register a version while optionally setting/clearing the script-level display alias. */
+    public synchronized RegisteredVersion registerVersionDetailedWithAlias(String scriptId,
+                                                   String version,
+                                                   String content,
+                                                   String description,
+                                                   String alias,
                                                    boolean activate,
                                                    List<OutputPublishRule> outputRules,
                                                    String owner) {
@@ -164,6 +178,9 @@ public class ScriptRegistry {
             info.scriptId = scriptId;
             info.createdAt = now;
             info.owner = (owner != null && owner.trim().length() > 0) ? owner.trim() : null;
+        }
+        if (alias != null) {
+            info.alias = sanitizeAlias(alias);
         }
 
         // Version is optional: blank/null => auto-assign the next sequential integer ("1","2",...).
@@ -191,7 +208,6 @@ public class ScriptRegistry {
         ScriptVersionInfo versionInfo = new ScriptVersionInfo();
         versionInfo.version = resolvedVersion;
         versionInfo.description = description != null ? description : "";
-        versionInfo.labels = sanitizeLabels(labels);
         versionInfo.sha256 = sha256(content);
         versionInfo.createdAt = now;
         versionInfo.active = false;
@@ -219,6 +235,10 @@ public class ScriptRegistry {
      * @throws IllegalArgumentException if the scriptId is invalid or a script with that id already exists.
      */
     public synchronized ScriptInfo createScript(String scriptId, String owner) {
+        return createScript(scriptId, owner, null);
+    }
+
+    public synchronized ScriptInfo createScript(String scriptId, String owner, String alias) {
         validateName("scriptId", scriptId);
         if (loadScript(scriptId) != null) {
             throw new IllegalArgumentException("Script already exists: " + scriptId);
@@ -229,6 +249,7 @@ public class ScriptRegistry {
         info.createdAt = now;
         info.updatedAt = now;
         info.owner = (owner != null && owner.trim().length() > 0) ? owner.trim() : null;
+        info.alias = alias != null ? sanitizeAlias(alias) : null;
         saveScript(info);
         return info.copy();
     }
@@ -404,9 +425,18 @@ public class ScriptRegistry {
     }
 
     public synchronized ScriptInfo updateScriptSettings(String scriptId, int maxConcurrentRuns, boolean immediate) {
+        return updateScriptSettings(scriptId, maxConcurrentRuns, immediate, null);
+    }
+
+    /** {@code alias}: null = keep, empty = clear, non-empty = replace. */
+    public synchronized ScriptInfo updateScriptSettings(String scriptId, int maxConcurrentRuns,
+                                                        boolean immediate, String alias) {
         ScriptInfo info = requireScript(scriptId);
         info.maxConcurrentRuns = maxConcurrentRuns;
         info.immediate = immediate;
+        if (alias != null) {
+            info.alias = sanitizeAlias(alias);
+        }
         info.updatedAt = System.currentTimeMillis();
         saveScript(info);
         return info.copy();
@@ -535,22 +565,17 @@ public class ScriptRegistry {
         }
     }
 
-    private List<String> sanitizeLabels(List<String> labels) {
-        if (labels == null) {
-            return new ArrayList<String>();
+    private String sanitizeAlias(String alias) {
+        String trimmed = alias != null ? alias.trim() : "";
+        if (trimmed.length() > 128) {
+            throw new IllegalArgumentException("alias must be at most 128 characters");
         }
-        List<String> cleaned = new ArrayList<String>();
-        for (String label : labels) {
-            if (label == null) {
-                continue;
+        for (int i = 0; i < trimmed.length(); i++) {
+            if (Character.isISOControl(trimmed.charAt(i))) {
+                throw new IllegalArgumentException("alias contains control characters");
             }
-            String trimmed = label.trim();
-            if (trimmed.length() == 0) {
-                continue;
-            }
-            cleaned.add(trimmed);
         }
-        return cleaned;
+        return trimmed.length() > 0 ? trimmed : null;
     }
 
     private void markActiveVersion(ScriptInfo info) {
@@ -585,7 +610,7 @@ public class ScriptRegistry {
     }
 
     /**
-     * Next sequential integer version label ("1", "2", ...). Computed as (highest purely-numeric
+     * Next sequential integer version identifier ("1", "2", ...). Computed as (highest purely-numeric
      * existing version) + 1, then bumped past any already-taken label. Non-numeric legacy versions
      * (e.g. "v1") are ignored for the max but still reserve their label, so numbering never collides.
      */

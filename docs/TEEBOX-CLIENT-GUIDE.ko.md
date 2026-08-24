@@ -155,8 +155,9 @@ teebox.setClientApiToken("client-secret")
 
 ### 6.1 버전 정책 (중요)
 
-- **버전 생략 시 자동 증가**: 정수 라벨 `"1"`, `"2"`, … 가 자동 부여됩니다(기존 최대 정수 + 1). 명시적 라벨(`"v1"` 같은 문자열 포함)도 그대로 사용 가능합니다.
+- **버전 생략 시 자동 증가**: 정수 버전 식별자 `"1"`, `"2"`, … 가 자동 부여됩니다(기존 최대 정수 + 1). 명시적 식별자(`"v1"` 같은 문자열 포함)도 그대로 사용 가능합니다.
 - **활성(active) 버전 개념**: 실행 시 버전을 생략하면 **가장 최신 버전이 아니라 "활성" 버전**이 실행됩니다. 새 버전을 추가해도 `activate=true` 로 활성화하기 전까지는 기존 활성 버전이 계속 서비스됩니다(스테이징/롤백 용도).
+- **alias는 스크립트 단위 메타데이터**: 선택적인 표시명 `alias`는 모든 버전이 공유합니다. 호출과 run에서는 계속 `scriptId`로 스크립트를 식별합니다.
 
 ### 6.2 등록 (register)
 
@@ -168,8 +169,9 @@ Map<String, Object> detail = teebox.registerScript("calc_sum", source, true);
 // (B) 버전 명시
 teebox.registerScript("calc_sum", "v1", source, true);
 
-// (C) description / labels 까지 지정
-teebox.registerScript("calc_sum", "v1", source, "합계 계산", labels, true);
+// (C) 버전 description과 스크립트 단위 alias까지 지정
+teebox.registerScriptWithAlias(
+    "calc_sum", "v1", source, "합계 계산", "합계 계산기", true);
 ```
 
 ### 6.3 버전 추가 (= 업데이트)
@@ -217,6 +219,7 @@ Map<String, Object> oneActive = teebox.getActiveScript("calc_sum");
 ```jsonc
 {
   "scriptId": "calc_sum",
+  "alias": "합계 계산기",       // 선택적인 스크립트 단위 표시명
   "activeVersion": "1",         // 실행 시 버전 생략하면 이 버전이 돌아감
   "createdAt": 1781670773694,   // epoch ms (Java 에선 Double)
   "updatedAt": 1781670773741,
@@ -227,7 +230,6 @@ Map<String, Object> oneActive = teebox.getActiveScript("calc_sum");
     {
       "version": "2",
       "description": "",
-      "labels": [],
       "sha256": "3dd7c382...",  // 버전 콘텐츠 해시
       "createdAt": 1781670773729,
       "active": false
@@ -235,7 +237,6 @@ Map<String, Object> oneActive = teebox.getActiveScript("calc_sum");
     {
       "version": "1",
       "description": "두 수의 합",
-      "labels": [],
       "sha256": "8def0777...",
       "createdAt": 1781670773694,
       "active": true            // = activeVersion
@@ -774,11 +775,14 @@ try {
 | `registerScript(scriptId, content, activate)` | `Map` | 등록 + 버전 자동 증가 |
 | `registerScript(scriptId, content, activate, outputRules)` | `Map` | 자동 증가 + 출력 캡처 규칙 |
 | `registerScript(scriptId, version, content, activate)` | `Map` | 버전 명시 등록 |
-| `registerScript(scriptId, version, content, description, labels, activate)` | `Map` | 버전 + description/labels 지정 |
+| `registerScriptWithAlias(scriptId, content, alias, activate)` | `Map` | 자동 증가 + 스크립트 단위 alias 설정 |
+| `registerScriptWithAlias(scriptId, version, content, description, alias, activate)` | `Map` | 버전 description + 스크립트 단위 alias 지정 |
+| `registerScript(scriptId, version, content, description, labels, activate)` | `Map` | Deprecated 호환 오버로드; `labels`는 무시됨 |
 | `addScriptVersion(scriptId, content, activate)` | `Map` | 버전 추가(자동 증가) |
 | `addScriptVersion(scriptId, content, activate, outputRules)` | `Map` | 자동 증가 + 출력 규칙 |
 | `addScriptVersion(scriptId, version, content, activate)` | `Map` | 버전 명시 추가 |
 | `activateScriptVersion(scriptId, version)` | `Map` | 활성 버전 변경 |
+| `updateScriptSettings(scriptId, maxConcurrentRuns, immediate, alias)` | `Map` | 실행 설정을 교체하고 스크립트 단위 alias 설정/삭제 |
 | `listScripts()` | `List<Object>` | 전체 스크립트 목록 |
 | `listActiveScripts()` | `List<Object>` | 목록(각 스크립트 `versions[]`를 활성 버전만으로 축소) |
 | `getScript(scriptId)` | `Map` | 스크립트 상세(versions/active/settings) |

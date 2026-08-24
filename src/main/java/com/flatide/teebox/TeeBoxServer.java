@@ -299,6 +299,7 @@ public class TeeBoxServer {
                     String version = form.get("version");
                     String content = form.get("content");
                     String description = form.get("description");
+                    String alias = form.get("alias");
                     boolean activate = "on".equals(form.get("activate")) || "true".equals(form.get("activate"));
                     if (scriptId == null || scriptId.trim().length() == 0) {
                         throw new IllegalArgumentException("Script ID is required");
@@ -319,7 +320,7 @@ public class TeeBoxServer {
                             throw new IllegalArgumentException("Script already exists: " + scriptId.trim());
                         }
                         String shellOwner = session != null ? session.username : null;
-                        runManager.createScript(scriptId.trim(), shellOwner);
+                        runManager.createScript(scriptId.trim(), shellOwner, alias);
                         redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()));
                         return;
                     }
@@ -327,8 +328,8 @@ public class TeeBoxServer {
                     String trimmedVersion = (version != null && version.trim().length() > 0) ? version.trim() : null;
                     List<OutputPublishRule> outputRules = parseOutputRuleFromForm(form);
                     String owner = session != null ? session.username : null;
-                    ScriptRegistry.RegisteredVersion registered = runManager.registerScriptVersionDetailed(
-                            scriptId.trim(), trimmedVersion, content, description, new ArrayList<String>(), activate, outputRules, owner);
+                    ScriptRegistry.RegisteredVersion registered = runManager.registerScriptVersionDetailedWithAlias(
+                            scriptId.trim(), trimmedVersion, content, description, alias, activate, outputRules, owner);
                     // Land on the version just saved. The page's no-?version= fallback is the ACTIVE
                     // version, and a new version doesn't auto-activate — so "Save as new version" used
                     // to bounce back to the OLD content in the editor, and the next in-place Save
@@ -350,7 +351,8 @@ public class TeeBoxServer {
                         try { maxConcurrent = Integer.parseInt(maxStr.trim()); } catch (NumberFormatException ignore) {}
                     }
                     boolean immediate = "on".equals(form.get("immediate")) || "true".equals(form.get("immediate"));
-                    runManager.updateScriptSettings(scriptId, Math.max(0, maxConcurrent), immediate);
+                    runManager.updateScriptSettings(scriptId, Math.max(0, maxConcurrent), immediate,
+                        form.get("alias"));
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
                     return;
                 }
@@ -1492,7 +1494,9 @@ public class TeeBoxServer {
         }
         if ("POST".equals(method) && "/api/publisher/scripts".equals(path)) {
             ScriptPublishRequest request = parseScriptPublishRequest(exchange);
-            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate, request.outputRules);
+            ScriptInfo info = runManager.registerScriptVersionWithAlias(request.scriptId,
+                request.version, request.content, request.description, request.alias,
+                request.activate, request.outputRules, null);
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
@@ -1546,7 +1550,9 @@ public class TeeBoxServer {
             if (!scriptId.equals(request.scriptId)) {
                 throw new IllegalArgumentException("scriptId in path and body must match");
             }
-            ScriptInfo info = runManager.registerScriptVersion(request.scriptId, request.version, request.content, request.description, request.labels, request.activate, request.outputRules);
+            ScriptInfo info = runManager.registerScriptVersionWithAlias(request.scriptId,
+                request.version, request.content, request.description, request.alias,
+                request.activate, request.outputRules, null);
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
@@ -1583,7 +1589,13 @@ public class TeeBoxServer {
             Object maxObj = raw.get("maxConcurrentRuns");
             if (maxObj instanceof Number) maxConcurrent = ((Number) maxObj).intValue();
             boolean immediate = Boolean.TRUE.equals(raw.get("immediate"));
-            ScriptInfo info = runManager.updateScriptSettings(scriptId, Math.max(0, maxConcurrent), immediate);
+            Object aliasObj = raw.get("alias");
+            if (aliasObj != null && !(aliasObj instanceof String)) {
+                throw new IllegalArgumentException("alias must be a string");
+            }
+            String alias = aliasObj instanceof String ? (String) aliasObj : null;
+            ScriptInfo info = runManager.updateScriptSettings(scriptId, Math.max(0, maxConcurrent),
+                immediate, alias);
             writeJson(exchange, HttpURLConnection.HTTP_OK, info);
             return;
         }
@@ -1733,18 +1745,15 @@ public class TeeBoxServer {
         request.content = content instanceof String ? (String) content : null;
         Object description = raw.get("description");
         request.description = description instanceof String ? (String) description : null;
+        Object alias = raw.get("alias");
+        if (alias != null && !(alias instanceof String)) {
+            throw new IllegalArgumentException("alias must be a string");
+        }
+        request.alias = alias instanceof String ? (String) alias : null;
         Object activate = raw.get("activate");
         request.activate = activate instanceof Boolean && ((Boolean) activate).booleanValue();
-        Object labels = raw.get("labels");
-        if (labels instanceof List) {
-            @SuppressWarnings("unchecked")
-            List<Object> rawLabels = (List<Object>) labels;
-            for (Object value : rawLabels) {
-                if (value instanceof String) {
-                    request.labels.add(((String) value).trim());
-                }
-            }
-        }
+        // Legacy "labels" input is accepted and ignored. Labels used to belong to individual
+        // versions; script-level alias replaces them and old publishers must keep working.
         Object outputRules = raw.get("outputRules");
         if (outputRules instanceof List) {
             request.outputRules = new ArrayList<OutputPublishRule>();
@@ -2538,7 +2547,7 @@ public class TeeBoxServer {
         String version;
         String content;
         String description;
-        List<String> labels = new ArrayList<String>();
+        String alias;
         boolean activate;
         List<OutputPublishRule> outputRules;
     }

@@ -37,8 +37,8 @@ curl -X POST $HOST/api/publisher/scripts \
     "scriptId": "hello",
     "version": "v1",
     "content": "PRINT(\"Hello, World!\")\n",
+    "alias": "Hello example",
     "description": "first script",
-    "labels": ["demo"],
     "activate": true
   }'
 ```
