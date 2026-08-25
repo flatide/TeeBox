@@ -107,7 +107,8 @@ public class RunManager {
         this.managedTaskEngine.archiveExpiredTasks();
         String streamRootsSetting = teeBoxConfig != null ? teeBoxConfig.streamRoots : null;
         this.streamSupport = new StreamResultSupport(resolveStreamRoots(this.dataDir, streamRootsSetting));
-        this.scriptExecutor = new ScriptExecutor(new TeeBoxPlatformProvider(this.dataDir), this.streamSupport);
+        this.scriptExecutor = new ScriptExecutor(new TeeBoxPlatformProvider(this.dataDir),
+            this.streamSupport, this.scriptRegistry);
         this.systemInfoCollector = teeBoxConfig != null ? new SystemInfoCollector(teeBoxConfig) : null;
         this.maintenanceIntervalMs = parseDurationProperty("maintenanceIntervalMs", DEFAULT_MAINTENANCE_INTERVAL_MS);
         this.runExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(Math.max(1, maxConcurrentRuns));
@@ -1144,6 +1145,17 @@ public class RunManager {
                     @Override
                     public void onThreadError(ThreadContext thread) {
                         runRegistry.upsertThread(run, createThreadSnapshot(thread));
+                    }
+
+                    @Override
+                    public void onModuleResolved(ResolvedModuleInfo module) {
+                        synchronized (run) {
+                            if (run.imports == null) {
+                                run.imports = new ArrayList<ResolvedModuleInfo>();
+                            }
+                            run.imports.add(module.copy());
+                        }
+                        runRegistry.markDirty(run);
                     }
 
                     @Override

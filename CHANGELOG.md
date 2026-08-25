@@ -2,6 +2,24 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.29.0
+
+ProperTee imports and canonical numeric script versions, on propertee2 0.30.0:
+
+- Module ids map directly to TeeBox `scriptId`s. An unversioned import pins the active version;
+  a final numeric segment pins that exact version. Imported source is resolved as one immutable
+  snapshot before entry execution.
+- Run status, summary, and result JSON now include `imports[]` with the exact `scriptId`, numeric
+  `version`, and SHA-256 used by the run. Debug snapshots carry imported frame/call-site source ids.
+- Script versions are canonical positive integers only. Blank versions are auto-numbered with a
+  persistent high-water mark, so deleting a version never reuses its number. Legacy labels such as
+  `v1` require manual migration and cannot be registered or executed.
+- Imported scripts expose root functions only, keep private globals, cannot recursively import,
+  and follow the engine's worker snapshot/purity and monitor-debug exclusion contracts.
+
+**273 TeeBox tests green, including registry resolution, version allocation, import execution, and
+run dependency metadata.**
+
 ## 1.28.0
 
 Debugger access control by role/ownership, plus script-level display aliases:

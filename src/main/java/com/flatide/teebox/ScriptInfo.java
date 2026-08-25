@@ -8,6 +8,8 @@ public class ScriptInfo {
     /** Optional human-readable script name. Script identity and execution still use scriptId. */
     public String alias;
     public String activeVersion;
+    /** Highest numeric version ever allocated; deleted numbers are never reused. */
+    public int lastAllocatedVersion;
     public long createdAt;
     public long updatedAt;
     public int maxConcurrentRuns;   // 0 = unlimited (use global limit)
@@ -21,6 +23,7 @@ public class ScriptInfo {
         copy.scriptId = scriptId;
         copy.alias = alias;
         copy.activeVersion = activeVersion;
+        copy.lastAllocatedVersion = lastAllocatedVersion;
         copy.createdAt = createdAt;
         copy.updatedAt = updatedAt;
         copy.maxConcurrentRuns = maxConcurrentRuns;

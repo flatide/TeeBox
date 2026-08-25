@@ -183,14 +183,14 @@ public class ScriptRegistry {
             info.alias = sanitizeAlias(alias);
         }
 
-        // Version is optional: blank/null => auto-assign the next sequential integer ("1","2",...).
-        // An explicit version (any [A-Za-z0-9._-] label, e.g. legacy "v1") is still honored.
+        // Version is optional: blank/null => auto-assign the next never-used sequential integer.
+        // Explicit labels are numeric-only too; v1/latest-style labels are no longer accepted.
         String resolvedVersion;
         if (version == null || version.trim().length() == 0) {
             resolvedVersion = nextAutoVersion(info);
         } else {
             resolvedVersion = version.trim();
-            validateName("version", resolvedVersion);
+            validateVersion(resolvedVersion);
         }
         if (findVersion(info, resolvedVersion) != null) {
             throw new IllegalArgumentException("Script version already exists: " + scriptId + "@" + resolvedVersion);
@@ -218,6 +218,7 @@ public class ScriptRegistry {
             }
         }
         info.versions.add(versionInfo);
+        info.lastAllocatedVersion = Math.max(info.lastAllocatedVersion, Integer.parseInt(resolvedVersion));
         if (activate || (scriptCreatedNow && (info.activeVersion == null || info.activeVersion.length() == 0))) {
             info.activeVersion = resolvedVersion;
         }
@@ -265,6 +266,7 @@ public class ScriptRegistry {
             throw new IllegalArgumentException("content is required");
         }
         validateScript(content);
+        validateVersion(version);
         ScriptInfo info = requireScript(scriptId);
         ScriptVersionInfo vi = findVersion(info, version);
         if (vi == null) {
@@ -293,6 +295,7 @@ public class ScriptRegistry {
     }
 
     public synchronized ScriptInfo activateVersion(String scriptId, String version) {
+        validateVersion(version);
         ScriptInfo info = requireScript(scriptId);
         if (findVersion(info, version) == null) {
             throw new IllegalArgumentException("Unknown script version: " + scriptId + "@" + version);
@@ -314,7 +317,7 @@ public class ScriptRegistry {
      */
     public synchronized ScriptInfo deleteVersion(String scriptId, String version) {
         ScriptInfo info = requireScript(scriptId);
-        validateName("version", version);
+        validateVersion(version);
         ScriptVersionInfo versionInfo = findVersion(info, version);
         if (versionInfo == null) {
             throw new IllegalArgumentException("Unknown script version: " + scriptId + "@" + version);
@@ -385,6 +388,7 @@ public class ScriptRegistry {
         if (resolvedVersion == null || resolvedVersion.length() == 0) {
             throw new IllegalArgumentException("No active version for script: " + scriptId);
         }
+        validateVersion(resolvedVersion);
         ScriptVersionInfo versionInfo = findVersion(info, resolvedVersion);
         if (versionInfo == null) {
             throw new IllegalArgumentException("Unknown script version: " + scriptId + "@" + resolvedVersion);
@@ -398,6 +402,13 @@ public class ScriptRegistry {
         resolved.version = resolvedVersion;
         resolved.file = scriptFile;
         resolved.displayPath = scriptId + "@" + resolvedVersion;
+        resolved.source = readVersionContent(scriptId, resolvedVersion);
+        if (resolved.source == null) {
+            throw new IllegalArgumentException("Script content missing for " + resolved.displayPath);
+        }
+        // Hash the exact source snapshot returned by this synchronized resolution, so the pinned
+        // run metadata cannot race a concurrent Save-in-place between resolve and read.
+        resolved.sha256 = sha256(resolved.source);
         return resolved;
     }
 
@@ -610,27 +621,44 @@ public class ScriptRegistry {
     }
 
     /**
-     * Next sequential integer version identifier ("1", "2", ...). Computed as (highest purely-numeric
-     * existing version) + 1, then bumped past any already-taken label. Non-numeric legacy versions
-     * (e.g. "v1") are ignored for the max but still reserve their label, so numbering never collides.
+     * Next sequential integer version identifier ("1", "2", ...). The persisted high-water mark
+     * prevents a hard-deleted number from being reused. Existing numeric metadata is folded in on
+     * read/upgrade so the first post-upgrade allocation continues safely.
      */
     private String nextAutoVersion(ScriptInfo info) {
-        int max = 0;
+        int max = info != null ? info.lastAllocatedVersion : 0;
         if (info != null) {
             for (ScriptVersionInfo v : info.versions) {
-                if (v.version != null && v.version.length() <= 9 && v.version.matches("\\d+")) {
-                    int n = Integer.parseInt(v.version);
-                    if (n > max) {
-                        max = n;
+                if (v.version != null && v.version.matches("[1-9][0-9]*")) {
+                    try {
+                        int n = Integer.parseInt(v.version);
+                        if (n > max) max = n;
+                    } catch (NumberFormatException ignored) {
+                        // A manually migrated value outside the language's integer range cannot
+                        // participate in automatic allocation.
                     }
                 }
             }
+        }
+        if (max == Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("No numeric script versions remain available");
         }
         int candidate = max + 1;
         while (findVersion(info, String.valueOf(candidate)) != null) {
             candidate++;
         }
         return String.valueOf(candidate);
+    }
+
+    private void validateVersion(String version) {
+        if (version == null || !version.matches("[1-9][0-9]*")) {
+            throw new IllegalArgumentException("version must be a canonical positive integer");
+        }
+        try {
+            Integer.parseInt(version);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("version is out of range: " + version);
+        }
     }
 
     private ScriptVersionInfo findVersion(ScriptInfo info, String version) {
@@ -731,6 +759,8 @@ public class ScriptRegistry {
         public String scriptId;
         public String version;
         public String displayPath;
+        public String sha256;
+        public String source;
         public File file;
     }
 }

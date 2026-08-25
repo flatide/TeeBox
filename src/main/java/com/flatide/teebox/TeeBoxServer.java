@@ -2021,6 +2021,7 @@ public class TeeBoxServer {
         status.put("runId", run.runId);
         status.put("scriptId", run.scriptId);
         status.put("version", run.version);
+        status.put("imports", run.imports != null ? run.imports : java.util.Collections.emptyList());
         status.put("status", run.status != null ? run.status.name() : null);
         status.put("submittedBy", run.submittedBy);
         status.put("origin", run.effectiveOrigin());
@@ -2041,6 +2042,7 @@ public class TeeBoxServer {
         result.put("runId", run.runId);
         result.put("scriptId", run.scriptId);
         result.put("version", run.version);
+        result.put("imports", run.imports != null ? run.imports : java.util.Collections.emptyList());
         result.put("status", run.status != null ? run.status.name() : null);
         result.put("submittedBy", run.submittedBy);
         result.put("origin", run.effectiveOrigin());
@@ -2259,6 +2261,7 @@ public class TeeBoxServer {
         summary.put("runId", run.runId);
         summary.put("scriptId", run.scriptId);
         summary.put("version", run.version);
+        summary.put("imports", run.imports != null ? run.imports : java.util.Collections.emptyList());
         summary.put("status", run.status != null ? run.status.name() : null);
         summary.put("submittedBy", run.submittedBy);
         summary.put("origin", run.effectiveOrigin());

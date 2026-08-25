@@ -38,7 +38,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("multi_tasks", "v1",
+            client.registerScript("multi_tasks", "1",
                 "function worker(name) do\n" +
                 "    return SHELL(\"" + testServer.script("sleep_echo") + " \" + name)\n" +
                 "end\n\n" +
@@ -78,7 +78,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("kill_task", "v1",
+            client.registerScript("kill_task", "1",
                 "result = SHELL(\"" + testServer.script("sleep30") + "\")\n" +
                 "PRINT(result.ok)\n",
                 "kill task test", Arrays.asList("test"), true);
@@ -108,7 +108,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("kill_task_repeat", "v1",
+            client.registerScript("kill_task_repeat", "1",
                 "result = SHELL(\"" + testServer.script("sleep30") + "\")\n" +
                 "PRINT(result.ok)\n",
                 "repeat kill task test", Arrays.asList("test"), true);
@@ -141,7 +141,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("kill_task_ui", "v1",
+            client.registerScript("kill_task_ui", "1",
                 "result = SHELL(\"" + testServer.script("sleep30") + "\")\n" +
                 "PRINT(result.ok)\n",
                 "ui kill test", Arrays.asList("test"), true);
@@ -181,16 +181,16 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("return_result", "v1",
+            client.registerScript("return_result", "1",
                 "return {\"ok\": true, \"value\": 42}\n",
                 "return result test", Arrays.asList("test"), true);
-            client.registerScript("variable_result", "v1",
+            client.registerScript("variable_result", "1",
                 "value = 41\n" +
                 "result = {\"ok\": true, \"value\": value + 1}\n",
                 "variable result test", Arrays.asList("test"), true);
             // No return and no `result` variable: ProperTee's "no implicit null" means the result is {}
             // (empty object), never null — consistent with `return` / `return {}`.
-            client.registerScript("no_return", "v1", "PRINT(\"test\")\n",
+            client.registerScript("no_return", "1", "PRINT(\"test\")\n",
                 "no-return result test", Arrays.asList("test"), true);
 
             String returnRunId = (String) client.submitRun("return_result", null, new LinkedHashMap<String, Object>()).get("runId");
@@ -229,6 +229,47 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void runRecordsTheExactImportedScriptVersionAndHash() throws Exception {
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("lib.answer", "1",
+                "function value() do return 42 end\n",
+                "library one", Arrays.asList("test"), true);
+            client.registerScript("import_entry", "1",
+                "import lib.answer as answer\nreturn {\"value\": answer::value()}\n",
+                "import entry", Arrays.asList("test"), true);
+
+            Map<String, Object> first = client.runAndWait("import_entry", null,
+                new LinkedHashMap<String, Object>(), 8000L);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> firstImports =
+                (List<Map<String, Object>>) first.get("imports");
+            Assert.assertEquals(1, firstImports.size());
+            Assert.assertEquals("lib.answer", firstImports.get(0).get("scriptId"));
+            Assert.assertEquals("1", firstImports.get(0).get("version"));
+            Assert.assertEquals(64, String.valueOf(firstImports.get(0).get("sha256")).length());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> firstData = (Map<String, Object>) first.get("resultData");
+            Assert.assertEquals(42.0, ((Number) firstData.get("value")).doubleValue(), 0.0);
+
+            client.registerScript("lib.answer", "2",
+                "function value() do return 84 end\n",
+                "library two", Arrays.asList("test"), true);
+            Map<String, Object> second = client.runAndWait("import_entry", null,
+                new LinkedHashMap<String, Object>(), 8000L);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> secondImports =
+                (List<Map<String, Object>>) second.get("imports");
+            Assert.assertEquals("2", secondImports.get(0).get("version"));
+            Assert.assertNotEquals(firstImports.get(0).get("sha256"),
+                secondImports.get(0).get("sha256"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void firstClassNullInResultSerializesAsJsonNullNotEmptyObject() throws Exception {
         // ProperTee's first-class null (spec v0.8.0) is null != {}. The engine's JsonNull singleton must
         // reach API consumers as JSON null, not {} (which means "absence") — a lossless-round-trip fix at
@@ -236,9 +277,9 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("null_in_data", "v1", "return {\"coupon\": null, \"n\": 1}\n",
+            client.registerScript("null_in_data", "1", "return {\"coupon\": null, \"n\": 1}\n",
                 "nested null", Arrays.asList("test"), true);
-            client.registerScript("null_top", "v1", "return null\n",
+            client.registerScript("null_top", "1", "return null\n",
                 "top-level null", Arrays.asList("test"), true);
 
             String dataRunId = (String) client.submitRun("null_in_data", null, new LinkedHashMap<String, Object>()).get("runId");
@@ -269,7 +310,7 @@ public class TeeBoxServerTest {
         TeeBoxServer restarted = null;
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("restart_null", "v1", "return {\"coupon\": null, \"n\": 1}\n",
+            client.registerScript("restart_null", "1", "return {\"coupon\": null, \"n\": 1}\n",
                 "restart round-trip", Arrays.asList("test"), true);
             String runId = (String) client.submitRun("restart_null", null, new LinkedHashMap<String, Object>()).get("runId");
             waitForRunStatus(testServer.baseUrl, runId, "COMPLETED", 8000L);
@@ -306,9 +347,9 @@ public class TeeBoxServerTest {
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             // One normal script, one instant (immediate=true) script.
-            client.registerScript("normal_calc", "v1", "return {\"n\": 1}\n",
+            client.registerScript("normal_calc", "1", "return {\"n\": 1}\n",
                 "normal", Arrays.asList("test"), true);
-            client.registerScript("instant_ping", "v1", "return {\"pong\": true}\n",
+            client.registerScript("instant_ping", "1", "return {\"pong\": true}\n",
                 "instant", Arrays.asList("test"), true);
             Map<String, Object> settings = new LinkedHashMap<String, Object>();
             settings.put("maxConcurrentRuns", Double.valueOf(0));
@@ -384,9 +425,9 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("plain_calc", "v1", "return {\"n\": 1}\n",
+            client.registerScript("plain_calc", "1", "return {\"n\": 1}\n",
                 "normal", Arrays.asList("test"), true);
-            client.registerScript("quick_ping", "v1", "return {\"pong\": true}\n",
+            client.registerScript("quick_ping", "1", "return {\"pong\": true}\n",
                 "instant", Arrays.asList("test"), true);
             Map<String, Object> settings = new LinkedHashMap<String, Object>();
             settings.put("maxConcurrentRuns", Double.valueOf(0));
@@ -410,40 +451,40 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("ver_del", "v1", "return {\"n\": 1}\n", "one", Arrays.asList("test"), true);
-            client.registerScript("ver_del", "v2", "return {\"n\": 2}\n", "two", Arrays.asList("test"), false);
+            client.registerScript("ver_del", "1", "return {\"n\": 1}\n", "one", Arrays.asList("test"), true);
+            client.registerScript("ver_del", "2", "return {\"n\": 2}\n", "two", Arrays.asList("test"), false);
 
             // The active version is protected (explicit 400, not a silent no-op), and unknown
             // versions error rather than 200-with-nothing-deleted.
-            Map<String, Object> active = deleteJson(testServer.baseUrl + "/api/publisher/scripts/ver_del/versions/v1", 400);
+            Map<String, Object> active = deleteJson(testServer.baseUrl + "/api/publisher/scripts/ver_del/versions/1", 400);
             Assert.assertTrue(String.valueOf(active.get("error")).contains("Cannot delete the active version"));
-            Map<String, Object> unknown = deleteJson(testServer.baseUrl + "/api/publisher/scripts/ver_del/versions/nope", 400);
+            Map<String, Object> unknown = deleteJson(testServer.baseUrl + "/api/publisher/scripts/ver_del/versions/99", 400);
             Assert.assertTrue(String.valueOf(unknown.get("error")).contains("Unknown script version"));
 
             // Deleting an inactive version drops it from the metadata; the active version survives.
-            Map<String, Object> info = deleteJson(testServer.baseUrl + "/api/publisher/scripts/ver_del/versions/v2", 200);
+            Map<String, Object> info = deleteJson(testServer.baseUrl + "/api/publisher/scripts/ver_del/versions/2", 200);
             List<?> versions = (List<?>) info.get("versions");
             Assert.assertEquals(1, versions.size());
-            Assert.assertEquals("v1", ((Map<?, ?>) versions.get(0)).get("version"));
-            Assert.assertEquals("v1", info.get("activeVersion"));
+            Assert.assertEquals("1", ((Map<?, ?>) versions.get(0)).get("version"));
+            Assert.assertEquals("1", info.get("activeVersion"));
 
             // A submit pinned to the deleted version is refused; the active version still runs.
             Map<String, Object> payload = new LinkedHashMap<String, Object>();
             payload.put("props", new LinkedHashMap<String, Object>());
-            payload.put("version", "v2");
+            payload.put("version", "2");
             assertStatus(testServer.baseUrl + "/api/client/scripts/ver_del/runs", "POST", payload, null, 400);
             Map<String, Object> result = client.runAndWait("ver_del", null, new LinkedHashMap<String, Object>(), 8000L);
             Assert.assertEquals(1.0, resultValue(result, "n"), 0.0);
 
             // Admin UI: only inactive rows offer Delete (the active row must not), and posting the
             // form removes the version.
-            client.registerScript("ver_del", "v3", "return {\"n\": 3}\n", "three", Arrays.asList("test"), false);
+            client.registerScript("ver_del", "3", "return {\"n\": 3}\n", "three", Arrays.asList("test"), false);
             String page = getHtml(testServer.baseUrl + "/admin/scripts/ver_del", 200);
             String marker = "/admin/scripts/delete-version/ver_del";
             Assert.assertTrue("inactive row offers Delete", page.contains(marker));
             Assert.assertEquals("exactly one Delete form (not on the active row)",
                     page.indexOf(marker), page.lastIndexOf(marker));
-            Assert.assertEquals(302, postForm(testServer.baseUrl + "/admin/scripts/delete-version/ver_del", "version=v3", null));
+            Assert.assertEquals(302, postForm(testServer.baseUrl + "/admin/scripts/delete-version/ver_del", "version=3", null));
             String after = getHtml(testServer.baseUrl + "/admin/scripts/ver_del", 200);
             Assert.assertTrue("back to one version", after.contains("Versions (1)"));
             Assert.assertFalse("no Delete form remains", after.contains(marker));
@@ -457,8 +498,8 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("dup_src", "v1", "return {\"n\": 1}\n", "one", Arrays.asList("test"), true);
-            client.registerScript("dup_src", "v2", "return {\"n\": 2}\n", "two", Arrays.asList("test"), false);
+            client.registerScript("dup_src", "1", "return {\"n\": 1}\n", "one", Arrays.asList("test"), true);
+            client.registerScript("dup_src", "2", "return {\"n\": 2}\n", "two", Arrays.asList("test"), false);
             Map<String, Object> settings = new LinkedHashMap<String, Object>();
             settings.put("maxConcurrentRuns", Double.valueOf(3));
             settings.put("immediate", Boolean.TRUE);
@@ -470,7 +511,7 @@ public class TeeBoxServerTest {
             payload.put("newScriptId", "dup_copy");
             Map<String, Object> copy = postJson(testServer.baseUrl + "/api/publisher/scripts/dup_src/duplicate", payload, 201);
             Assert.assertEquals("dup_copy", copy.get("scriptId"));
-            Assert.assertEquals("v1", copy.get("activeVersion"));
+            Assert.assertEquals("1", copy.get("activeVersion"));
             Assert.assertEquals(2, ((List<?>) copy.get("versions")).size());
             Assert.assertEquals(3.0, ((Number) copy.get("maxConcurrentRuns")).doubleValue(), 0.0);
             Assert.assertEquals(Boolean.TRUE, copy.get("immediate"));
@@ -479,7 +520,7 @@ public class TeeBoxServerTest {
             // The copy is immediately runnable: the active version by default, the inactive one by pin.
             Map<String, Object> active = client.runAndWait("dup_copy", null, new LinkedHashMap<String, Object>(), 8000L);
             Assert.assertEquals(1.0, resultValue(active, "n"), 0.0);
-            Map<String, Object> pinned = client.runAndWait("dup_copy", "v2", new LinkedHashMap<String, Object>(), 8000L);
+            Map<String, Object> pinned = client.runAndWait("dup_copy", "2", new LinkedHashMap<String, Object>(), 8000L);
             Assert.assertEquals(2.0, resultValue(pinned, "n"), 0.0);
 
             // Target collision and unknown source are explicit errors.
@@ -487,7 +528,7 @@ public class TeeBoxServerTest {
             assertStatus(testServer.baseUrl + "/api/publisher/scripts/no_such/duplicate", "POST", payload, null, 400);
 
             // The copy is independent of the source: deleting a version in one leaves the other intact.
-            deleteJson(testServer.baseUrl + "/api/publisher/scripts/dup_copy/versions/v2", 200);
+            deleteJson(testServer.baseUrl + "/api/publisher/scripts/dup_copy/versions/2", 200);
             Map<String, Object> src = getJsonMap(testServer.baseUrl + "/api/publisher/scripts/dup_src", 200);
             Assert.assertEquals(2, ((List<?>) src.get("versions")).size());
 
@@ -568,8 +609,8 @@ public class TeeBoxServerTest {
 
             // The editor page wires the pre-check: Check-syntax button, result area, submit hook.
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("syn_check", "v1", "return {\"n\": 1}\n", "s", Arrays.asList("t"), true);
-            String page = getHtml(testServer.baseUrl + "/admin/scripts/syn_check?version=v1", 200);
+            client.registerScript("syn_check", "1", "return {\"n\": 1}\n", "s", Arrays.asList("t"), true);
+            String page = getHtml(testServer.baseUrl + "/admin/scripts/syn_check?version=1", 200);
             Assert.assertTrue(page.contains("id='check-syntax-btn'"));
             Assert.assertTrue(page.contains("id='syntax-result'"));
             Assert.assertTrue(page.contains("function ptCheckSyntax"));
@@ -585,23 +626,23 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("desc_edit", "v1", "return {\"n\": 1}\n", "first cut", Arrays.asList("t"), true);
+            client.registerScript("desc_edit", "1", "return {\"n\": 1}\n", "first cut", Arrays.asList("t"), true);
 
             // The editor prefills the field with the version's current description.
-            String page = getHtml(testServer.baseUrl + "/admin/scripts/desc_edit?version=v1", 200);
+            String page = getHtml(testServer.baseUrl + "/admin/scripts/desc_edit?version=1", 200);
             Assert.assertTrue("description prefilled",
                     page.contains("name='description' value='first cut'"));
 
             // Save-in-place updates the description (same content — a description-only edit works).
             Assert.assertEquals(302, postForm(testServer.baseUrl + "/admin/scripts/update-source",
-                    "scriptId=desc_edit&version=v1&content=" + java.net.URLEncoder.encode("return {\"n\": 1}\n", "UTF-8")
+                    "scriptId=desc_edit&version=1&content=" + java.net.URLEncoder.encode("return {\"n\": 1}\n", "UTF-8")
                         + "&description=" + java.net.URLEncoder.encode("second cut", "UTF-8"), null));
             Map<String, Object> info = getJsonMap(testServer.baseUrl + "/api/publisher/scripts/desc_edit", 200);
             Assert.assertEquals("second cut", ((Map<?, ?>) ((List<?>) info.get("versions")).get(0)).get("description"));
 
             // An emptied field clears it; an absent field (non-UI caller) keeps it.
             Assert.assertEquals(302, postForm(testServer.baseUrl + "/admin/scripts/update-source",
-                    "scriptId=desc_edit&version=v1&description=&content=" + java.net.URLEncoder.encode("return {\"n\": 1}\n", "UTF-8"), null));
+                    "scriptId=desc_edit&version=1&description=&content=" + java.net.URLEncoder.encode("return {\"n\": 1}\n", "UTF-8"), null));
             info = getJsonMap(testServer.baseUrl + "/api/publisher/scripts/desc_edit", 200);
             Assert.assertEquals("", ((Map<?, ?>) ((List<?>) info.get("versions")).get(0)).get("description"));
         } finally {
@@ -615,7 +656,7 @@ public class TeeBoxServerTest {
         try {
             Map<String, Object> payload = new LinkedHashMap<String, Object>();
             payload.put("scriptId", "alias_demo");
-            payload.put("version", "v1");
+            payload.put("version", "1");
             payload.put("content", "return {\"n\": 1}\n");
             payload.put("description", "first version");
             payload.put("alias", "  Friendly Calculator  ");
@@ -654,7 +695,7 @@ public class TeeBoxServerTest {
                     getHtml(testServer.baseUrl + "/admin/scripts", 200).contains("Math Tool"));
 
             // The old client overload remains callable but its labels are a no-op.
-            Map<String, Object> second = client.registerScript("alias_demo", "v2",
+            Map<String, Object> second = client.registerScript("alias_demo", "2",
                     "return {\"n\": 2}\n", "second version", Arrays.asList("ignored"), false);
             Assert.assertEquals("Math Tool", second.get("alias"));
             for (Object item : (List<?>) second.get("versions")) {
@@ -697,7 +738,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("sync_result", "v1",
+            client.registerScript("sync_result", "1",
                 "return {\"ok\": true, \"value\": 42}\n",
                 "runAndWait happy path", Arrays.asList("test"), true);
 
@@ -720,7 +761,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("sync_slow", "v1",
+            client.registerScript("sync_slow", "1",
                 "result = SHELL(\"sleep 5\")\n",
                 "runAndWait timeout path", Arrays.asList("test"), true);
 
@@ -869,7 +910,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer("secret-token");
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, "secret-token");
-            client.registerScript("auth_result", "v1",
+            client.registerScript("auth_result", "1",
                 "result = {\"ok\": true}\n",
                 "auth test", Arrays.asList("test"), true);
 
@@ -903,7 +944,7 @@ public class TeeBoxServerTest {
             TeeBoxClient upstreamClient = new TeeBoxClient(testServer.baseUrl, "client-secret", "publisher-secret", "admin-secret");
             Map<String, Object> registered = upstreamClient.registerScript(
                 "secured_calc",
-                "v1",
+                "1",
                 "return {\"ok\": true, \"sum\": a + b}\n",
                 "secured",
                 Arrays.asList("secure"),
@@ -942,14 +983,14 @@ public class TeeBoxServerTest {
 
             Map<String, Object> registered = client.registerScript(
                 "calc_sum",
-                "v1",
+                "1",
                 "return {\"ok\": true, \"sum\": a + b}\n",
                 "sum values",
                 Arrays.asList("calc", "sum"),
                 true
             );
             Assert.assertEquals("calc_sum", registered.get("scriptId"));
-            Assert.assertEquals("v1", registered.get("activeVersion"));
+            Assert.assertEquals("1", registered.get("activeVersion"));
 
             List<Map<String, Object>> scripts = client.listScripts();
             Assert.assertEquals(1, scripts.size());
@@ -958,7 +999,7 @@ public class TeeBoxServerTest {
             props.put("a", Integer.valueOf(40));
             props.put("b", Integer.valueOf(2));
 
-            Map<String, Object> submitted = client.submitRun("calc_sum", "v1", props);
+            Map<String, Object> submitted = client.submitRun("calc_sum", "1", props);
             String runId = (String) submitted.get("runId");
             Assert.assertNotNull(runId);
 
@@ -977,7 +1018,7 @@ public class TeeBoxServerTest {
             @SuppressWarnings("unchecked")
             Map<String, Object> adminRunData = (Map<String, Object>) adminRun.get("run");
             Assert.assertEquals("calc_sum", adminRunData.get("scriptId"));
-            Assert.assertEquals("v1", adminRunData.get("version"));
+            Assert.assertEquals("1", adminRunData.get("version"));
         } finally {
             testServer.close();
         }
@@ -990,7 +1031,7 @@ public class TeeBoxServerTest {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript(
                 "platform_builtins",
-                "v1",
+                "1",
                 "MKDIR(baseDir + \"/sub\")\n" +
                 "WRITE_FILE(baseDir + \"/sub/test.txt\", \"line1\\nline2\\n\")\n" +
                 "lines = READ_LINES(baseDir + \"/sub/test.txt\")\n" +
@@ -1035,17 +1076,17 @@ public class TeeBoxServerTest {
 
             client.registerScript(
                 "versioned_calc",
-                "v1",
+                "1",
                 "return {\"ok\": true, \"sum\": a + b}\n",
-                "v1",
+                "1",
                 Arrays.asList("calc"),
                 true
             );
             client.registerScript(
                 "versioned_calc",
-                "v2",
+                "2",
                 "return {\"ok\": true, \"sum\": a + b + 1}\n",
-                "v2",
+                "2",
                 Arrays.asList("calc"),
                 false
             );
@@ -1059,8 +1100,8 @@ public class TeeBoxServerTest {
             Map<String, Object> resultV1 = (Map<String, Object>) client.getRunResult(runV1).get("resultData");
             Assert.assertEquals(42.0, ((Number) resultV1.get("sum")).doubleValue(), 0.0);
 
-            Map<String, Object> activated = client.activateScript("versioned_calc", "v2");
-            Assert.assertEquals("v2", activated.get("activeVersion"));
+            Map<String, Object> activated = client.activateScript("versioned_calc", "2");
+            Assert.assertEquals("2", activated.get("activeVersion"));
 
             String runV2 = (String) client.submitRun("versioned_calc", null, beforeActivateProps).get("runId");
             client.waitForRunTerminal(runV2, 8000L);
@@ -1077,7 +1118,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("query_a", "v1",
+            client.registerScript("query_a", "1",
                 "function run_task(arg) do\n" +
                 "    return SHELL(\"" + testServer.script("echo_args") + " \" + arg)\n" +
                 "end\n\n" +
@@ -1086,7 +1127,7 @@ public class TeeBoxServerTest {
                 "    thread t2: run_task(\"a2\")\n" +
                 "end\n",
                 "query a", Arrays.asList("test"), true);
-            client.registerScript("query_b", "v1",
+            client.registerScript("query_b", "1",
                 "result = {\"name\": \"b\"}\n",
                 "query b", Arrays.asList("test"), true);
 
@@ -1119,7 +1160,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("timeout_task", "v1",
+            client.registerScript("timeout_task", "1",
                 "result = SHELL(\"" + testServer.script("sleep1") + "\", {\"timeout\": 10})\n" +
                 "PRINT(result.ok)\n",
                 "timeout task test", Arrays.asList("test"), true);
@@ -1155,7 +1196,7 @@ public class TeeBoxServerTest {
             TestServer testServer = createServer();
             try {
                 TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-                client.registerScript("archive_run", "v1",
+                client.registerScript("archive_run", "1",
                     "PRINT(\"line1\")\n" +
                     "PRINT(\"line2\")\n" +
                     "result = {\"ok\": true}\n",
@@ -1193,7 +1234,7 @@ public class TeeBoxServerTest {
             TestServer testServer = createServer();
             try {
                 TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-                client.registerScript("purge_run", "v1",
+                client.registerScript("purge_run", "1",
                     "result = {\"ok\": true}\n",
                     "purge run test", Arrays.asList("test"), true);
 
@@ -1215,7 +1256,7 @@ public class TeeBoxServerTest {
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("frag_test", "v1",
+            client.registerScript("frag_test", "1",
                 "result = SHELL(\"" + testServer.script("sleep2") + "\")\n",
                 "fragment test", Arrays.asList("test"), true);
 
@@ -1253,7 +1294,7 @@ public class TeeBoxServerTest {
             // Register script with outputRules
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
             registerPayload.put("scriptId", "publish_test");
-            registerPayload.put("version", "v1");
+            registerPayload.put("version", "1");
             registerPayload.put("content",
                 "result = SHELL(\"echo 'jobid: 12345'\")\n" +
                 "PRINT(result.value)\n");
@@ -1299,7 +1340,7 @@ public class TeeBoxServerTest {
         try {
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
             registerPayload.put("scriptId", "continuous_capture");
-            registerPayload.put("version", "v1");
+            registerPayload.put("version", "1");
             registerPayload.put("content",
                 "result = SHELL(\"for i in 1 2 3 4 5; do echo item: a$i; done\")\n");
             registerPayload.put("activate", Boolean.TRUE);
@@ -1346,7 +1387,7 @@ public class TeeBoxServerTest {
         try {
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
             registerPayload.put("scriptId", "capped_capture");
-            registerPayload.put("version", "v1");
+            registerPayload.put("version", "1");
             registerPayload.put("content",
                 "result = SHELL(\"for i in 1 2 3 4 5; do echo item: a$i; done\")\n");
             registerPayload.put("activate", Boolean.TRUE);
@@ -1392,7 +1433,7 @@ public class TeeBoxServerTest {
         try {
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
             registerPayload.put("scriptId", "legacy_continuous");
-            registerPayload.put("version", "v1");
+            registerPayload.put("version", "1");
             registerPayload.put("content",
                 "result = SHELL(\"for i in 1 2 3 4 5; do echo item: a$i; done\")\n");
             registerPayload.put("activate", Boolean.TRUE);
@@ -1434,7 +1475,7 @@ public class TeeBoxServerTest {
             // must capture from the SECOND task only.
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
             registerPayload.put("scriptId", "task_index_capture");
-            registerPayload.put("version", "v1");
+            registerPayload.put("version", "1");
             registerPayload.put("content",
                 "r1 = SHELL(\"echo 'jobid: WRONG0'\")\n" +
                 "r2 = SHELL(\"echo 'jobid: RIGHT'\")\n" +
@@ -1478,7 +1519,7 @@ public class TeeBoxServerTest {
         try {
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
             registerPayload.put("scriptId", "neg_group");
-            registerPayload.put("version", "v1");
+            registerPayload.put("version", "1");
             registerPayload.put("content", "result = SHELL(\"echo 'jobid: 777'\")\n");
             registerPayload.put("activate", Boolean.TRUE);
             List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
@@ -1556,7 +1597,7 @@ public class TeeBoxServerTest {
         try {
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
             registerPayload.put("scriptId", "shutdown_pending");
-            registerPayload.put("version", "v1");
+            registerPayload.put("version", "1");
             registerPayload.put("content", "result = SHELL(\"sleep 2\")\n");
             registerPayload.put("activate", Boolean.TRUE);
             postJson(testServer.baseUrl + "/api/publisher/scripts", registerPayload, 201);
@@ -1602,7 +1643,7 @@ public class TeeBoxServerTest {
         try {
             Map<String, Object> payload = new LinkedHashMap<String, Object>();
             payload.put("scriptId", "bad_regex");
-            payload.put("version", "v1");
+            payload.put("version", "1");
             payload.put("content", "PRINT(\"hello\")\n");
             payload.put("activate", Boolean.TRUE);
             List<Map<String, Object>> rules = new ArrayList<Map<String, Object>>();
@@ -1630,7 +1671,7 @@ public class TeeBoxServerTest {
             // If all tasks are watched → published would contain SECRET
             Map<String, Object> registerPayload = new LinkedHashMap<String, Object>();
             registerPayload.put("scriptId", "first_only");
-            registerPayload.put("version", "v1");
+            registerPayload.put("version", "1");
             registerPayload.put("content",
                 "r1 = SHELL(\"echo 'no match here'\")\n" +
                 "r2 = SHELL(\"echo 'jobid: SECRET'\")\n");
@@ -1693,7 +1734,7 @@ public class TeeBoxServerTest {
         try {
             // Register script with maxConcurrentRuns=1
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("limited", "v1",
+            client.registerScript("limited", "1",
                 "SHELL(\"" + testServer.script("sleep2") + "\")\n",
                 "limited test", Arrays.asList("test"), true);
 
@@ -1734,7 +1775,7 @@ public class TeeBoxServerTest {
         try {
             // Register immediate script with maxConcurrentRuns=1
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("imm_limited", "v1",
+            client.registerScript("imm_limited", "1",
                 "SHELL(\"" + testServer.script("sleep2") + "\")\n",
                 "immediate limited test", Arrays.asList("test"), true);
 
@@ -1787,7 +1828,7 @@ public class TeeBoxServerTest {
             });
 
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("drain_test", "v1",
+            client.registerScript("drain_test", "1",
                 "PRINT(\"hello\")\n",
                 "drain test", Arrays.asList("test"), true);
 
@@ -1818,7 +1859,7 @@ public class TeeBoxServerTest {
         try {
             // Register script
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("del_test", "v1",
+            client.registerScript("del_test", "1",
                 "PRINT(\"hello\")\n",
                 "delete test", Arrays.asList("test"), true);
 

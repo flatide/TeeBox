@@ -14,6 +14,8 @@ public class RunInfo {
     public String scriptId;
     public String version;
     public String scriptAbsolutePath;
+    /** Exact imported script versions and hashes pinned when this run started. */
+    public List<ResolvedModuleInfo> imports = new ArrayList<ResolvedModuleInfo>();
     public RunStatus status;
     public boolean archived;
     /** True when the run's script had immediate=true at submit time (an "instant run" — bypasses the
@@ -74,6 +76,10 @@ public class RunInfo {
         copy.scriptId = scriptId;
         copy.version = version;
         copy.scriptAbsolutePath = scriptAbsolutePath;
+        copy.imports = new ArrayList<ResolvedModuleInfo>();
+        if (imports != null) {
+            for (ResolvedModuleInfo module : imports) copy.imports.add(module.copy());
+        }
         copy.status = status;
         copy.archived = archived;
         copy.immediate = immediate;

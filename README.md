@@ -25,6 +25,10 @@ TeeBox is the ProperTee execution service module. It exposes an HTTP admin UI an
   read-only `monitor` (ordinary script/Run/Task visibility with Debug fully hidden)
 - external task tracking through `ManagedTaskEngine`
 - persisted per-run/per-task records with in-memory indexes, archive, and purge support
+- ProperTee `import`: module ids map directly to registered `scriptId`s; active or exact numeric
+  versions are pinned with their SHA-256 in each run's `imports` metadata
+- canonical positive-integer script versions with server-side auto-numbering and a persistent
+  high-water mark (nonnumeric labels such as `v1` are rejected)
 
 ## Main Components
 
@@ -76,7 +80,7 @@ Example:
 ./gradlew runTeeBoxUpstream \
   -Dpropertee.teebox.upstream.baseUrl=http://127.0.0.1:18080 \
   -Dpropertee.teebox.upstream.scriptId=calc_sum \
-  -Dpropertee.teebox.upstream.version=v1 \
+  -Dpropertee.teebox.upstream.version=1 \
   -Dpropertee.teebox.upstream.scriptFile=$PWD/demo/teebox/05_registered_sum.pt \
   -Dpropertee.teebox.upstream.activate=true \
   -Dpropertee.teebox.upstream.propsJson='{"a":40,"b":2}'
@@ -102,8 +106,8 @@ Useful settings:
 `propertee-teebox-dist.zip` is the recommended GitHub release artifact. It does not include a Java runtime, so deploy targets should install a Linux x86_64 Java 25 runtime separately under `runtime/`. (As of 1.0.0, TeeBox runs on the ProperTee v2 runtime, which requires Java 25.)
 
 ```bash
-git tag v1.28.0
-git push origin v1.28.0
+git tag v1.29.0
+git push origin v1.29.0
 ```
 
 If you need a prebundled internal package instead, build `propertee-teebox-dist-with-runtime.zip` locally with:

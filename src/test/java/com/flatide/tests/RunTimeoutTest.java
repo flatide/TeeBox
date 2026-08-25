@@ -38,7 +38,7 @@ public class RunTimeoutTest {
         TestServer testServer = createServer(2, 0L);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("spin_t", "v1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
+            client.registerScript("spin_t", "1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
 
             String runId = submitWithTimeout(testServer.baseUrl, "spin_t", 500L);
             Map<String, Object> terminal = waitForStatus(client, runId, "CANCELLED", 10000L);
@@ -54,7 +54,7 @@ public class RunTimeoutTest {
         TestServer testServer = createServer(2, 500L);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("spin_d", "v1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
+            client.registerScript("spin_d", "1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
 
             String runId = (String) client.submitRun("spin_d", null, new LinkedHashMap<String, Object>()).get("runId");
             Map<String, Object> terminal = waitForStatus(client, runId, "CANCELLED", 10000L);
@@ -69,7 +69,7 @@ public class RunTimeoutTest {
         TestServer testServer = createServer(2, 0L);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("spin_off", "v1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
+            client.registerScript("spin_off", "1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
 
             String runId = (String) client.submitRun("spin_off", null, new LinkedHashMap<String, Object>()).get("runId");
             waitForStatus(client, runId, "RUNNING", 8000L);
@@ -87,7 +87,7 @@ public class RunTimeoutTest {
         TestServer testServer = createServer(2, 0L);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("quick_t", "v1", "return {\"n\": 1}\n", "quick", Arrays.asList("test"), true);
+            client.registerScript("quick_t", "1", "return {\"n\": 1}\n", "quick", Arrays.asList("test"), true);
 
             String runId = submitWithTimeout(testServer.baseUrl, "quick_t", 30000L);
             waitForStatus(client, runId, "COMPLETED", 10000L);
@@ -105,8 +105,8 @@ public class RunTimeoutTest {
         TestServer testServer = createServer(1, 0L);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("holder", "v1", "SLEEP(2000)\nreturn 1\n", "holder", Arrays.asList("test"), true);
-            client.registerScript("waiter", "v1", "return {\"n\": 2}\n", "waiter", Arrays.asList("test"), true);
+            client.registerScript("holder", "1", "SLEEP(2000)\nreturn 1\n", "holder", Arrays.asList("test"), true);
+            client.registerScript("waiter", "1", "return {\"n\": 2}\n", "waiter", Arrays.asList("test"), true);
 
             String holder = (String) client.submitRun("holder", null, new LinkedHashMap<String, Object>()).get("runId");
             waitForStatus(client, holder, "RUNNING", 8000L);

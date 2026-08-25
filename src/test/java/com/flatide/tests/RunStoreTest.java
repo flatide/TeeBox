@@ -1,6 +1,7 @@
 package com.flatide.tests;
 
 import com.flatide.propertee2.value.JsonNull;
+import com.flatide.teebox.ResolvedModuleInfo;
 import com.flatide.teebox.RunInfo;
 import com.flatide.teebox.RunStatus;
 import com.flatide.teebox.RunStore;
@@ -96,6 +97,25 @@ public class RunStoreTest {
         RunStore reloaded = new RunStore(dataDir);
         Assert.assertSame(JsonNull.NULL, reloaded.load("null_top").resultData);
         Assert.assertNull(reloaded.load("no_value").resultData);
+    }
+
+    @Test
+    public void importedModulePinsSurviveTheDiskRoundTrip() throws Exception {
+        File dataDir = tempDir();
+        RunInfo run = terminalRun("imports", new LinkedHashMap<String, Object>());
+        ResolvedModuleInfo module = new ResolvedModuleInfo();
+        module.scriptId = "util.file";
+        module.version = "7";
+        module.sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        run.imports.add(module);
+
+        new RunStore(dataDir).save(run);
+        RunInfo loaded = new RunStore(dataDir).load("imports");
+
+        Assert.assertEquals(1, loaded.imports.size());
+        Assert.assertEquals("util.file", loaded.imports.get(0).scriptId);
+        Assert.assertEquals("7", loaded.imports.get(0).version);
+        Assert.assertEquals(module.sha256, loaded.imports.get(0).sha256);
     }
 
     /**

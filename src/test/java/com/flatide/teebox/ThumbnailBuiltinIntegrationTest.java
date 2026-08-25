@@ -47,7 +47,7 @@ public class ThumbnailBuiltinIntegrationTest {
         ScriptExecutor exec = new ScriptExecutor(new DefaultPlatformProvider(), policy);
         ScriptExecutor.ExecutionResult res = exec.execute(
                 script, new LinkedHashMap<String, Object>(), 1000, "error",
-                "run-1", "thumb", "v1", new UnsupportedTaskRunner(), noopCallbacks());
+                "run-1", "thumb", "1", new UnsupportedTaskRunner(), noopCallbacks());
 
         assertTrue(res.errorMessage, res.success);
         @SuppressWarnings("unchecked")

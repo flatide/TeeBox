@@ -35,7 +35,7 @@ curl -X POST $HOST/api/publisher/scripts \
   -H 'Content-Type: application/json' \
   -d '{
     "scriptId": "hello",
-    "version": "v1",
+    "version": "1",
     "content": "PRINT(\"Hello, World!\")\n",
     "alias": "Hello example",
     "description": "first script",
@@ -50,7 +50,7 @@ curl -X POST $HOST/api/publisher/scripts \
   -H 'Content-Type: application/json' \
   -d '{
     "scriptId": "deploy",
-    "version": "v1",
+    "version": "1",
     "content": "result = SHELL(\"./deploy.sh\")\nPRINT(result.value)\n",
     "activate": true,
     "outputRules": [{
@@ -70,7 +70,7 @@ curl -X POST $HOST/api/publisher/scripts \
   -H 'Content-Type: application/json' \
   -d '{
     "scriptId": "worker",
-    "version": "v1",
+    "version": "1",
     "content": "r1 = SHELL(\"./setup.sh\")\nr2 = SHELL(\"./work.sh\")\n",
     "activate": true,
     "outputRules": [{
@@ -103,7 +103,7 @@ curl -X POST $HOST/api/publisher/scripts/hello/versions \
   -H 'Content-Type: application/json' \
   -d '{
     "scriptId": "hello",
-    "version": "v2",
+    "version": "2",
     "content": "PRINT(\"Hello v2!\")\n",
     "activate": true
   }'
@@ -114,7 +114,7 @@ curl -X POST $HOST/api/publisher/scripts/hello/versions \
 ```bash
 curl -X POST $HOST/api/publisher/scripts/hello/activate \
   -H 'Content-Type: application/json' \
-  -d '{"version": "v1"}'
+  -d '{"version": "1"}'
 ```
 
 ### 1.7 특정 버전 삭제 (hard delete)
@@ -122,9 +122,9 @@ curl -X POST $HOST/api/publisher/scripts/hello/activate \
 active 버전은 보호됨 — 먼저 다른 버전을 활성화해야 함. 스크립트 삭제와 달리 복원 창이 없음.
 
 ```bash
-curl -X DELETE $HOST/api/publisher/scripts/hello/versions/v1
+curl -X DELETE $HOST/api/publisher/scripts/hello/versions/1
 # → 200 + 갱신된 ScriptInfo
-# active 버전이면: 400 {"error": "Cannot delete the active version: hello@v1 (set another version active first)"}
+# active 버전이면: 400 {"error": "Cannot delete the active version: hello@1 (set another version active first)"}
 ```
 
 ### 1.8 스크립트 복제 (duplicate — 지원되는 "rename" 경로)
@@ -184,7 +184,7 @@ curl -X POST $HOST/api/client/scripts/hello/runs \
 {
   "runId": "run-20260508-103022-abc",
   "scriptId": "hello",
-  "version": "v1",
+  "version": "1",
   "status": "QUEUED",
   "createdAt": 1746701422000
 }
@@ -196,7 +196,7 @@ curl -X POST $HOST/api/client/scripts/hello/runs \
 curl -X POST $HOST/api/client/scripts/hello/runs \
   -H 'Content-Type: application/json' \
   -d '{
-    "version": "v2",
+    "version": "2",
     "props": {}
   }'
 ```
@@ -219,7 +219,7 @@ curl -X POST $HOST/api/client/scripts/hello/runs \
 {
   "runId": "run-20260508-103022-abc",
   "scriptId": "hello",
-  "version": "v1",
+  "version": "1",
   "status": "QUEUED",
   "submittedBy": "journey.kim",
   "createdAt": 1746701422000
@@ -531,7 +531,7 @@ curl -X POST $HOST/api/publisher/scripts \
   -H 'Content-Type: application/json' \
   -d '{
     "scriptId": "calc",
-    "version": "v1",
+    "version": "1",
     "content": "result = ::a + ::b\nPRINT(result)\nreturn result\n",
     "activate": true
   }'
@@ -563,7 +563,7 @@ curl -X POST $HOST/api/publisher/scripts \
   -H 'Content-Type: application/json' \
   -d '{
     "scriptId": "submit-job",
-    "version": "v1",
+    "version": "1",
     "content": "result = SHELL(\"echo Job \\<12345\\> is submitted\")\nPRINT(result.value)\n",
     "activate": true,
     "outputRules": [{

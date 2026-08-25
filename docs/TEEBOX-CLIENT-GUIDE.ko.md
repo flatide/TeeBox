@@ -35,7 +35,7 @@ import com.flatide.teebox.client.TeeBoxClient;
 TeeBox 저장소에서 jar 를 빌드합니다.
 
 ```bash
-./gradlew clientJar          # → build/libs/teebox-client-<버전>.jar  (예: teebox-client-1.28.0.jar)
+./gradlew clientJar          # → build/libs/teebox-client-<버전>.jar  (예: teebox-client-1.29.0.jar)
 ./gradlew clientSourcesJar   # (선택) IDE 소스 첨부용 sources jar
 ```
 
@@ -49,7 +49,7 @@ TeeBox 저장소에서 jar 를 빌드합니다.
 ```groovy
 // Gradle
 dependencies {
-    implementation files('libs/teebox-client-1.28.0.jar')
+    implementation files('libs/teebox-client-1.29.0.jar')
 }
 ```
 
@@ -58,7 +58,7 @@ dependencies {
 <dependency>
   <groupId>com.flatide</groupId>
   <artifactId>teebox-client</artifactId>
-  <version>1.28.0</version>
+  <version>1.29.0</version>
 </dependency>
 ```
 
@@ -155,7 +155,7 @@ teebox.setClientApiToken("client-secret")
 
 ### 6.1 버전 정책 (중요)
 
-- **버전 생략 시 자동 증가**: 정수 버전 식별자 `"1"`, `"2"`, … 가 자동 부여됩니다(기존 최대 정수 + 1). 명시적 식별자(`"v1"` 같은 문자열 포함)도 그대로 사용 가능합니다.
+- **버전 생략 시 자동 증가**: 정규형 양의 정수 버전 식별자 `"1"`, `"2"`, … 가 자동 부여됩니다. 명시 버전도 같은 형식만 허용하며 `"v1"`, `"latest"`, `"0"`, `"01"`은 거부합니다. 삭제된 번호가 재사용되지 않도록 영속적인 high-water mark를 사용합니다.
 - **활성(active) 버전 개념**: 실행 시 버전을 생략하면 **가장 최신 버전이 아니라 "활성" 버전**이 실행됩니다. 새 버전을 추가해도 `activate=true` 로 활성화하기 전까지는 기존 활성 버전이 계속 서비스됩니다(스테이징/롤백 용도).
 - **alias는 스크립트 단위 메타데이터**: 선택적인 표시명 `alias`는 모든 버전이 공유합니다. 호출과 run에서는 계속 `scriptId`로 스크립트를 식별합니다.
 
@@ -167,11 +167,11 @@ Map<String, Object> detail = teebox.registerScript("calc_sum", source, true);
 // 부여된 버전은 detail.get("activeVersion") (활성 시) 또는 versions 목록의 최신 항목
 
 // (B) 버전 명시
-teebox.registerScript("calc_sum", "v1", source, true);
+teebox.registerScript("calc_sum", "1", source, true);
 
 // (C) 버전 description과 스크립트 단위 alias까지 지정
 teebox.registerScriptWithAlias(
-    "calc_sum", "v1", source, "합계 계산", "합계 계산기", true);
+    "calc_sum", "1", source, "합계 계산", "합계 계산기", true);
 ```
 
 ### 6.3 버전 추가 (= 업데이트)
@@ -181,7 +181,7 @@ teebox.registerScriptWithAlias(
 teebox.addScriptVersion("calc_sum", newSource, true);   // 다음 정수 버전, 즉시 활성화
 
 // 버전 명시
-teebox.addScriptVersion("calc_sum", "v2", newSource, true);
+teebox.addScriptVersion("calc_sum", "2", newSource, true);
 ```
 
 ### 6.4 활성 버전 변경

@@ -731,6 +731,7 @@ public class DebugSessionManager {
             // check+capture+enqueue and finalizeSession's ENDED+drain serialize against it.
             synchronized (session) {
                 if (session.entryPausePending && session.entryLine != null
+                        && (session.scriptId + "@" + session.version).equals(frame.sourceId())
                         && session.entryLine.intValue() == frame.line()) {
                     session.entryPausePending = false;
                     // Preserve a real user breakpoint on the entry line; remove only our private
@@ -896,6 +897,7 @@ public class DebugSessionManager {
         snapshot.put("reason", frame.reason().name());
         snapshot.put("threadId", Integer.valueOf(frame.threadId()));
         snapshot.put("threadName", frame.threadName());
+        snapshot.put("sourceId", frame.sourceId());
         snapshot.put("line", Integer.valueOf(frame.line()));
         snapshot.put("column", Integer.valueOf(frame.column()));
         snapshot.put("statement", frame.statementText());
@@ -911,6 +913,7 @@ public class DebugSessionManager {
         for (DebugCallSite site : frame.callStack()) {
             Map<String, Object> entry = new LinkedHashMap<String, Object>();
             entry.put("function", site.function());
+            entry.put("sourceId", site.sourceId());
             entry.put("line", Integer.valueOf(site.line()));
             entry.put("column", Integer.valueOf(site.column()));
             stack.add(entry);

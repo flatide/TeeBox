@@ -134,6 +134,7 @@ public class RunRegistry {
             existing.scriptId = prepared.scriptId;
             existing.version = prepared.version;
             existing.scriptAbsolutePath = prepared.scriptAbsolutePath;
+            existing.imports = new ArrayList<ResolvedModuleInfo>();
             existing.status = RunStatus.QUEUED;
             existing.archived = false;
             existing.immediate = false;

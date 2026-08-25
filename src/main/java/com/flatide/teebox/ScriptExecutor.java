@@ -24,14 +24,21 @@ import java.util.Map;
 public class ScriptExecutor {
     private final PlatformProvider platformProvider;
     private final StreamResultSupport streamSupport;
+    private final ScriptRegistry scriptRegistry;
 
     public ScriptExecutor(PlatformProvider platformProvider) {
-        this(platformProvider, null);
+        this(platformProvider, null, null);
     }
 
     public ScriptExecutor(PlatformProvider platformProvider, StreamResultSupport streamSupport) {
+        this(platformProvider, streamSupport, null);
+    }
+
+    public ScriptExecutor(PlatformProvider platformProvider, StreamResultSupport streamSupport,
+                          ScriptRegistry scriptRegistry) {
         this.platformProvider = platformProvider;
         this.streamSupport = streamSupport;
+        this.scriptRegistry = scriptRegistry;
     }
 
     /**
@@ -104,7 +111,8 @@ public class ScriptExecutor {
         try {
             String scriptText = sourceSnapshot != null ? sourceSnapshot : readFile(scriptFile);
             List<String> errors = new ArrayList<String>();
-            ProperTeeParser.RootContext tree = ScriptParser.parse(scriptText, errors);
+            ProperTeeParser.RootContext tree = ScriptParser.parse(scriptText,
+                    scriptId + "@" + version, errors);
             if (tree == null) {
                 return ExecutionResult.failed(joinErrors(errors));
             }
@@ -162,6 +170,11 @@ public class ScriptExecutor {
                 });
             }
             visitor = new ProperTeeInterpreter(properties, stdout, stderr, maxIterations, iterationLimitBehavior, builtins);
+            if (scriptRegistry != null) {
+                final Callbacks importCallbacks = callbacks;
+                visitor.setModuleResolver(new TeeBoxModuleResolver(scriptRegistry,
+                        module -> { if (importCallbacks != null) importCallbacks.onModuleResolved(module); }));
+            }
             // Reserved `_SYS`: TeeBox system variables for the run, exposed as a global object so a
             // script can read its own run id (e.g. _SYS.runId, or ::_SYS.runId inside a function).
             // Injected as a global variable — NOT into properties — so `_PROPS` stays user-input only.
@@ -240,6 +253,9 @@ public class ScriptExecutor {
          *  mutable before and mid-run) once the engine exists, before the run starts and before
          *  {@link #onCancelHandle}. Default: ignored. */
         default void onDebugReady(java.util.Set<Integer> liveBreakpoints) { }
+
+        /** Called once for each exact imported script version pinned before entry execution. */
+        default void onModuleResolved(ResolvedModuleInfo module) { }
     }
 
     public static class ExecutionResult {

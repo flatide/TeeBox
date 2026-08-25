@@ -121,7 +121,7 @@ public class DebugSessionTest {
         try {
             String sourceRunId = runFailingScript(testServer, "dbg_moved_error");
             // The source Run failed on line 2, but the current version now fails on line 3.
-            testServer.server.getRunManager().updateScriptVersionContent("dbg_moved_error", "v1",
+            testServer.server.getRunManager().updateScriptVersionContent("dbg_moved_error", "1",
                 "a = 1\n" +
                 "b = 2\n" +
                 "FAIL(\"moved failure\")\n");
@@ -168,7 +168,7 @@ public class DebugSessionTest {
             // A CANCELLED source has no positioned failure: debug still waits at entry, but must
             // not invent a red error marker from the cancellation message.
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("dbg_cancelled_source", "v1", "loop true infinite do\nend\n",
+            client.registerScript("dbg_cancelled_source", "1", "loop true infinite do\nend\n",
                 "cancelled source", Arrays.asList("test"), true);
             String cancelledSource = (String) client.submitRun("dbg_cancelled_source", null,
                 new LinkedHashMap<String, Object>()).get("runId");
@@ -194,7 +194,7 @@ public class DebugSessionTest {
         TestServer testServer = createServer(null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("dbg_step", "v1", QUICK_SCRIPT, "step", Arrays.asList("test"), true);
+            client.registerScript("dbg_step", "1", QUICK_SCRIPT, "step", Arrays.asList("test"), true);
             String sourceRunId = (String) client.submitRun("dbg_step", null,
                 new LinkedHashMap<String, Object>()).get("runId");
             waitForRunStatus(client, sourceRunId, "COMPLETED", 10000L);
@@ -254,7 +254,7 @@ public class DebugSessionTest {
                 "end\n" +
                 "PRINT(results.alpha.value, results.beta.value)\n";
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("dbg_workers", "v1", source, "workers",
+            client.registerScript("dbg_workers", "1", source, "workers",
                 Arrays.asList("test"), true);
             String sourceRunId = (String) client.submitRun("dbg_workers", null,
                 new LinkedHashMap<String, Object>()).get("runId");
@@ -356,7 +356,7 @@ public class DebugSessionTest {
                 "debug\n" +
                 "answer = outer(20)\n" +
                 "PRINT(answer)\n";
-            client.registerScript("dbg_main_returns", "v1", mainSource, "main returns",
+            client.registerScript("dbg_main_returns", "1", mainSource, "main returns",
                 Arrays.asList("test"), true);
             String mainRunId = (String) client.submitRun("dbg_main_returns", null,
                 new LinkedHashMap<String, Object>()).get("runId");
@@ -416,7 +416,7 @@ public class DebugSessionTest {
                 "multi results do\n" +
                 "    thread alpha: worker(7)\n" +
                 "end\n";
-            client.registerScript("dbg_worker_returns", "v1", workerSource, "worker returns",
+            client.registerScript("dbg_worker_returns", "1", workerSource, "worker returns",
                 Arrays.asList("test"), true);
             String workerRunId = (String) client.submitRun("dbg_worker_returns", null,
                 new LinkedHashMap<String, Object>()).get("runId");
@@ -455,7 +455,7 @@ public class DebugSessionTest {
         TestServer testServer = createServer(null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("dbg_restart", "v1", QUICK_SCRIPT, "restart",
+            client.registerScript("dbg_restart", "1", QUICK_SCRIPT, "restart",
                 Arrays.asList("test"), true);
             String sourceRunId = (String) client.submitRun("dbg_restart", null,
                 new LinkedHashMap<String, Object>()).get("runId");
@@ -497,7 +497,7 @@ public class DebugSessionTest {
                 ((List<?>) ended.get("stdoutLines")).contains("edited-15"));
             Assert.assertEquals("Debugger edits must not overwrite the saved script version",
                 QUICK_SCRIPT,
-                testServer.server.getRunManager().getScriptVersionContent("dbg_restart", "v1"));
+                testServer.server.getRunManager().getScriptVersionContent("dbg_restart", "1"));
         } finally {
             testServer.close();
         }
@@ -508,10 +508,10 @@ public class DebugSessionTest {
         TestServer testServer = createServer(null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("dbg_running_edit", "v1", QUICK_SCRIPT, "running edit guard",
+            client.registerScript("dbg_running_edit", "1", QUICK_SCRIPT, "running edit guard",
                 Arrays.asList("test"), true);
             DebugSessionManager.Session opened = testServer.server.getDebugSessionManager().openScript(
-                "dbg_running_edit", "v1", "SLEEP(5000)\nPRINT(\"old\")\n",
+                "dbg_running_edit", "1", "SLEEP(5000)\nPRINT(\"old\")\n",
                 new LinkedHashMap<String, Object>(), 1000, false, "admin", null);
             String sessionId = opened.sessionId;
             waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
@@ -571,7 +571,7 @@ public class DebugSessionTest {
             postJsonExpectingStatus(testServer.baseUrl + "/api/admin/runs/" + otherSourceRunId
                 + "/debug", "{}", 409);
             // A still-running source is rejected; an unknown one is 404.
-            client.registerScript("dbg_spin", "v1", "loop true infinite do\nend\n", "spin",
+            client.registerScript("dbg_spin", "1", "loop true infinite do\nend\n", "spin",
                 Arrays.asList("test"), true);
             String spinning = (String) client.submitRun("dbg_spin", null,
                 new LinkedHashMap<String, Object>()).get("runId");
@@ -651,7 +651,7 @@ public class DebugSessionTest {
         TestServer testServer = createServer(null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("dbg_task_reset", "v1",
+            client.registerScript("dbg_task_reset", "1",
                 "result = SHELL(\"echo debug-attempt\")\n" +
                 "FAIL(\"stop after task\")\n",
                 "task reset", Arrays.asList("test"), true);
@@ -889,11 +889,11 @@ public class DebugSessionTest {
         TestServer testServer = createServer(dataDir, null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("editor_dbg", "v1", "PRINT(\"prop-\" + _PROPS.who)\n",
+            client.registerScript("editor_dbg", "1", "PRINT(\"prop-\" + _PROPS.who)\n",
                 "props source", Arrays.asList("test"), true);
 
             String scriptPage = getBody(
-                testServer.baseUrl + "/admin/scripts/editor_dbg?version=v1", 200);
+                testServer.baseUrl + "/admin/scripts/editor_dbg?version=1", 200);
             int sourceCard = scriptPage.indexOf("id='version-source'");
             int runCard = scriptPage.indexOf("<h2>Run Script</h2>");
             int propsInput = scriptPage.indexOf("Debug Props (JSON)");
@@ -904,14 +904,14 @@ public class DebugSessionTest {
             Assert.assertEquals("Debug action still appears in Run Script", -1,
                 scriptPage.substring(runCard).indexOf("/admin/scripts/editor_dbg/debug"));
             Assert.assertTrue("Debug does not identify the editor version",
-                scriptPage.contains("name='debugVersion' value='v1'"));
+                scriptPage.contains("name='debugVersion' value='1'"));
             Assert.assertTrue("dedicated Debug Props input is missing",
                 scriptPage.substring(sourceCard, runCard).contains("name='propsJson' value='{}'"));
 
             String draft = "PRINT(\"draft-\" + _PROPS.who)\n";
             String location = postFormExpectingRedirect(
                 testServer.baseUrl + "/admin/scripts/editor_dbg/debug",
-                "debugVersion=v1&content=" + URLEncoder.encode(draft, "UTF-8")
+                "debugVersion=1&content=" + URLEncoder.encode(draft, "UTF-8")
                     + "&propsJson="
                     + URLEncoder.encode("{\"who\":\"ops\"}", "UTF-8"));
             Assert.assertTrue("unexpected redirect: " + location,
@@ -923,7 +923,7 @@ public class DebugSessionTest {
             Assert.assertEquals(Boolean.TRUE, paused.get("transientDebug"));
             Assert.assertNull("script-page debug must not have a parent Run", paused.get("sourceRunId"));
             Assert.assertEquals("editor_dbg", paused.get("scriptId"));
-            Assert.assertEquals("v1", paused.get("version"));
+            Assert.assertEquals("1", paused.get("version"));
             String transientRunId = String.valueOf(paused.get("runId"));
             Assert.assertNotNull("running transient attempt must be internally addressable",
                 testServer.server.getRunManager().getRun(transientRunId));
@@ -979,7 +979,7 @@ public class DebugSessionTest {
 
             String sessionsPage = getBody(testServer.baseUrl + "/admin/debug", 200);
             Assert.assertTrue("editor session missing from debugger list",
-                sessionsPage.contains("editor_dbg@v1"));
+                sessionsPage.contains("editor_dbg@1"));
             Assert.assertTrue("debugger list does not label temporary execution",
                 sessionsPage.contains("temporary (not retained)"));
             Assert.assertFalse("debugger list rendered a null Run link",
@@ -1003,7 +1003,7 @@ public class DebugSessionTest {
                 ((List<?>) restartedEnd.get("stdoutLines")).contains("restart-ops"));
             Assert.assertEquals("Debug-console edits must not overwrite the saved version",
                 "PRINT(\"prop-\" + _PROPS.who)\n",
-                testServer.server.getRunManager().getScriptVersionContent("editor_dbg", "v1"));
+                testServer.server.getRunManager().getScriptVersionContent("editor_dbg", "1"));
 
             // A new script shell has no saved version yet. Version Source must still offer Debug
             // and execute the posted draft without creating a placeholder version file.
@@ -1040,7 +1040,7 @@ public class DebugSessionTest {
         try {
             String sourceRunId = runFailingScript(testServer, "dbg_edit");
             // Fix the SAME version in place, then debug re-run: the fixed content runs.
-            testServer.server.getRunManager().updateScriptVersionContent("dbg_edit", "v1",
+            testServer.server.getRunManager().updateScriptVersionContent("dbg_edit", "1",
                 "msg = \"hello \" + _PROPS.who\n" +
                 "PRINT(\"fixed\")\n" +
                 "PRINT(msg)\n");
@@ -1049,7 +1049,7 @@ public class DebugSessionTest {
             String sessionId = (String) session.get("sessionId");
             // Editing the same version remains allowed while paused, but this already-open session
             // must keep executing the exact source shown in its editor.
-            testServer.server.getRunManager().updateScriptVersionContent("dbg_edit", "v1",
+            testServer.server.getRunManager().updateScriptVersionContent("dbg_edit", "1",
                 "FAIL(\"edited after debug launch\")\n");
             // Start is always line 1. The OLD positioned failure remains a red marker on line 2,
             // then stepping executes line 1 and pauses on the edited line 2 statement.
@@ -1079,7 +1079,7 @@ public class DebugSessionTest {
         TestServer testServer = createServer(null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("dbg_stale", "v1",
+            client.registerScript("dbg_stale", "1",
                 "a = 1\nb = 2\nc = 3\nPRINT(c)\n", "stale", Arrays.asList("test"), true);
             String sourceRunId = (String) client.submitRun("dbg_stale", null,
                 new LinkedHashMap<String, Object>()).get("runId");
@@ -1256,7 +1256,7 @@ public class DebugSessionTest {
         TestServer testServer = createServer(null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("dbg_drain", "v1",
+            client.registerScript("dbg_drain", "1",
                 "a = 1\nb = 2\nPRINT(b)\n", "drain", Arrays.asList("test"), true);
             String sourceRunId = (String) client.submitRun("dbg_drain", null,
                 new LinkedHashMap<String, Object>()).get("runId");
@@ -1329,7 +1329,7 @@ public class DebugSessionTest {
     /** Register + run the failing script (with props) and wait for FAILED; returns the runId. */
     private String runFailingScript(TestServer testServer, String scriptId) throws Exception {
         TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-        client.registerScript(scriptId, "v1", FAILING_SCRIPT, "failing", Arrays.asList("test"), true);
+        client.registerScript(scriptId, "1", FAILING_SCRIPT, "failing", Arrays.asList("test"), true);
         Map<String, Object> props = new LinkedHashMap<String, Object>();
         props.put("who", "ops");
         String runId = (String) client.submitRun(scriptId, null, props).get("runId");

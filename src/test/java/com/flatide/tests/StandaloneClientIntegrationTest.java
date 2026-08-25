@@ -38,7 +38,7 @@ public class StandaloneClientIntegrationTest {
         try {
             TeeBoxClient client = new TeeBoxClient(server.baseUrl);
             Map<String, Object> created = client.registerScriptWithAlias(
-                "alias_client", "v1", "return 1\n", "first version", "Friendly Name", true);
+                "alias_client", "1", "return 1\n", "first version", "Friendly Name", true);
             Assert.assertEquals("Friendly Name", created.get("alias"));
             Assert.assertFalse(((Map<?, ?>) ((List<?>) created.get("versions")).get(0))
                 .containsKey("labels"));
@@ -51,7 +51,7 @@ public class StandaloneClientIntegrationTest {
 
             // A pre-alias compiled caller still links to this method, but labels are discarded.
             Map<String, Object> second = client.registerScript(
-                "alias_client", "v2", "return 2\n", "second version",
+                "alias_client", "2", "return 2\n", "second version",
                 Arrays.asList("legacy"), false);
             Assert.assertEquals("Updated Name", second.get("alias"));
             for (Object item : (List<?>) second.get("versions")) {

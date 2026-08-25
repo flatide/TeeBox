@@ -144,7 +144,7 @@ Admin HTML UI: `/admin`
 Publisher API로 스크립트 등록 -> Client API로 run 제출 -> TeeBox가 실행 -> 결과 조회
 ```
 
-1. **스크립트 등록**: `POST /api/publisher/scripts` (body: `scriptId`, `content`, 선택 `version` — 공란이면 `"1"`, `"2"`, … 자동 증가 — 및 `activate`). 기존 스크립트에 버전 추가는 `POST /api/publisher/scripts/{scriptId}/versions`
+1. **스크립트 등록**: `POST /api/publisher/scripts` (body: `scriptId`, `content`, 선택 `version` — 공란이면 `"1"`, `"2"`, … 자동 증가 — 및 `activate`). 버전은 정규형 양의 정수만 허용하며 `v1`, `latest`, `0`, `01` 같은 label은 거부합니다. 삭제된 번호를 다시 쓰지 않도록 high-water mark를 메타데이터에 보존합니다. 기존 스크립트에 버전 추가는 `POST /api/publisher/scripts/{scriptId}/versions`
 2. **버전 활성화**: `POST /api/publisher/scripts/{scriptId}/activate` (body: `{"version": "..."}`). 기존 스크립트에 추가된 버전은 자동 활성화되지 않음 — 활성화는 명시적 단계(스테이징/롤백 용도)이며, 버전 생략 실행은 최신이 아니라 **활성** 버전을 실행
 3. **Run 제출**: `POST /api/client/scripts/{scriptId}/runs` (202 + `runId` 반환; 비동기)
 4. **결과 폴링**: `GET /api/client/runs/{runId}` (요약), `.../status`, `.../result`
@@ -153,6 +153,34 @@ Publisher API로 스크립트 등록 -> Client API로 run 제출 -> TeeBox가 �
 - job submit 스크립트는 job id를 확보하면 바로 종료
 - job status polling은 별도 짧은 스크립트로 분리하고 외부 스케줄러나 cron에서 주기 호출
 - 하나의 ProperTee run 안에서 background job 후 장시간 `wait` 하거나 polling loop를 유지하는 패턴은 비권장
+
+### TeeBox의 ProperTee import
+
+`import util.file as file`은 `util.file`을 TeeBox `scriptId`로 해석하고 Entry 실행 전에
+active 숫자 버전을 고정합니다. `import util.file.2 as file`은 정확히 `"2"` 버전을 고정합니다.
+Import된 스크립트는 root 함수만 노출하며 top-level statement는 실행하지 않고, 전역은 비공개이며,
+다시 import를 포함할 수 없습니다. Run 상태·요약·결과 응답의 `imports[]`에는 실제 사용한
+`scriptId`, `version`, 소스 `sha256`이 기록되므로 active 버전이 바뀐 뒤에도 의존성 snapshot을
+감사할 수 있습니다.
+
+기존 비숫자 버전은 자동 migration하지 않습니다. 업그레이드 전에 버전 디렉터리·파일과
+`script.json` 참조를 정규형 양의 정수로 수동 변경해야 합니다. 신규 등록·활성화·편집·삭제·실행
+경로는 `v1` 같은 label을 거부합니다.
+
+해당 스크립트마다 다음 순서로 offline migration합니다.
+
+1. TeeBox를 중지하고 `<data-dir>/script-registry`를 백업합니다.
+2. 기존 version label마다 32-bit signed integer 범위의 서로 다른 정규형 양의 정수를 배정합니다.
+   `<data-dir>/script-registry/<scriptId>/versions/<old-label>.tee`를 `<number>.tee`로 변경합니다.
+3. 해당 script의 `script.json`에서 모든 `versions[].version`과 `activeVersion`을 같은 숫자로
+   변경합니다. source 내용은 그대로이고 파일/version 식별자만 바꿨다면 source hash는 변경하지 않습니다.
+4. `lastAllocatedVersion`을 배정한 가장 큰 숫자 이상으로 설정해 이후 자동 저장이 migration했거나
+   과거에 삭제한 번호를 재사용하지 않게 합니다.
+5. TeeBox를 시작하고 신규 run을 받기 전에 active source와 version 목록을 확인합니다. Import를 포함한
+   대표 script의 실행이 성공할 때까지 백업을 보관합니다.
+
+과거 run record의 기존 version label은 그대로 남아도 됩니다. 이는 감사 기록이며 새 실행의 version
+resolve에는 사용하지 않습니다.
 
 ### Run 제출자 식별 (`X-TeeBox-User`)
 
@@ -252,7 +280,7 @@ curl -X POST http://host:18080/api/publisher/scripts \
   -H 'Content-Type: application/json' \
   -d '{
     "scriptId": "deploy",
-    "version": "v1",
+    "version": "1",
     "content": "result = SHELL(\"./deploy.sh\")",
     "activate": true,
     "outputRules": [{

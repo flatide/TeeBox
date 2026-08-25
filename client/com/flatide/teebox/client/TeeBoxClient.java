@@ -33,10 +33,10 @@ import java.util.Map;
  * TeeBoxClient teebox = new TeeBoxClient("http://teebox-host:18080");
  *
  * // register + activate a script version
- * teebox.registerScript("calc_sum", "v1", "return {\"sum\": a + b}\n", true);
+ * teebox.registerScript("calc_sum", "1", "return {\"sum\": a + b}\n", true);
  *
  * // later: publish a new version and make it active (= "update")
- * teebox.addScriptVersion("calc_sum", "v2", "return {\"sum\": a + b, \"v\": 2}\n", true);
+ * teebox.addScriptVersion("calc_sum", "2", "return {\"sum\": a + b, \"v\": 2}\n", true);
  *
  * // run it and block until it finishes (best for short / immediate scripts)
  * Map<String, Object> props = new LinkedHashMap<String, Object>();
@@ -282,7 +282,8 @@ public class TeeBoxClient {
     }
 
     /**
-     * Add a new version to an existing script (the "update" path) with an explicit version identifier.
+     * Add a new version to an existing script (the "update" path) with an explicit canonical
+     * positive integer version identifier such as {@code "2"}.
      * Set {@code activate=true} to also make it the active version. Returns the script detail.
      * (POST /api/publisher/scripts/{id}/versions)
      */

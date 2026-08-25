@@ -31,14 +31,14 @@ public class ConcurrentRunTaskIsolationTest {
         try {
             manager.registerScriptVersion(
                     "long_shell",
-                    "v1",
+                    "1",
                     "result = SHELL(\"sleep 2; echo long-finished\")\n",
                     "long shell",
                     Collections.<String>emptyList(),
                     true);
             manager.registerScriptVersion(
                     "quick_run",
-                    "v1",
+                    "1",
                     "return \"quick-finished\"\n",
                     "quick run",
                     Collections.<String>emptyList(),

@@ -55,8 +55,8 @@ public class RunCancelTest {
         TestServer testServer = createServer(1, null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("spin_multi", "v1", SPIN_MULTI_SCRIPT, "spin", Arrays.asList("test"), true);
-            client.registerScript("quick", "v1", "return {\"n\": 1}\n", "quick", Arrays.asList("test"), true);
+            client.registerScript("spin_multi", "1", SPIN_MULTI_SCRIPT, "spin", Arrays.asList("test"), true);
+            client.registerScript("quick", "1", "return {\"n\": 1}\n", "quick", Arrays.asList("test"), true);
 
             String runId = (String) client.submitRun("spin_multi", null, new LinkedHashMap<String, Object>()).get("runId");
             waitForStatus(client, runId, "RUNNING", 8000L);
@@ -102,7 +102,7 @@ public class RunCancelTest {
         TestServer testServer = createServer(2, null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("shell_wait", "v1",
+            client.registerScript("shell_wait", "1",
                 "result = SHELL(\"" + testServer.script("sleep30") + "\")\n" +
                 "PRINT(result.ok)\n",
                 "cancel shell", Arrays.asList("test"), true);
@@ -129,8 +129,8 @@ public class RunCancelTest {
         TestServer testServer = createServer(1, null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("spin", "v1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
-            client.registerScript("quick", "v1", "return {\"n\": 1}\n", "quick", Arrays.asList("test"), true);
+            client.registerScript("spin", "1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
+            client.registerScript("quick", "1", "return {\"n\": 1}\n", "quick", Arrays.asList("test"), true);
 
             // Fill the single-slot pool, then queue a second run behind it.
             String spinning = (String) client.submitRun("spin", null, new LinkedHashMap<String, Object>()).get("runId");
@@ -158,7 +158,7 @@ public class RunCancelTest {
         TestServer testServer = createServer(2, null);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("spin_admin", "v1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
+            client.registerScript("spin_admin", "1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
 
             String apiRun = (String) client.submitRun("spin_admin", null, new LinkedHashMap<String, Object>()).get("runId");
             waitForStatus(client, apiRun, "RUNNING", 8000L);
@@ -187,7 +187,7 @@ public class RunCancelTest {
         File dataDir = Files.createTempDirectory("propertee-teebox-cancel").toFile();
         RunManager runManager = new RunManager(dataDir, 4);
         try {
-            runManager.registerScriptVersion("limited", "v1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
+            runManager.registerScriptVersion("limited", "1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
             runManager.updateScriptSettings("limited", 1, false);
 
             RunInfo first = runManager.submit(request("limited"));
@@ -203,7 +203,7 @@ public class RunCancelTest {
             Assert.assertTrue(runManager.cancelRun(first.runId, "Cancelled by test"));
             waitForManagerStatus(runManager, first.runId, RunStatus.CANCELLED, 10000L);
 
-            runManager.registerScriptVersion("limited", "v2", "return 1\n", "quick", Arrays.asList("test"), true);
+            runManager.registerScriptVersion("limited", "2", "return 1\n", "quick", Arrays.asList("test"), true);
             RunInfo third = runManager.submit(request("limited"));
             waitForManagerStatus(runManager, third.runId, RunStatus.COMPLETED, 10000L);
 
@@ -221,14 +221,14 @@ public class RunCancelTest {
         TestServer testServer = createServer(2, overrides);
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
-            client.registerScript("chatty", "v1",
+            client.registerScript("chatty", "1",
                 "i = 0\n" +
                 "loop i < 500 do\n" +
                 "    PRINT(\"line\", i)\n" +
                 "    i = i + 1\n" +
                 "end\n",
                 "chatty", Arrays.asList("test"), true);
-            client.registerScript("quiet", "v1", "PRINT(\"one\")\nPRINT(\"two\")\n",
+            client.registerScript("quiet", "1", "PRINT(\"one\")\nPRINT(\"two\")\n",
                 "quiet", Arrays.asList("test"), true);
 
             String chattyRun = (String) client.submitRun("chatty", null, new LinkedHashMap<String, Object>()).get("runId");

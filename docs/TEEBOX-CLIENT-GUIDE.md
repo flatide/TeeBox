@@ -35,7 +35,7 @@ import com.flatide.teebox.client.TeeBoxClient;
 Build the jar from the TeeBox repository.
 
 ```bash
-./gradlew clientJar          # → build/libs/teebox-client-<version>.jar  (e.g. teebox-client-1.28.0.jar)
+./gradlew clientJar          # → build/libs/teebox-client-<version>.jar  (e.g. teebox-client-1.29.0.jar)
 ./gradlew clientSourcesJar   # (optional) sources jar for IDE source attachment
 ```
 
@@ -49,7 +49,7 @@ Example of adding the jar to the host build:
 ```groovy
 // Gradle
 dependencies {
-    implementation files('libs/teebox-client-1.28.0.jar')
+    implementation files('libs/teebox-client-1.29.0.jar')
 }
 ```
 
@@ -58,7 +58,7 @@ dependencies {
 <dependency>
   <groupId>com.flatide</groupId>
   <artifactId>teebox-client</artifactId>
-  <version>1.28.0</version>
+  <version>1.29.0</version>
 </dependency>
 ```
 
@@ -155,7 +155,7 @@ teebox.setClientApiToken("client-secret")
 
 ### 6.1 Version policy (important)
 
-- **Auto-increment when the version is omitted**: integer version identifiers `"1"`, `"2"`, … are assigned automatically (existing maximum integer + 1). Explicit identifiers (including strings like `"v1"`) can also be used as-is.
+- **Auto-increment when the version is omitted**: canonical positive integer version identifiers `"1"`, `"2"`, … are assigned automatically. Explicit versions must use the same form; labels such as `"v1"`, `"latest"`, `"0"`, and `"01"` are rejected. The persistent high-water mark prevents a deleted number from being reused.
 - **Active version concept**: when you omit the version at run time, the **"active" version is run, not the newest version**. Even after adding a new version, the existing active version keeps being served until you activate it with `activate=true` (for staging/rollback purposes).
 - **Alias is script-level metadata**: the optional human-readable `alias` is shared by all versions. Calls and runs continue to identify a script by `scriptId`.
 
@@ -167,11 +167,11 @@ Map<String, Object> detail = teebox.registerScript("calc_sum", source, true);
 // The assigned version is detail.get("activeVersion") (when active) or the newest item in the versions list
 
 // (B) Explicit version
-teebox.registerScript("calc_sum", "v1", source, true);
+teebox.registerScript("calc_sum", "1", source, true);
 
 // (C) Specify a version description and script-level alias as well
 teebox.registerScriptWithAlias(
-    "calc_sum", "v1", source, "Compute the sum", "Sum Calculator", true);
+    "calc_sum", "1", source, "Compute the sum", "Sum Calculator", true);
 ```
 
 ### 6.3 Add a version (= update)
@@ -181,7 +181,7 @@ teebox.registerScriptWithAlias(
 teebox.addScriptVersion("calc_sum", newSource, true);   // next integer version, activate immediately
 
 // Explicit version
-teebox.addScriptVersion("calc_sum", "v2", newSource, true);
+teebox.addScriptVersion("calc_sum", "2", newSource, true);
 ```
 
 ### 6.4 Change the active version

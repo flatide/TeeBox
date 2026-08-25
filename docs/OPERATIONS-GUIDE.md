@@ -146,7 +146,7 @@ Full API specification: `swagger.yaml` (OpenAPI 3.0)
 Register script via Publisher API → Submit run via Client API → TeeBox executes → Retrieve results
 ```
 
-1. **Register script**: `POST /api/publisher/scripts` (body: `scriptId`, `content`, optional `version` — blank ⇒ auto-increment `"1"`, `"2"`, … — and `activate`). Add a version to an existing script with `POST /api/publisher/scripts/{scriptId}/versions`.
+1. **Register script**: `POST /api/publisher/scripts` (body: `scriptId`, `content`, optional `version` — blank ⇒ auto-increment `"1"`, `"2"`, … — and `activate`). Versions are canonical positive integers only; labels such as `v1`, `latest`, `0`, and `01` are rejected. Add a version to an existing script with `POST /api/publisher/scripts/{scriptId}/versions`. The allocator persists a high-water mark, so deleting a version never reuses its number.
 2. **Activate version**: `POST /api/publisher/scripts/{scriptId}/activate` (body: `{"version": "..."}`). A version added to an existing script never auto-activates — activation is an explicit step (staging/rollback); version-less runs execute the **active** version, not the newest.
 3. **Submit run**: `POST /api/client/scripts/{scriptId}/runs` (returns 202 + `runId`; async)
 4. **Poll results**: `GET /api/client/runs/{runId}` (summary), `.../status`, `.../result`
@@ -155,6 +155,36 @@ Recommended operational patterns:
 - A job-submit script should exit as soon as it obtains the job id.
 - Job status polling should be split into a separate short script and invoked periodically by an external scheduler or cron.
 - Avoid patterns that launch a background job inside a single ProperTee run and then perform a long `wait` or maintain a polling loop within the same run.
+
+### ProperTee imports in TeeBox
+
+`import util.file as file` resolves `util.file` as the TeeBox `scriptId` and pins its active
+numeric version before the entry script starts. `import util.file.2 as file` pins exact version
+`"2"`. Imported scripts expose root-level functions only: their top-level statements do not run,
+their globals are private, and an imported script cannot itself contain imports. Each run status,
+summary, and result response records the exact imported `scriptId`, `version`, and source `sha256`
+under `imports[]`, so the dependency snapshot remains auditable after an active version changes.
+
+Existing nonnumeric versions are not migrated automatically. Migrate their directory/file and
+`script.json` references to canonical positive integers before upgrading; new registration,
+activation, editing, deletion, and execution paths reject labels such as `v1`.
+
+For each affected script, use this offline migration procedure:
+
+1. Stop TeeBox and back up `<data-dir>/script-registry`.
+2. Assign every old version label a distinct canonical positive integer within the 32-bit signed
+   integer range. Rename
+   `<data-dir>/script-registry/<scriptId>/versions/<old-label>.tee` to `<number>.tee`.
+3. In the script's `script.json`, replace every `versions[].version` value and `activeVersion` with
+   the corresponding number. Do not change the source hash when only the file/version identifier was
+   renamed.
+4. Set `lastAllocatedVersion` to at least the largest number assigned, so future automatic saves
+   cannot reuse a migrated or previously deleted number.
+5. Start TeeBox and verify the active source and version list before accepting new runs. Keep the
+   backup until representative scripts, including imports, have completed successfully.
+
+Historical run records may retain their original version labels; they are audit records and are not
+used to resolve a new execution.
 
 ### Run Submitter Identity (`X-TeeBox-User`)
 
@@ -238,7 +268,7 @@ curl -X POST http://host:18080/api/publisher/scripts \
   -H 'Content-Type: application/json' \
   -d '{
     "scriptId": "deploy",
-    "version": "v1",
+    "version": "1",
     "content": "result = SHELL(\"./deploy.sh\")",
     "activate": true,
     "outputRules": [{
