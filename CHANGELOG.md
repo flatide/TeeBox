@@ -2,11 +2,14 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.30.1
 
 - Refresh the embedded propertee-js browser bundle from upstream `a3e2ccf`, so the script editor's
   client-side syntax check recognizes spec v0.23.0 imports and zero-argument qualified calls such as
   `alias::init()` instead of rejecting the closing parenthesis. Add a bundle-level regression guard.
+
+**274 TeeBox tests and 126 propertee-js tests green. Packaged with propertee2 0.31.0 at
+`48fa513f7060`.**
 
 ## 1.30.0
 
