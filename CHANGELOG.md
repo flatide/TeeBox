@@ -2,6 +2,15 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.31.0
+
+- Follow the active debug frame across import boundaries. Step In now switches the shared source
+  editor, current-line marker, locals/globals, and call stack to the imported module's immutable
+  launch snapshot; imported source remains read-only with entry-only breakpoints, and Step Out or
+  Restart restores the operator's editable entry buffer.
+
+**275 TeeBox tests green. Packaged with propertee2 0.31.0 at `48fa513f7060`.**
+
 ## 1.30.1
 
 - Refresh the embedded propertee-js browser bundle from upstream `a3e2ccf`, so the script editor's
