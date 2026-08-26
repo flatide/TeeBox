@@ -362,6 +362,15 @@ public class TeeBoxMultiUserUiTest {
             // and server lints can never disagree; the server validate endpoint stays the fallback.
             Assert.assertTrue("propertee-js bundle inlined (checkScript chain)",
                     html.contains("lintUnknownFunctions"));
+            // Keep the copied browser bundle at the same import-capable grammar level as the Java
+            // runtime. A pre-import bundle silently tokenized import/as as identifiers and then
+            // rejected zero-argument qualified calls such as alias::init() at the closing ')'.
+            Assert.assertTrue("embedded checker recognizes the import keyword",
+                    html.contains("ProperTeeLexer.K_IMPORT ="));
+            Assert.assertTrue("embedded parser recognizes qualified module calls",
+                    html.contains("localctx.moduleAlias = this.match(ProperTeeParser.ID)"));
+            Assert.assertTrue("embedded visitor dispatches qualified module calls",
+                    html.contains("if (ctx.moduleAlias)"));
             Assert.assertTrue("client-first check wired", html.contains("ptClientCheck"));
             int knownStart = html.indexOf("var PT_KNOWN=[");
             Assert.assertTrue("runtime known-name set rendered", knownStart >= 0);

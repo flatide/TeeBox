@@ -2,6 +2,12 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- Refresh the embedded propertee-js browser bundle from upstream `a3e2ccf`, so the script editor's
+  client-side syntax check recognizes spec v0.23.0 imports and zero-argument qualified calls such as
+  `alias::init()` instead of rejecting the closing parenthesis. Add a bundle-level regression guard.
+
 ## 1.30.0
 
 - Let roster admins transfer a script to another registered owner from the script detail page.
