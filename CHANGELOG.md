@@ -2,11 +2,13 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.29.1
 
 - Complete the two Java `TeeBoxClient` alias surfaces: `addScriptVersionWithAlias(...)` can update
   the script-level alias while adding an auto-assigned or explicit version, and alias-aware
   register/add overloads can carry `outputRules` in the same request.
+
+**273 TeeBox tests green. Packaged with propertee2 0.31.0 at `48fa513f7060`.**
 
 ## 1.29.0
 
