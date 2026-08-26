@@ -195,6 +195,13 @@ public class TeeBoxClient {
     /** Register an auto-versioned script with a script-level human-readable alias. */
     public Map<String, Object> registerScriptWithAlias(String scriptId, String content,
                                                        String alias, boolean activate) throws IOException {
+        return registerScriptWithAlias(scriptId, content, alias, activate, null);
+    }
+
+    /** Register an auto-versioned script with both an alias and output-capture rules. */
+    public Map<String, Object> registerScriptWithAlias(String scriptId, String content,
+                                                       String alias, boolean activate,
+                                                       List<Map<String, Object>> outputRules) throws IOException {
         requireText("scriptId", scriptId);
         requireText("content", content);
         Map<String, Object> body = new LinkedHashMap<String, Object>();
@@ -204,6 +211,9 @@ public class TeeBoxClient {
             body.put("alias", alias);
         }
         body.put("activate", Boolean.valueOf(activate));
+        if (outputRules != null && !outputRules.isEmpty()) {
+            body.put("outputRules", outputRules);
+        }
         return asMap(request("POST", "/api/publisher/scripts", body, 201));
     }
 
@@ -213,11 +223,30 @@ public class TeeBoxClient {
      * (POST /api/publisher/scripts/{id}/versions)
      */
     public Map<String, Object> addScriptVersion(String scriptId, String content, boolean activate) throws IOException {
+        return addScriptVersionWithAlias(scriptId, content, null, activate, null);
+    }
+
+    /** Add an auto-versioned script version and optionally update the script-level alias. */
+    public Map<String, Object> addScriptVersionWithAlias(String scriptId, String content,
+                                                         String alias, boolean activate) throws IOException {
+        return addScriptVersionWithAlias(scriptId, content, alias, activate, null);
+    }
+
+    /** Add an auto-versioned script version with an alias and output-capture rules. */
+    public Map<String, Object> addScriptVersionWithAlias(String scriptId, String content,
+                                                         String alias, boolean activate,
+                                                         List<Map<String, Object>> outputRules) throws IOException {
         requireText("scriptId", scriptId);
         requireText("content", content);
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("content", content);
+        if (alias != null) {
+            body.put("alias", alias);
+        }
         body.put("activate", Boolean.valueOf(activate));
+        if (outputRules != null && !outputRules.isEmpty()) {
+            body.put("outputRules", outputRules);
+        }
         return asMap(request("POST", "/api/publisher/scripts/" + enc(scriptId) + "/versions", body, 201));
     }
 
@@ -255,30 +284,13 @@ public class TeeBoxClient {
     /** Register a script (auto version) with output-capture {@code outputRules} (see {@link #outputRule}). */
     public Map<String, Object> registerScript(String scriptId, String content, boolean activate,
                                               List<Map<String, Object>> outputRules) throws IOException {
-        requireText("scriptId", scriptId);
-        requireText("content", content);
-        Map<String, Object> body = new LinkedHashMap<String, Object>();
-        body.put("scriptId", scriptId);
-        body.put("content", content);
-        body.put("activate", Boolean.valueOf(activate));
-        if (outputRules != null && !outputRules.isEmpty()) {
-            body.put("outputRules", outputRules);
-        }
-        return asMap(request("POST", "/api/publisher/scripts", body, 201));
+        return registerScriptWithAlias(scriptId, content, null, activate, outputRules);
     }
 
     /** Add a new version (auto version) with output-capture {@code outputRules} (see {@link #outputRule}). */
     public Map<String, Object> addScriptVersion(String scriptId, String content, boolean activate,
                                                 List<Map<String, Object>> outputRules) throws IOException {
-        requireText("scriptId", scriptId);
-        requireText("content", content);
-        Map<String, Object> body = new LinkedHashMap<String, Object>();
-        body.put("content", content);
-        body.put("activate", Boolean.valueOf(activate));
-        if (outputRules != null && !outputRules.isEmpty()) {
-            body.put("outputRules", outputRules);
-        }
-        return asMap(request("POST", "/api/publisher/scripts/" + enc(scriptId) + "/versions", body, 201));
+        return addScriptVersionWithAlias(scriptId, content, null, activate, outputRules);
     }
 
     /**
@@ -289,12 +301,25 @@ public class TeeBoxClient {
      */
     public Map<String, Object> addScriptVersion(String scriptId, String version, String content, boolean activate)
             throws IOException {
+        return addScriptVersionWithAlias(scriptId, version, content, null, null, activate);
+    }
+
+    /** Add an explicit version and optionally update its description and the script-level alias. */
+    public Map<String, Object> addScriptVersionWithAlias(String scriptId, String version, String content,
+                                                         String description, String alias, boolean activate)
+            throws IOException {
         requireText("scriptId", scriptId);
         requireText("version", version);
         requireText("content", content);
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("version", version);
         body.put("content", content);
+        if (description != null) {
+            body.put("description", description);
+        }
+        if (alias != null) {
+            body.put("alias", alias);
+        }
         body.put("activate", Boolean.valueOf(activate));
         return asMap(request("POST", "/api/publisher/scripts/" + enc(scriptId) + "/versions", body, 201));
     }

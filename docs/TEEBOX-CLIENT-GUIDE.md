@@ -182,6 +182,14 @@ teebox.addScriptVersion("calc_sum", newSource, true);   // next integer version,
 
 // Explicit version
 teebox.addScriptVersion("calc_sum", "2", newSource, true);
+
+// Add a version and update the shared script alias in the same request
+teebox.addScriptVersionWithAlias(
+    "calc_sum", newSource, "Updated Sum Calculator", false);
+
+// Explicit version + description + shared alias
+teebox.addScriptVersionWithAlias(
+    "calc_sum", "3", newSource, "Third version", "Sum Calculator v3", false);
 ```
 
 ### 6.4 Change the active version
@@ -653,7 +661,10 @@ rules.add(TeeBoxClient.outputRule("progress", "progress:\\s*(\\d+)", "stdout", 1
 
 ```java
 teebox.registerScript("long_job", source, true, rules);
-// or when adding a version: teebox.addScriptVersion("long_job", source, true, rules);
+// Alias and rules can be sent atomically as well:
+teebox.registerScriptWithAlias("long_job", source, "Long Job", true, rules);
+// Or when adding a version:
+teebox.addScriptVersionWithAlias("long_job", source, "Long Job v2", true, rules);
 ```
 
 ### 8.3 Wait for the published value
@@ -776,11 +787,15 @@ The full list of public methods. For detailed response shapes/examples, see ยง4โ
 | `registerScript(scriptId, content, activate, outputRules)` | `Map` | Auto-increment + output capture rules |
 | `registerScript(scriptId, version, content, activate)` | `Map` | Register with explicit version |
 | `registerScriptWithAlias(scriptId, content, alias, activate)` | `Map` | Auto-increment + set the script-level alias |
+| `registerScriptWithAlias(scriptId, content, alias, activate, outputRules)` | `Map` | Auto-increment + alias + output capture rules |
 | `registerScriptWithAlias(scriptId, version, content, description, alias, activate)` | `Map` | Specify version description + script-level alias |
 | `registerScript(scriptId, version, content, description, labels, activate)` | `Map` | Deprecated compatibility overload; `labels` are ignored |
 | `addScriptVersion(scriptId, content, activate)` | `Map` | Add a version (auto-increment) |
 | `addScriptVersion(scriptId, content, activate, outputRules)` | `Map` | Auto-increment + output rules |
 | `addScriptVersion(scriptId, version, content, activate)` | `Map` | Add with explicit version |
+| `addScriptVersionWithAlias(scriptId, content, alias, activate)` | `Map` | Auto-increment + update the script-level alias |
+| `addScriptVersionWithAlias(scriptId, content, alias, activate, outputRules)` | `Map` | Auto-increment + alias + output rules |
+| `addScriptVersionWithAlias(scriptId, version, content, description, alias, activate)` | `Map` | Explicit version + description + update the script-level alias |
 | `activateScriptVersion(scriptId, version)` | `Map` | Change the active version |
 | `updateScriptSettings(scriptId, maxConcurrentRuns, immediate, alias)` | `Map` | Replace execution settings and set/clear the script-level alias |
 | `listScripts()` | `List<Object>` | Full script list |

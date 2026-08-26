@@ -37,11 +37,23 @@ public class StandaloneClientIntegrationTest {
         TestServer server = startServer();
         try {
             TeeBoxClient client = new TeeBoxClient(server.baseUrl);
+            List<Map<String, Object>> rules = Arrays.asList(
+                TeeBoxClient.outputRule("jobId", "JOB_ID=(\\S+)"));
             Map<String, Object> created = client.registerScriptWithAlias(
-                "alias_client", "1", "return 1\n", "first version", "Friendly Name", true);
+                "alias_client", "return 1\n", "Friendly Name", true, rules);
             Assert.assertEquals("Friendly Name", created.get("alias"));
             Assert.assertFalse(((Map<?, ?>) ((List<?>) created.get("versions")).get(0))
                 .containsKey("labels"));
+            Assert.assertEquals(1,
+                ((List<?>) ((Map<?, ?>) ((List<?>) created.get("versions")).get(0)).get("outputRules")).size());
+
+            Map<String, Object> added = client.addScriptVersionWithAlias(
+                "alias_client", "return 2\n", "Updated By Version", false);
+            Assert.assertEquals("Updated By Version", added.get("alias"));
+
+            Map<String, Object> explicit = client.addScriptVersionWithAlias(
+                "alias_client", "3", "return 3\n", "third version", "Explicit Alias", false);
+            Assert.assertEquals("Explicit Alias", explicit.get("alias"));
 
             Map<String, Object> updated = client.updateScriptSettings(
                 "alias_client", 3, true, "Updated Name");
@@ -51,7 +63,7 @@ public class StandaloneClientIntegrationTest {
 
             // A pre-alias compiled caller still links to this method, but labels are discarded.
             Map<String, Object> second = client.registerScript(
-                "alias_client", "2", "return 2\n", "second version",
+                "alias_client", "4", "return 4\n", "fourth version",
                 Arrays.asList("legacy"), false);
             Assert.assertEquals("Updated Name", second.get("alias"));
             for (Object item : (List<?>) second.get("versions")) {

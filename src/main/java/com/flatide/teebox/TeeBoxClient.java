@@ -103,9 +103,25 @@ public class TeeBoxClient {
     /** Register a script (auto version) with output-capture rules. */
     public Map<String, Object> registerScript(String scriptId, String content, boolean activate,
                                               List<Map<String, Object>> outputRules) throws IOException {
+        return registerScriptWithAlias(scriptId, content, null, activate, outputRules);
+    }
+
+    /** Register an auto-versioned script with a script-level human-readable alias. */
+    public Map<String, Object> registerScriptWithAlias(String scriptId, String content,
+                                                       String alias, boolean activate) throws IOException {
+        return registerScriptWithAlias(scriptId, content, alias, activate, null);
+    }
+
+    /** Register an auto-versioned script with both an alias and output-capture rules. */
+    public Map<String, Object> registerScriptWithAlias(String scriptId, String content,
+                                                       String alias, boolean activate,
+                                                       List<Map<String, Object>> outputRules) throws IOException {
         Map<String, Object> payload = new LinkedHashMap<String, Object>();
         payload.put("scriptId", scriptId);
         payload.put("content", content);
+        if (alias != null) {
+            payload.put("alias", alias);
+        }
         payload.put("activate", Boolean.valueOf(activate));
         if (outputRules != null && !outputRules.isEmpty()) {
             payload.put("outputRules", outputRules);
@@ -113,22 +129,30 @@ public class TeeBoxClient {
         return postJson("/api/publisher/scripts", payload, 201);
     }
 
-    /** Register an auto-versioned script with a script-level human-readable alias. */
-    public Map<String, Object> registerScriptWithAlias(String scriptId, String content,
-                                                       String alias, boolean activate) throws IOException {
-        Map<String, Object> payload = new LinkedHashMap<String, Object>();
-        payload.put("scriptId", scriptId);
-        payload.put("content", content);
-        payload.put("alias", alias);
-        payload.put("activate", Boolean.valueOf(activate));
-        return postJson("/api/publisher/scripts", payload, 201);
-    }
-
     /** Add a new version with an auto-assigned (next integer) version identifier. */
     public Map<String, Object> addScriptVersion(String scriptId, String content, boolean activate) throws IOException {
+        return addScriptVersionWithAlias(scriptId, content, null, activate, null);
+    }
+
+    /** Add an auto-versioned script version and optionally update the script-level alias. */
+    public Map<String, Object> addScriptVersionWithAlias(String scriptId, String content,
+                                                         String alias, boolean activate) throws IOException {
+        return addScriptVersionWithAlias(scriptId, content, alias, activate, null);
+    }
+
+    /** Add an auto-versioned script version with an alias and output-capture rules. */
+    public Map<String, Object> addScriptVersionWithAlias(String scriptId, String content,
+                                                         String alias, boolean activate,
+                                                         List<Map<String, Object>> outputRules) throws IOException {
         Map<String, Object> payload = new LinkedHashMap<String, Object>();
         payload.put("content", content);
+        if (alias != null) {
+            payload.put("alias", alias);
+        }
         payload.put("activate", Boolean.valueOf(activate));
+        if (outputRules != null && !outputRules.isEmpty()) {
+            payload.put("outputRules", outputRules);
+        }
         return postJson("/api/publisher/scripts/" + urlPath(scriptId) + "/versions", payload, 201);
     }
 

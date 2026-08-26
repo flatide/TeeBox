@@ -182,6 +182,14 @@ teebox.addScriptVersion("calc_sum", newSource, true);   // 다음 정수 버전,
 
 // 버전 명시
 teebox.addScriptVersion("calc_sum", "2", newSource, true);
+
+// 버전 추가와 공유 script alias 변경을 한 요청으로 처리
+teebox.addScriptVersionWithAlias(
+    "calc_sum", newSource, "새 합계 계산기", false);
+
+// 명시 버전 + description + 공유 alias
+teebox.addScriptVersionWithAlias(
+    "calc_sum", "3", newSource, "세 번째 버전", "합계 계산기 v3", false);
 ```
 
 ### 6.4 활성 버전 변경
@@ -653,7 +661,10 @@ rules.add(TeeBoxClient.outputRule("progress", "progress:\\s*(\\d+)", "stdout", 1
 
 ```java
 teebox.registerScript("long_job", source, true, rules);
-// 또는 버전 추가 시: teebox.addScriptVersion("long_job", source, true, rules);
+// alias와 rule도 한 요청으로 보낼 수 있습니다:
+teebox.registerScriptWithAlias("long_job", source, "장기 작업", true, rules);
+// 또는 버전 추가 시:
+teebox.addScriptVersionWithAlias("long_job", source, "장기 작업 v2", true, rules);
 ```
 
 ### 8.3 게시된 값 대기
@@ -776,11 +787,15 @@ try {
 | `registerScript(scriptId, content, activate, outputRules)` | `Map` | 자동 증가 + 출력 캡처 규칙 |
 | `registerScript(scriptId, version, content, activate)` | `Map` | 버전 명시 등록 |
 | `registerScriptWithAlias(scriptId, content, alias, activate)` | `Map` | 자동 증가 + 스크립트 단위 alias 설정 |
+| `registerScriptWithAlias(scriptId, content, alias, activate, outputRules)` | `Map` | 자동 증가 + alias + 출력 캡처 규칙 |
 | `registerScriptWithAlias(scriptId, version, content, description, alias, activate)` | `Map` | 버전 description + 스크립트 단위 alias 지정 |
 | `registerScript(scriptId, version, content, description, labels, activate)` | `Map` | Deprecated 호환 오버로드; `labels`는 무시됨 |
 | `addScriptVersion(scriptId, content, activate)` | `Map` | 버전 추가(자동 증가) |
 | `addScriptVersion(scriptId, content, activate, outputRules)` | `Map` | 자동 증가 + 출력 규칙 |
 | `addScriptVersion(scriptId, version, content, activate)` | `Map` | 버전 명시 추가 |
+| `addScriptVersionWithAlias(scriptId, content, alias, activate)` | `Map` | 자동 증가 + 스크립트 단위 alias 변경 |
+| `addScriptVersionWithAlias(scriptId, content, alias, activate, outputRules)` | `Map` | 자동 증가 + alias + 출력 규칙 |
+| `addScriptVersionWithAlias(scriptId, version, content, description, alias, activate)` | `Map` | 명시 버전 + description + 스크립트 단위 alias 변경 |
 | `activateScriptVersion(scriptId, version)` | `Map` | 활성 버전 변경 |
 | `updateScriptSettings(scriptId, maxConcurrentRuns, immediate, alias)` | `Map` | 실행 설정을 교체하고 스크립트 단위 alias 설정/삭제 |
 | `listScripts()` | `List<Object>` | 전체 스크립트 목록 |
