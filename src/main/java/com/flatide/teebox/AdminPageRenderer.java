@@ -12,6 +12,7 @@ public class AdminPageRenderer {
     static final int DEFAULT_RUNS_PAGE_SIZE = 25;
     private final TeeBoxConfig config;
     private final RunManager runManager;
+    private final UserStore userStore;
     private final Gson gson;
     /**
      * Per-request viewer identity. Thread-local, NOT instance fields: the HTTP server handles
@@ -65,9 +66,10 @@ public class AdminPageRenderer {
         }
     }
 
-    public AdminPageRenderer(TeeBoxConfig config, RunManager runManager, Gson gson) {
+    public AdminPageRenderer(TeeBoxConfig config, RunManager runManager, UserStore userStore, Gson gson) {
         this.config = config;
         this.runManager = runManager;
+        this.userStore = userStore;
         this.gson = gson;
     }
 
@@ -1550,6 +1552,34 @@ public class AdminPageRenderer {
         sb.append("<div class='detail-item'><div class='detail-label'>Script Concurrency Limit</div><div class='detail-value'>").append(script.maxConcurrentRuns > 0 ? script.maxConcurrentRuns : "<span class='dim'>unlimited</span>").append("</div></div>");
         sb.append("<div class='detail-item'><div class='detail-label'>Immediate</div><div class='detail-value'>").append(script.immediate ? statusBadge("YES") + " <span class='dim'>(bypass global queue)</span>" : "<span class='dim'>no</span>").append("</div></div>");
         sb.append("</div></div>");
+
+        // Ownership is security-sensitive, so only a real roster admin sees this form. Open mode
+        // deliberately has no owner-management surface because it has no roster to choose from.
+        if (isRosterAdmin()) {
+            List<UserStore.User> users = userStore.listUsers();
+            sb.append("<div class='card'>");
+            sb.append("<div class='card-header'><h2>Ownership</h2></div>");
+            sb.append("<form method='post' action='/admin/scripts/owner/").append(urlPath(scriptId))
+              .append("' class='form-row-inline' style='align-items:end;' onsubmit='return confirm(\"Transfer script ownership? The previous owner will immediately lose write, run, and debug access to this script.\")'>");
+            sb.append("<div class='form-row' style='min-width:260px;'><label>Owner</label><select name='owner' required>");
+            if (script.owner == null || userStore.findUser(script.owner) == null) {
+                sb.append("<option value='' disabled selected>Select a registered user</option>");
+            }
+            for (UserStore.User user : users) {
+                // Double-quoted attribute: escape() covers double quotes even for a hand-edited
+                // roster username (UI-created usernames already use the conservative name regex).
+                sb.append("<option value=\"").append(escape(user.username)).append("\"");
+                if (user.username.equals(script.owner)) {
+                    sb.append(" selected");
+                }
+                sb.append(">").append(escape(user.username)).append(" (").append(escape(user.role)).append(")</option>");
+            }
+            sb.append("</select></div>");
+            sb.append("<button type='submit' class='btn btn-sm'>Change owner</button>");
+            sb.append("</form>");
+            sb.append("<p class='dim' style='font-size:12px;margin-top:10px;'>The new owner can modify, run, and debug this script immediately. Read-only monitor permissions still take precedence over ownership.</p>");
+            sb.append("</div>");
+        }
 
         // Execution settings card (owner or admin)
         if (canModify(script)) {

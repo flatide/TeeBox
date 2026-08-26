@@ -107,7 +107,10 @@ The `/admin` HTML UI has its own cookie/session login, **independent of the API 
   remain admin-only in the UI, even on the user's own script. `monitor` is read-only: it may view
   scripts and ordinary Runs/Tasks across owners, but cannot execute/mutate them and cannot see the
   Debug menu, debug sessions, or debug-origin Runs/Tasks. `admin` accounts may act on everything;
-  server shutdown and user management are admin-only. The `/api/*` namespaces are unaffected
+  from a script detail page, an admin may transfer that script to another registered user; the old
+  owner's access to that script is revoked and the new owner's permissions apply immediately.
+  Assigning a script to a `monitor` does not override the monitor role's read-only restriction. Server shutdown, user
+  management, and ownership transfer are admin-only. The `/api/*` namespaces are unaffected
   (token-gated, no ownership checks).
 
 ### Running

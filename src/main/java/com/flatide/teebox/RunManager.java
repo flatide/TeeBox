@@ -380,6 +380,10 @@ public class RunManager {
         return scriptRegistry.updateScriptSettings(scriptId, maxConcurrentRuns, immediate, alias);
     }
 
+    public ScriptInfo updateScriptOwner(String scriptId, String owner) {
+        return scriptRegistry.updateScriptOwner(scriptId, owner);
+    }
+
     public boolean deleteScript(String scriptId) {
         return scriptRegistry.deleteScript(scriptId);
     }

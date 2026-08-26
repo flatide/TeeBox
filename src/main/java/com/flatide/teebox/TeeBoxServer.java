@@ -63,7 +63,7 @@ public class TeeBoxServer {
                 sessionManager.cleanExpired();
             }
         });
-        this.pageRenderer = new AdminPageRenderer(config, runManager, gson);
+        this.pageRenderer = new AdminPageRenderer(config, runManager, userStore, gson);
         this.pageRenderer.setDebugSessionManager(debugSessionManager);
         this.server = HttpServer.create(new InetSocketAddress(config.bindAddress, config.port), 0);
         this.httpExecutor = Executors.newCachedThreadPool();
@@ -353,6 +353,33 @@ public class TeeBoxServer {
                     boolean immediate = "on".equals(form.get("immediate")) || "true".equals(form.get("immediate"));
                     runManager.updateScriptSettings(scriptId, Math.max(0, maxConcurrent), immediate,
                         form.get("alias"));
+                    redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
+                    return;
+                }
+                if ("POST".equals(method) && path.startsWith("/admin/scripts/owner/")) {
+                    // Unlike the general isAdmin(session) helper, open mode does not count here:
+                    // ownership can only be assigned to a concrete user from a real roster.
+                    if (!sessionManager.isLoginRequired() || session == null || !session.isAdmin()) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    String scriptId = path.substring("/admin/scripts/owner/".length());
+                    if (scriptId.length() == 0) {
+                        throw new IllegalArgumentException("Script ID is required");
+                    }
+                    Map<String, String> form = parseForm(exchange);
+                    String owner = trimToNull(form.get("owner"));
+                    if (owner == null) {
+                        throw new IllegalArgumentException("Owner is required");
+                    }
+                    if (userStore.findUser(owner) == null) {
+                        throw new IllegalArgumentException("Unknown owner: " + owner);
+                    }
+                    ScriptInfo previous = runManager.getScript(scriptId);
+                    ScriptInfo updated = runManager.updateScriptOwner(scriptId, owner);
+                    TeeBoxLog.info("AdminUI", "Script owner changed: " + scriptId + " "
+                            + (previous != null && previous.owner != null ? previous.owner : "<none>")
+                            + " -> " + updated.owner + " by " + session.username);
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId));
                     return;
                 }

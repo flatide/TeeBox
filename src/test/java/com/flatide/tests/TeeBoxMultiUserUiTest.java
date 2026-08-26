@@ -97,6 +97,72 @@ public class TeeBoxMultiUserUiTest {
     }
 
     @Test
+    public void adminCanTransferScriptOwnershipFromScriptPage() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-owner-transfer").toFile();
+        writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"},"
+                + "{\"username\":\"alice\",\"role\":\"user\"},"
+                + "{\"username\":\"bob\",\"role\":\"user\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "alice-pw");
+            String bob = login(base, "bob", "bob-pw");
+            String admin = login(base, "admin", "admin-pw");
+
+            assertRedirect("alice registers her script", postForm(base, "/admin/scripts/register",
+                    "scriptId=transfer_script&content=" + enc(SCRIPT_BODY) + "&activate=on", alice));
+
+            String alicePage = getBody(base, "/admin/scripts/transfer_script?version=1", alice);
+            Assert.assertFalse("regular owner must not see the ownership-transfer form",
+                    alicePage.contains("/admin/scripts/owner/transfer_script"));
+
+            String adminPage = getBody(base, "/admin/scripts/transfer_script?version=1", admin);
+            Assert.assertTrue("admin should see the ownership-transfer form",
+                    adminPage.contains("action='/admin/scripts/owner/transfer_script'"));
+            Assert.assertTrue("current owner should be selected",
+                    adminPage.contains("<option value=\"alice\" selected>alice (user)</option>"));
+            Assert.assertTrue("registered target user should be selectable",
+                    adminPage.contains("<option value=\"bob\">bob (user)</option>"));
+
+            assertForbidden("regular owner cannot transfer ownership", postForm(base,
+                    "/admin/scripts/owner/transfer_script", "owner=bob", alice));
+
+            String[] unknown = postFormWithBody(base, "/admin/scripts/owner/transfer_script",
+                    "owner=missing_user", admin);
+            Assert.assertEquals("unknown owner should be rejected", "400", unknown[0]);
+            Assert.assertTrue("unknown-owner error should identify the target",
+                    unknown[1].contains("Unknown owner: missing_user"));
+
+            assertRedirect("admin transfers ownership to bob", postForm(base,
+                    "/admin/scripts/owner/transfer_script", "owner=bob", admin));
+            Assert.assertEquals("bob", server.getRunManager().getScript("transfer_script").owner);
+
+            String transferredPage = getBody(base, "/admin/scripts/transfer_script?version=1", admin);
+            Assert.assertTrue("new owner should be selected after transfer",
+                    transferredPage.contains("<option value=\"bob\" selected>bob (user)</option>"));
+
+            assertForbidden("previous owner loses write access immediately", postForm(base,
+                    "/admin/scripts/update-source",
+                    "scriptId=transfer_script&version=1&content=" + enc(SCRIPT_BODY), alice));
+            assertRedirect("new owner gains write access immediately", postForm(base,
+                    "/admin/scripts/update-source",
+                    "scriptId=transfer_script&version=1&content=" + enc(SCRIPT_BODY), bob));
+
+            server.stop();
+            server = startServer(dataDir);
+            base = "http://127.0.0.1:" + server.getPort();
+            Assert.assertEquals("owner transfer should survive restart", "bob",
+                    server.getRunManager().getScript("transfer_script").owner);
+            String bobAfterRestart = login(base, "bob", "bob-pw");
+            assertRedirect("persisted owner can still edit after restart", postForm(base,
+                    "/admin/scripts/update-source",
+                    "scriptId=transfer_script&version=1&content=" + enc(SCRIPT_BODY), bobAfterRestart));
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
     public void userCanDebugOnlyOwnedScriptAndOwnUiRun() throws Exception {
         File dataDir = Files.createTempDirectory("teebox-user-debug").toFile();
         writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"},"

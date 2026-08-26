@@ -2,6 +2,12 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- Let roster admins transfer a script to another registered owner from the script detail page.
+  The server rechecks the admin role and target roster membership, persists the owner atomically,
+  and applies the new ownership permissions immediately.
+
 ## 1.29.1
 
 - Complete the two Java `TeeBoxClient` alias surfaces: `addScriptVersionWithAlias(...)` can update

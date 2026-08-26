@@ -453,6 +453,22 @@ public class ScriptRegistry {
         return info.copy();
     }
 
+    /** Change the admin-UI owner recorded on a script. The caller validates roster membership. */
+    public synchronized ScriptInfo updateScriptOwner(String scriptId, String owner) {
+        if (owner == null || owner.trim().length() == 0) {
+            throw new IllegalArgumentException("owner is required");
+        }
+        ScriptInfo info = requireScript(scriptId);
+        String normalizedOwner = owner.trim();
+        if (normalizedOwner.equals(info.owner)) {
+            return info.copy();
+        }
+        info.owner = normalizedOwner;
+        info.updatedAt = System.currentTimeMillis();
+        saveScript(info);
+        return info.copy();
+    }
+
     /** Soft-delete: mark script as deleted. Actual removal is deferred to purgeExpiredScripts. */
     public synchronized boolean deleteScript(String scriptId) {
         validateName("scriptId", scriptId);

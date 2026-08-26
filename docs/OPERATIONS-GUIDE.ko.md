@@ -105,7 +105,10 @@ duration 형식: 숫자만 쓰면 ms, suffix 는 `ms`, `s`, `m`, `h`, `d` (예: 
   디버깅할 수 있습니다. API 로 제출된 run(origin `api`)은 본인 스크립트의 run 이라도 UI 에서
   admin 전용입니다. `monitor` 는 읽기 전용으로 소유자와 무관하게 일반 스크립트와 Run/Task를
   조회할 수 있지만 실행·수정할 수 없고 Debug 메뉴, 디버그 세션, debug-origin Run/Task도 볼 수
-  없습니다. `admin` 은 전부 가능하며 서버 shutdown 과 사용자 관리는 admin 전용입니다.
+  없습니다. `admin` 은 전부 가능하며 스크립트 상세 화면에서 owner를 다른 등록 사용자에게 이전할
+  수 있습니다. 이전 즉시 기존 owner의 해당 스크립트 권한은 회수되고 새 owner의 권한이
+  적용됩니다. 단, `monitor`에게 이전해도 monitor 역할의 읽기 전용 제한이 우선합니다. 서버 shutdown,
+  owner 이전은 admin 전용입니다.
   `/api/*` 네임스페이스는 영향 없음(토큰 기반, 소유권 검사 없음).
 
 ### 실행
