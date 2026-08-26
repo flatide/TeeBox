@@ -2,11 +2,13 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.30.0
 
 - Let roster admins transfer a script to another registered owner from the script detail page.
   The server rechecks the admin role and target roster membership, persists the owner atomically,
   and applies the new ownership permissions immediately.
+
+**274 TeeBox tests green. Packaged with propertee2 0.31.0 at `48fa513f7060`.**
 
 ## 1.29.1
 
