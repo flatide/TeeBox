@@ -5,16 +5,24 @@ import com.flatide.propertee2.module.ModuleResolutionException;
 import com.flatide.propertee2.module.ModuleResolver;
 import com.flatide.propertee2.module.ModuleSource;
 
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /** Maps a ProperTee module id directly to a TeeBox scriptId and pins its resolved version. */
 final class TeeBoxModuleResolver implements ModuleResolver {
     private final ScriptRegistry registry;
     private final Consumer<ResolvedModuleInfo> observer;
+    private final BiConsumer<String, String> sourceObserver;
 
     TeeBoxModuleResolver(ScriptRegistry registry, Consumer<ResolvedModuleInfo> observer) {
+        this(registry, observer, null);
+    }
+
+    TeeBoxModuleResolver(ScriptRegistry registry, Consumer<ResolvedModuleInfo> observer,
+                         BiConsumer<String, String> sourceObserver) {
         this.registry = registry;
         this.observer = observer;
+        this.sourceObserver = sourceObserver;
     }
 
     @Override public ModuleSource resolve(ModuleRequest request) {
@@ -35,7 +43,12 @@ final class TeeBoxModuleResolver implements ModuleResolver {
                 info.sha256 = resolved.sha256;
                 observer.accept(info);
             }
-            return new ModuleSource(resolved.scriptId, version, resolved.displayPath, resolved.source);
+            ModuleSource source = new ModuleSource(
+                    resolved.scriptId, version, resolved.displayPath, resolved.source);
+            if (sourceObserver != null) {
+                sourceObserver.accept(source.sourceId(), source.source());
+            }
+            return source;
         } catch (ModuleResolutionException e) {
             throw e;
         } catch (IllegalArgumentException e) {

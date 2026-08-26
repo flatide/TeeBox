@@ -580,6 +580,8 @@ public class DebugSessionManager {
         public final String scriptId;
         public final String version;
         public final String sourceCode;
+        /** Immutable launch sources keyed by DebugFrame.sourceId (entry plus resolved imports). */
+        final ConcurrentHashMap<String, String> sources = new ConcurrentHashMap<String, String>();
         /** Debug Props captured from Version Source; Restart deep-copies and reuses them. */
         public final Map<String, Object> inputProperties;
         public final int maxIterations;
@@ -634,6 +636,7 @@ public class DebugSessionManager {
             this.scriptId = scriptId;
             this.version = version;
             this.sourceCode = sourceCode;
+            this.sources.put(scriptId + "@" + version, sourceCode);
             this.inputProperties = inputProperties != null
                 ? (Map<String, Object>) TypeChecker.deepCopy(inputProperties)
                 : new LinkedHashMap<String, Object>();
@@ -676,6 +679,13 @@ public class DebugSessionManager {
                         liveBreakpoints.add(entryLine);
                     }
                     Session.this.liveBreakpoints = liveBreakpoints;
+                }
+            }
+
+            @Override
+            public void onModuleSourceResolved(String sourceId, String source) {
+                if (sourceId != null && source != null) {
+                    sources.put(sourceId, source);
                 }
             }
 
@@ -898,6 +908,12 @@ public class DebugSessionManager {
         snapshot.put("threadId", Integer.valueOf(frame.threadId()));
         snapshot.put("threadName", frame.threadName());
         snapshot.put("sourceId", frame.sourceId());
+        String entrySourceId = session.scriptId + "@" + session.version;
+        snapshot.put("entrySource", Boolean.valueOf(entrySourceId.equals(frame.sourceId())));
+        String frameSource = session.sources.get(frame.sourceId());
+        if (frameSource != null) {
+            snapshot.put("sourceCode", frameSource);
+        }
         snapshot.put("line", Integer.valueOf(frame.line()));
         snapshot.put("column", Integer.valueOf(frame.column()));
         snapshot.put("statement", frame.statementText());

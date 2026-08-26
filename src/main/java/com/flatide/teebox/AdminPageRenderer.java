@@ -1062,6 +1062,9 @@ public class AdminPageRenderer {
         sb.append("</div></div>");
 
         sb.append("<div class='card'><div class='card-header'><h2>Execution Source</h2>");
+        sb.append("<span id='dbg-source-context' class='dim mono'>")
+          .append(escape(session.scriptId)).append("@").append(escape(session.version))
+          .append(" (entry)</span>");
         sb.append("</div>");
         sb.append("<textarea id='dbg-source' rows='24' class='pt-editor-fallback' data-pt-editor ");
         sb.append("data-pt-panel data-pt-breakpoints ");
@@ -1091,11 +1094,14 @@ public class AdminPageRenderer {
         sb.append("<button class='btn btn-sm' onclick='dbgEval()'>Evaluate</button></div>");
         sb.append("</section>");
         sb.append("<section class='dbg-pane dbg-vars-pane' aria-label='Debug variables'>");
-        sb.append("<div class='dbg-pane-header'><span class='dbg-pane-title'>Debug State</span></div>");
+        sb.append("<div class='dbg-pane-header'><span class='dbg-pane-title'>Debug State</span>");
+        sb.append("<span id='dbg-state-context' class='dim mono'></span></div>");
         sb.append("<div class='dbg-vars-scroll'>");
         sb.append("<div class='dbg-var-section'><h3>Logical Threads</h3>");
         sb.append("<p class='dim dbg-worker-hint'>The highlighted thread owns the current inspectable frame.</p>");
         sb.append("<div id='dbg-workers'><p class='empty'>&mdash;</p></div></div>");
+        sb.append("<div class='dbg-var-section'><h3>Call Stack</h3>");
+        sb.append("<div id='dbg-stack'><p class='empty'>&mdash;</p></div></div>");
         sb.append("<div class='dbg-var-section' id='dbg-returns-section' style='display:none'>");
         sb.append("<h3>Function Returns</h3><div id='dbg-returns'></div></div>");
         sb.append("<div class='dbg-var-section'><h3>Locals</h3><div id='dbg-locals'><p class='empty'>&mdash;</p></div></div>");
@@ -1109,12 +1115,25 @@ public class AdminPageRenderer {
         sb.append("var sid='").append(jsString(sessionId)).append("';");
         sb.append("var base='/admin/debug/'+encodeURIComponent(sid);");
         sb.append("var pausedKey=null;var pollTimer=null;var curGen=null;var restarting=false;");
+        sb.append("var entrySourceId='").append(jsString(session.scriptId + "@" + session.version)).append("';");
+        sb.append("var entryDraft=el('dbg-source').value;var displayedSourceId=entrySourceId;var displayedIsEntry=true;");
         sb.append("var seenStdout=0;var seenStderr=0;");
         sb.append("var latestBreakpoints=[];var bpDesired=[];var bpSending=false;");
         sb.append("var latestDebugLine=null;var latestErrorLine=null;");
         sb.append("function el(id){return document.getElementById(id);}");
         sb.append("function setSourceLocked(locked){var source=el('dbg-source');");
         sb.append("if(source.ptEditor){source.ptEditor.setReadOnly(locked);}else{source.readOnly=!!locked;}}");
+        sb.append("function setSourceValue(value){var source=el('dbg-source');value=value==null?'':String(value);");
+        sb.append("if(source.value===value)return;source.value=value;if(source.ptEditor){source.ptEditor.refresh();}");
+        sb.append("else{source.dispatchEvent(new Event('input'));}}");
+        sb.append("function captureEntryDraft(){if(displayedIsEntry){entryDraft=el('dbg-source').value;}}");
+        sb.append("function showFrameSource(p){var sourceId=p.sourceId||entrySourceId;");
+        sb.append("var isEntry=p.entrySource===true||sourceId===entrySourceId;");
+        sb.append("if(sourceId!==displayedSourceId||isEntry!==displayedIsEntry){captureEntryDraft();");
+        sb.append("setSourceValue(isEntry?entryDraft:(p.sourceCode||''));displayedSourceId=sourceId;displayedIsEntry=isEntry;}");
+        sb.append("el('dbg-source-context').textContent=sourceId+(isEntry?' (entry)':' (imported module, read-only)');");
+        sb.append("el('dbg-state-context').textContent=sourceId+' : '+p.line+':'+p.column;}");
+        sb.append("function entrySourceForRestart(){captureEntryDraft();return entryDraft;}");
         sb.append("function esc(s){var d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}");
         sb.append("function logLine(s){var c=el('dbg-console');c.textContent+=(c.textContent?'\\n':'')+s;c.scrollTop=c.scrollHeight;}");
         sb.append("function syncRunStream(lines,total,stderr){lines=lines||[];total=Number(total)||lines.length;");
@@ -1153,7 +1172,7 @@ public class AdminPageRenderer {
         sb.append("setSourceLocked(true);");
         sb.append("var ops=['continue','stepOver','stepIn','stepOut'];");
         sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=true;}");
-        sb.append("post(base+'/restart',{source:el('dbg-source').value},function(st,r){");
+        sb.append("post(base+'/restart',{source:entrySourceForRestart()},function(st,r){");
         sb.append("if(st===201&&r&&r.sessionId){window.location.assign('/admin/debug/'+encodeURIComponent(r.sessionId));return;}");
         sb.append("restarting=false;logLine('! '+(r&&r.error?r.error:'HTTP '+st));refresh();});};");
         // Poll a timed-out command's outcome by id (the command keeps executing server-side).
@@ -1170,9 +1189,9 @@ public class AdminPageRenderer {
         sb.append("function sameLines(a,b){if(a.length!==b.length)return false;");
         sb.append("for(var i=0;i<a.length;i++){if(a[i]!==b[i])return false;}return true;}");
         sb.append("function syncSourceEditor(reveal){var source=el('dbg-source');if(!source.ptEditor)return;");
-        sb.append("source.ptEditor.setBreakpoints(bpSending?bpDesired:latestBreakpoints);");
+        sb.append("source.ptEditor.setBreakpoints(displayedIsEntry?(bpSending?bpDesired:latestBreakpoints):[]);");
         sb.append("source.ptEditor.setDebugLine(latestDebugLine,reveal);");
-        sb.append("source.ptEditor.setErrorLine(latestErrorLine,false);}");
+        sb.append("source.ptEditor.setErrorLine(displayedIsEntry?latestErrorLine:null,false);}");
         sb.append("function flushBreakpoints(){if(bpSending)return;var sent=bpDesired.slice();bpSending=true;");
         sb.append("post(base+'/breakpoints',{lines:sent},function(st,r){bpSending=false;");
         sb.append("if(st!==200||!r){logLine('! '+(r&&r.error?r.error:'HTTP '+st));");
@@ -1181,6 +1200,7 @@ public class AdminPageRenderer {
         sb.append("if(!sameLines(bpDesired,sent)){flushBreakpoints();return;}");
         sb.append("bpDesired=latestBreakpoints.slice();syncSourceEditor(false);});}");
         sb.append("el('dbg-source').addEventListener('pt-breakpoints-change',function(e){");
+        sb.append("if(!displayedIsEntry){syncSourceEditor(false);return;}");
         sb.append("bpDesired=(e.detail&&e.detail.lines?e.detail.lines:[]).slice();flushBreakpoints();});");
         sb.append("el('dbg-source').addEventListener('pt-editor-ready',function(){syncSourceEditor(false);});");
         sb.append("function varsTable(obj){var keys=Object.keys(obj||{});");
@@ -1196,11 +1216,16 @@ public class AdminPageRenderer {
         sb.append("function returnsTable(rows){var h=\"<table class='data-table'><tbody>\";");
         sb.append("for(var i=0;i<rows.length;i++){h+=\"<tr><td class='mono'>(return) \"+esc(rows[i].function)+\"</td><td class='mono'>\"+esc(rows[i].value)+\"</td></tr>\";}");
         sb.append("return h+'</tbody></table>';}");
+        sb.append("function stackTable(p){var rows=p.callStack||[];");
+        sb.append("var h=\"<table class='data-table'><thead><tr><th>Function</th><th>Source</th><th>Line</th></tr></thead><tbody>\";");
+        sb.append("var current=rows.length?rows[rows.length-1].function:'<top-level>';");
+        sb.append("h+=\"<tr class='dbg-worker-current'><td class='mono'>\"+esc(current)+\" (current)</td><td class='mono'>\"+esc(p.sourceId)+\"</td><td class='mono'>\"+esc(p.line+':'+p.column)+\"</td></tr>\";");
+        sb.append("for(var i=rows.length-1;i>=0;i--){var r=rows[i];var caller=i>0?rows[i-1].function:'<top-level>';h+=\"<tr><td class='mono'>\"+esc(caller)+\"</td><td class='mono'>\"+esc(r.sourceId)+\"</td><td class='mono'>\"+esc(r.line+':'+r.column)+\"</td></tr>\";}");
+        sb.append("return h+'</tbody></table>';}");
         sb.append("function render(s){");
         sb.append("syncRunOutput(s);");
         sb.append("el('dbg-workers').innerHTML=workersTable(s.threads);");
         sb.append("var paused=!!s.paused;var ended=s.state==='ENDED';");
-        sb.append("setSourceLocked(restarting||s.state==='RUNNING');");
         sb.append("curGen=paused?s.pauseGeneration:null;");
         sb.append("var ops=['continue','stepOver','stepIn','stepOut'];");
         sb.append("for(var i=0;i<ops.length;i++){el('dbg-btn-'+ops[i]).disabled=!paused||restarting;}");
@@ -1211,17 +1236,20 @@ public class AdminPageRenderer {
         sb.append("if(!bpSending){bpDesired=latestBreakpoints.slice();}");
         sb.append("if(paused){");
         sb.append("var p=s.paused;var key=s.pauseGeneration+':'+p.threadId+':'+p.line+':'+p.column+':'+p.reason;");
+        sb.append("showFrameSource(p);");
         sb.append("latestDebugLine=p.line;");
         sb.append("var rets=p.returns||[];el('dbg-returns-section').style.display=rets.length?'':'none';");
         sb.append("el('dbg-returns').innerHTML=rets.length?returnsTable(rets):'';");
         sb.append("el('dbg-locals').innerHTML=varsTable(p.locals);");
         sb.append("el('dbg-globals').innerHTML=varsTable(p.globals);");
+        sb.append("el('dbg-stack').innerHTML=stackTable(p);");
         sb.append("var newPause=key!==pausedKey;syncSourceEditor(newPause);");
         sb.append("if(newPause){pausedKey=key;}");
         sb.append("}else{");
         sb.append("pausedKey=null;latestDebugLine=null;syncSourceEditor(false);");
         sb.append("el('dbg-returns-section').style.display='none';el('dbg-returns').innerHTML='';");
         sb.append("}");
+        sb.append("setSourceLocked(restarting||s.state==='RUNNING'||!displayedIsEntry);");
         sb.append("if(ended){");
         sb.append("showEndOnce(s);");
         sb.append("if(pollTimer){clearInterval(pollTimer);pollTimer=null;}");

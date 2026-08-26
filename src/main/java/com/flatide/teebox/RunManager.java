@@ -899,6 +899,8 @@ public class RunManager {
         com.flatide.propertee2.interp.DebugHandler handler();
         /** Receives the engine's live breakpoint set before the run starts (seed + keep). */
         void onDebugReady(java.util.Set<Integer> liveBreakpoints);
+        /** Receives each imported module's immutable launch source for source-aware frames. */
+        default void onModuleSourceResolved(String sourceId, String source) { }
         /** Cancel was requested: wake a session paused at a break (an engine abort alone cannot —
          *  the fiber is blocked in the handler, not at a cooperative checkpoint). */
         void onCancelWake();
@@ -1160,6 +1162,13 @@ public class RunManager {
                             run.imports.add(module.copy());
                         }
                         runRegistry.markDirty(run);
+                    }
+
+                    @Override
+                    public void onModuleSourceResolved(String sourceId, String source) {
+                        if (debugAttach != null) {
+                            debugAttach.onModuleSourceResolved(sourceId, source);
+                        }
                     }
 
                     @Override

@@ -173,7 +173,12 @@ public class ScriptExecutor {
             if (scriptRegistry != null) {
                 final Callbacks importCallbacks = callbacks;
                 visitor.setModuleResolver(new TeeBoxModuleResolver(scriptRegistry,
-                        module -> { if (importCallbacks != null) importCallbacks.onModuleResolved(module); }));
+                        module -> { if (importCallbacks != null) importCallbacks.onModuleResolved(module); },
+                        (sourceId, source) -> {
+                            if (importCallbacks != null) {
+                                importCallbacks.onModuleSourceResolved(sourceId, source);
+                            }
+                        }));
             }
             // Reserved `_SYS`: TeeBox system variables for the run, exposed as a global object so a
             // script can read its own run id (e.g. _SYS.runId, or ::_SYS.runId inside a function).
@@ -256,6 +261,9 @@ public class ScriptExecutor {
 
         /** Called once for each exact imported script version pinned before entry execution. */
         default void onModuleResolved(ResolvedModuleInfo module) { }
+
+        /** Debug runs only: the immutable module source snapshot keyed by its frame sourceId. */
+        default void onModuleSourceResolved(String sourceId, String source) { }
     }
 
     public static class ExecutionResult {

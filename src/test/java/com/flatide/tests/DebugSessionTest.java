@@ -52,6 +52,92 @@ public class DebugSessionTest {
         "PRINT(b)\n";
 
     @Test
+    public void stepIntoImportedFunctionPublishesTheModuleSourceAndScope() throws Exception {
+        TestServer testServer = createServer(null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            String moduleSource =
+                "function inspect(arg) do\n" +
+                "    ::module_global = \"module\"\n" +
+                "    local_value = arg + \"-local\"\n" +
+                "    return local_value\n" +
+                "end\n";
+            String entrySource =
+                "import lib.debugmod as mod\n" +
+                "entry_value = \"entry\"\n" +
+                "answer = mod::inspect(\"seed\")\n" +
+                "PRINT(answer)\n";
+            client.registerScript("lib.debugmod", "1", moduleSource,
+                "debug module", Arrays.asList("test"), true);
+            client.registerScript("debug_entry", "1", entrySource,
+                "debug entry", Arrays.asList("test"), true);
+            String sourceRunId = (String) client.submitRun("debug_entry", null,
+                new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(client, sourceRunId, "COMPLETED", 10000L);
+
+            Map<String, Object> session = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            String sessionId = String.valueOf(session.get("sessionId"));
+            Map<String, Object> paused =
+                waitForPausedAtSource(testServer, sessionId, "debug_entry@1", 2, 10000L);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> entryFrame = (Map<String, Object>) paused.get("paused");
+            Assert.assertEquals(Boolean.TRUE, entryFrame.get("entrySource"));
+            Assert.assertEquals(entrySource, entryFrame.get("sourceCode"));
+
+            command(testServer, sessionId, "stepOver", null, 200);
+            waitForPausedAtSource(testServer, sessionId, "debug_entry@1", 3, 10000L);
+            command(testServer, sessionId, "stepIn", null, 200);
+            paused = waitForPausedAtSource(
+                testServer, sessionId, "lib.debugmod@1", 2, 10000L);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> moduleFrame = (Map<String, Object>) paused.get("paused");
+            Assert.assertEquals(Boolean.FALSE, moduleFrame.get("entrySource"));
+            Assert.assertEquals(moduleSource, moduleFrame.get("sourceCode"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> moduleLocals =
+                (Map<String, Object>) moduleFrame.get("locals");
+            Assert.assertEquals("seed", moduleLocals.get("arg"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> moduleGlobals =
+                (Map<String, Object>) moduleFrame.get("globals");
+            Assert.assertFalse("entry globals leaked into the imported frame",
+                moduleGlobals.containsKey("entry_value"));
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> stack =
+                (List<Map<String, Object>>) moduleFrame.get("callStack");
+            Assert.assertEquals(1, stack.size());
+            Assert.assertEquals("inspect", stack.get(0).get("function"));
+            Assert.assertEquals("debug_entry@1", stack.get(0).get("sourceId"));
+
+            command(testServer, sessionId, "stepOver", null, 200);
+            paused = waitForPausedAtSource(
+                testServer, sessionId, "lib.debugmod@1", 3, 10000L);
+            moduleFrame = (Map<String, Object>) paused.get("paused");
+            moduleGlobals = (Map<String, Object>) moduleFrame.get("globals");
+            Assert.assertEquals("module", moduleGlobals.get("module_global"));
+
+            command(testServer, sessionId, "stepOut", null, 200);
+            paused = waitForPausedAtSource(
+                testServer, sessionId, "debug_entry@1", 4, 10000L);
+            entryFrame = (Map<String, Object>) paused.get("paused");
+            Assert.assertEquals(Boolean.TRUE, entryFrame.get("entrySource"));
+            Assert.assertEquals(entrySource, entryFrame.get("sourceCode"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> entryGlobals = (Map<String, Object>) entryFrame.get("globals");
+            Assert.assertEquals("entry", entryGlobals.get("entry_value"));
+            Assert.assertFalse("module globals leaked back into the entry frame",
+                entryGlobals.containsKey("module_global"));
+
+            command(testServer, sessionId, "continue", null, 200);
+            Assert.assertEquals("COMPLETED",
+                waitForSessionState(testServer, sessionId, "ENDED", 10000L).get("runStatus"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void debugStartsAtEntryAndKeepsTheSourceErrorAsASeparateMarker() throws Exception {
         TestServer testServer = createServer(null);
         try {
@@ -747,7 +833,7 @@ public class DebugSessionTest {
                 consolePage.contains("This debug session <b>executes the script</b>"));
             Assert.assertFalse("Paused Statement card remains",
                 consolePage.contains("Paused Statement") || consolePage.contains("dbg-paused-card")
-                    || consolePage.contains("dbg-stmt") || consolePage.contains("dbg-stack"));
+                    || consolePage.contains("dbg-stmt"));
             Assert.assertFalse("Open Script Editor action remains",
                 consolePage.contains("Open Script Editor"));
             Assert.assertFalse("top Paused At field remains",
@@ -767,6 +853,8 @@ public class DebugSessionTest {
                 consolePage.contains("Current breakpoints") || consolePage.contains("dbg-bp-current")
                     || consolePage.contains("showBreakpoints"));
             Assert.assertTrue("missing shared source editor", consolePage.contains("id='dbg-source'"));
+            Assert.assertTrue("current source context is missing",
+                consolePage.contains("id='dbg-source-context'"));
             Assert.assertTrue("source editor is not upgraded", consolePage.contains("data-pt-editor"));
             Assert.assertTrue("source editor has no breakpoint gutter",
                 consolePage.contains("data-pt-breakpoints"));
@@ -774,6 +862,14 @@ public class DebugSessionTest {
                 consolePage.contains("data-pt-breakpoints readonly"));
             Assert.assertTrue("dynamic source locking is missing",
                 consolePage.contains("setReadOnly(locked)"));
+            Assert.assertTrue("module frames do not switch the shared source editor",
+                consolePage.contains("showFrameSource(p)")
+                    && consolePage.contains("p.sourceCode||''"));
+            Assert.assertTrue("module source is not protected from entry-only edits",
+                consolePage.contains("!displayedIsEntry"));
+            Assert.assertTrue("entry edits are not preserved while viewing a module",
+                consolePage.contains("entryDraft")
+                    && consolePage.contains("entrySourceForRestart()"));
             Assert.assertTrue("RUNNING state does not lock the editor",
                 consolePage.contains("s.state==='RUNNING'"));
             Assert.assertTrue("debug source content is missing", consolePage.contains("_PROPS.who"));
@@ -782,7 +878,7 @@ public class DebugSessionTest {
             Assert.assertTrue("current-line highlighting is missing",
                 consolePage.contains("setDebugLine(latestDebugLine,reveal)"));
             Assert.assertTrue("source-error highlighting is missing",
-                consolePage.contains("setErrorLine(latestErrorLine,false)"));
+                consolePage.contains("setErrorLine(displayedIsEntry?latestErrorLine:null,false)"));
             Assert.assertTrue("playground-style red error marker CSS is missing",
                 consolePage.contains(".pt-editor-error-line"));
             Assert.assertTrue("line markers must render above syntax across the full code row",
@@ -810,7 +906,10 @@ public class DebugSessionTest {
             Assert.assertFalse("Restart still opens a confirmation popup",
                 consolePage.contains("Restart this debug run from the entry point?"));
             Assert.assertTrue("Restart does not submit the current editor source",
-                consolePage.contains("{source:el('dbg-source').value}"));
+                consolePage.contains("{source:entrySourceForRestart()}"));
+            Assert.assertTrue("source-aware call stack is missing",
+                consolePage.contains("id='dbg-stack'")
+                    && consolePage.contains("function stackTable(p)"));
             Assert.assertFalse("old Quit Run label remains", consolePage.contains(">Quit Run</button>"));
             Assert.assertTrue("Run output is not wired into the console",
                 consolePage.contains("syncRunOutput(s)"));
@@ -1389,6 +1488,27 @@ public class DebugSessionTest {
         }
         Assert.fail("session " + sessionId + " did not pause at line " + line + " within "
             + timeoutMs + "ms; last=" + last);
+        return null;
+    }
+
+    private Map<String, Object> waitForPausedAtSource(TestServer testServer, String sessionId,
+                                                       String sourceId, int line, long timeoutMs)
+                                                       throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        Map<String, Object> last = null;
+        while (System.currentTimeMillis() < deadline) {
+            last = getJsonMap(testServer.baseUrl + "/api/admin/debug/" + sessionId, 200);
+            if ("PAUSED".equals(last.get("state")) && last.get("paused") != null) {
+                Map<?, ?> frame = (Map<?, ?>) last.get("paused");
+                if (sourceId.equals(frame.get("sourceId"))
+                        && ((Number) frame.get("line")).intValue() == line) {
+                    return last;
+                }
+            }
+            Thread.sleep(50L);
+        }
+        Assert.fail("session " + sessionId + " did not pause at " + sourceId + ":" + line
+            + " within " + timeoutMs + "ms; last=" + last);
         return null;
     }
 
