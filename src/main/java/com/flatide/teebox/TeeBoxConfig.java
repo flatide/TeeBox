@@ -36,6 +36,11 @@ public class TeeBoxConfig {
     /** Idle timeout for a debug session (no API activity; status polling counts as activity;
      *  duration syntax accepted, e.g. "30m"). Abandoned sessions are killed by maintenance. */
     public long debugIdleTimeoutMs = DebugSessionManager.DEFAULT_IDLE_TIMEOUT_MS;
+    /** Distinguishes this instance's admin session cookie from other TeeBox instances on the same
+     *  host (browsers scope cookies by host+path, NOT port — two instances on the same host would
+     *  otherwise share one {@code teebox-session} cookie and log each other out). Blank ⇒ the bound
+     *  port is used, which already differs per instance. Sanitized to [A-Za-z0-9_-]. */
+    public String instanceId;
     public static TeeBoxConfig fromArgs(String[] args) {
         File configFile = resolveConfigFile(args);
         Properties fileProps = loadProperties(configFile);
@@ -121,7 +126,25 @@ public class TeeBoxConfig {
         if (debugIdleTimeoutMs != null && debugIdleTimeoutMs.trim().length() > 0) {
             config.debugIdleTimeoutMs = DurationParser.parseMillis(debugIdleTimeoutMs.trim());
         }
+        String instanceId = getSetting("instanceId", fileProps);
+        if (instanceId != null && instanceId.trim().length() > 0) {
+            config.instanceId = instanceId.trim();
+        }
         return config;
+    }
+
+    /**
+     * The admin session cookie name for this instance: {@code teebox-session-<id>}, where the id is
+     * the sanitized {@link #instanceId} when set, otherwise the bound port. Making it instance-
+     * specific keeps two TeeBox instances on the same host from clobbering each other's login cookie
+     * (cookies are scoped by host+path, not port).
+     */
+    public String sessionCookieName() {
+        String raw = instanceId != null && instanceId.trim().length() > 0
+                ? instanceId.trim() : Integer.toString(port);
+        String safe = raw.replaceAll("[^A-Za-z0-9_-]", "-");
+        if (safe.isEmpty()) safe = Integer.toString(port);
+        return "teebox-session-" + safe;
     }
 
     public String tokenForClientApi() {

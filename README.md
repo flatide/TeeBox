@@ -108,8 +108,8 @@ Useful settings:
 `propertee-teebox-dist.zip` is the recommended GitHub release artifact. It does not include a Java runtime, so deploy targets should install a Linux x86_64 Java 25 runtime separately under `runtime/`. (As of 1.0.0, TeeBox runs on the ProperTee v2 runtime, which requires Java 25.)
 
 ```bash
-git tag v1.31.0
-git push origin v1.31.0
+git tag v1.32.0
+git push origin v1.32.0
 ```
 
 If you need a prebundled internal package instead, build `propertee-teebox-dist-with-runtime.zip` locally with:
@@ -135,6 +135,10 @@ Primary settings use the `propertee.teebox.*` prefix:
 - `propertee.teebox.maintenanceIntervalMs`
 - `propertee.teebox.debugMaxSessions` (concurrent debug sessions, default 2)
 - `propertee.teebox.debugIdleTimeoutMs` (debug-session idle kill, default 30m)
+- `propertee.teebox.instanceId` (distinguishes this instance's admin session cookie
+  `teebox-session-<id>` from sibling instances on the same host; defaults to the bound port.
+  Set this only when two instances share a host **and** a port, e.g. behind a reverse proxy —
+  browsers scope cookies by host+path, not port, so distinct ports already produce distinct cookies)
 
 Duration-style settings accept `ms`, `s`, `m`, `h`, and `d` suffixes. Example: `500ms`, `1m`, `24h`, `7d`.
 

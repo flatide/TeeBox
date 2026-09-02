@@ -2,6 +2,18 @@
 
 All notable changes to TeeBox are documented here.
 
+## 1.32.0
+
+- The admin session cookie is now instance-specific (`teebox-session-<id>`), so two TeeBox
+  instances on the same host no longer share one login. Browsers scope cookies by host and path
+  but **not** port, so both instances previously set the same `teebox-session` cookie and switching
+  between them logged you out. The id defaults to the bound port (distinct ports fix it with no
+  configuration); set `propertee.teebox.instanceId` only when instances share a host and a port
+  (e.g. behind a reverse proxy). Both cookies coexist in the browser and each server reads only its
+  own name. Existing sessions require one re-login after upgrade.
+
+**276 TeeBox tests green. Packaged with propertee2 0.31.0 at `48fa513f7060`.**
+
 ## 1.31.0
 
 - Follow the active debug frame across import boundaries. Step In now switches the shared source

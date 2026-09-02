@@ -33,6 +33,9 @@ import java.util.concurrent.Executors;
 
 public class TeeBoxServer {
     private final TeeBoxConfig config;
+    // Instance-specific admin session cookie name ("teebox-session-<id>"): two TeeBox instances on
+    // the same host must not share a cookie (browsers ignore port in cookie scope) — see #login.
+    private final String sessionCookieName;
     private final RunManager runManager;
     // The engine's first-class null (JsonNull.NULL) must serialize as JSON null, not {} — see
     // JsonNullGsonAdapter. Applies to run result values (resultData + the result envelope) and any
@@ -50,6 +53,7 @@ public class TeeBoxServer {
 
     public TeeBoxServer(TeeBoxConfig config) throws IOException {
         this.config = config;
+        this.sessionCookieName = config.sessionCookieName();
         this.runManager = new RunManager(config.dataDir, config.maxConcurrentRuns, config);
         this.debugSessionManager = new DebugSessionManager(runManager,
             config.debugMaxSessions, config.debugIdleTimeoutMs);
@@ -217,7 +221,7 @@ public class TeeBoxServer {
                     Map<String, String> form = parseForm(exchange);
                     String token = sessionManager.login(form.get("user"), form.get("password"));
                     if (token != null) {
-                        exchange.getResponseHeaders().add("Set-Cookie", "teebox-session=" + token + "; HttpOnly; Path=/admin; Max-Age=28800");
+                        exchange.getResponseHeaders().add("Set-Cookie", sessionCookieName + "=" + token + "; HttpOnly; Path=/admin; Max-Age=28800");
                         redirect(exchange, "/admin");
                     } else {
                         writeHtml(exchange, HttpURLConnection.HTTP_OK, pageRenderer.renderLoginPage("Invalid username or password"));
@@ -228,7 +232,7 @@ public class TeeBoxServer {
                 if ("POST".equals(method) && "/admin/logout".equals(path)) {
                     String token = getSessionToken(exchange);
                     sessionManager.logout(token);
-                    exchange.getResponseHeaders().add("Set-Cookie", "teebox-session=; HttpOnly; Path=/admin; Max-Age=0");
+                    exchange.getResponseHeaders().add("Set-Cookie", sessionCookieName + "=; HttpOnly; Path=/admin; Max-Age=0");
                     redirect(exchange, "/admin");
                     return;
                 }
@@ -2531,10 +2535,13 @@ public class TeeBoxServer {
     private String getSessionToken(HttpExchange exchange) {
         String cookieHeader = exchange.getRequestHeaders().getFirst("Cookie");
         if (cookieHeader == null) return null;
+        // The browser may carry cookies for sibling instances on the same host (teebox-session-OTHER);
+        // read only this instance's name so their sessions coexist instead of clobbering each other.
+        String prefix = sessionCookieName + "=";
         for (String part : cookieHeader.split(";")) {
             String trimmed = part.trim();
-            if (trimmed.startsWith("teebox-session=")) {
-                return trimmed.substring("teebox-session=".length());
+            if (trimmed.startsWith(prefix)) {
+                return trimmed.substring(prefix.length());
             }
         }
         return null;

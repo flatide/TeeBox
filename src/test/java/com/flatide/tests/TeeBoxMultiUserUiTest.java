@@ -957,7 +957,7 @@ public class TeeBoxMultiUserUiTest {
         conn.setInstanceFollowRedirects(false);
         conn.setRequestMethod("GET");
         if (cookie != null) {
-            conn.setRequestProperty("Cookie", "teebox-session=" + cookie);
+            conn.setRequestProperty("Cookie", cookie);   // full name=value pair (name is instance-specific)
         }
         int code = conn.getResponseCode();
         java.io.InputStream in = code < 400 ? conn.getInputStream() : conn.getErrorStream();
@@ -980,7 +980,7 @@ public class TeeBoxMultiUserUiTest {
         conn.setInstanceFollowRedirects(false);
         conn.setRequestMethod("GET");
         if (cookie != null) {
-            conn.setRequestProperty("Cookie", "teebox-session=" + cookie);
+            conn.setRequestProperty("Cookie", cookie);   // full name=value pair (name is instance-specific)
         }
         int code = conn.getResponseCode();
         conn.disconnect();
@@ -1009,7 +1009,7 @@ public class TeeBoxMultiUserUiTest {
         }
     }
 
-    /** POST the login form and return the teebox-session cookie value, or null on failure. */
+    /** POST the login form and return the full session cookie pair ("name=value"), or null on failure. */
     private String login(String base, String user, String pass) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(base + "/admin/login").openConnection();
         conn.setInstanceFollowRedirects(false);
@@ -1031,19 +1031,26 @@ public class TeeBoxMultiUserUiTest {
 
     private String extractSessionCookie(HttpURLConnection conn) {
         // com.sun.net.httpserver normalizes header names (e.g. "Set-cookie"), so match case-insensitively.
+        // The cookie name is instance-specific ("teebox-session-<id>"), so capture the whole
+        // "name=value" pair and send it back verbatim rather than assuming a fixed name.
         for (java.util.Map.Entry<String, List<String>> e : conn.getHeaderFields().entrySet()) {
             String key = e.getKey();
             if (key == null || !"set-cookie".equalsIgnoreCase(key)) {
                 continue;
             }
             for (String c : e.getValue()) {
-                if (c != null && c.startsWith("teebox-session=")) {
-                    String v = c.substring("teebox-session=".length());
-                    int semi = v.indexOf(';');
-                    if (semi >= 0) {
-                        v = v.substring(0, semi);
-                    }
-                    return v.length() > 0 ? v : null;
+                if (c == null || !c.startsWith("teebox-session-")) {
+                    continue;
+                }
+                String pair = c;
+                int semi = pair.indexOf(';');
+                if (semi >= 0) {
+                    pair = pair.substring(0, semi);
+                }
+                int eq = pair.indexOf('=');
+                // A cleared cookie ("...=; Max-Age=0") has no value — treat as no session.
+                if (eq >= 0 && eq < pair.length() - 1) {
+                    return pair;
                 }
             }
         }
@@ -1058,7 +1065,7 @@ public class TeeBoxMultiUserUiTest {
         conn.setDoOutput(true);
         conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
         if (cookie != null) {
-            conn.setRequestProperty("Cookie", "teebox-session=" + cookie);
+            conn.setRequestProperty("Cookie", cookie);   // full name=value pair (name is instance-specific)
         }
         OutputStream out = conn.getOutputStream();
         try {
@@ -1089,7 +1096,7 @@ public class TeeBoxMultiUserUiTest {
         conn.setDoOutput(true);
         conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
         if (cookie != null) {
-            conn.setRequestProperty("Cookie", "teebox-session=" + cookie);
+            conn.setRequestProperty("Cookie", cookie);   // full name=value pair (name is instance-specific)
         }
         OutputStream out = conn.getOutputStream();
         try {
@@ -1111,7 +1118,7 @@ public class TeeBoxMultiUserUiTest {
         conn.setDoOutput(true);
         conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
         if (cookie != null) {
-            conn.setRequestProperty("Cookie", "teebox-session=" + cookie);
+            conn.setRequestProperty("Cookie", cookie);   // full name=value pair (name is instance-specific)
         }
         OutputStream out = conn.getOutputStream();
         try {

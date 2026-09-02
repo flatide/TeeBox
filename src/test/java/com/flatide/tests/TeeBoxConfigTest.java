@@ -87,6 +87,28 @@ public class TeeBoxConfigTest {
         }
     }
 
+    @Test
+    public void sessionCookieNameIsInstanceSpecific() {
+        // Default: the bound port distinguishes instances, so two ports never collide.
+        TeeBoxConfig a = new TeeBoxConfig();
+        a.port = 18080;
+        TeeBoxConfig b = new TeeBoxConfig();
+        b.port = 19090;
+        Assert.assertEquals("teebox-session-18080", a.sessionCookieName());
+        Assert.assertEquals("teebox-session-19090", b.sessionCookieName());
+        Assert.assertNotEquals(a.sessionCookieName(), b.sessionCookieName());
+
+        // An explicit instanceId wins (for reverse-proxied instances sharing a port), sanitized.
+        TeeBoxConfig named = new TeeBoxConfig();
+        named.port = 18080;
+        named.instanceId = "prod-eu";
+        Assert.assertEquals("teebox-session-prod-eu", named.sessionCookieName());
+        TeeBoxConfig dirty = new TeeBoxConfig();
+        dirty.port = 18080;
+        dirty.instanceId = "a b/c";   // spaces and slashes are not valid cookie-name chars
+        Assert.assertEquals("teebox-session-a-b-c", dirty.sessionCookieName());
+    }
+
     private static void write(File file, String content) throws Exception {
         File parent = file.getParentFile();
         if (parent != null && !parent.exists()) {

@@ -35,7 +35,7 @@ import com.flatide.teebox.client.TeeBoxClient;
 Build the jar from the TeeBox repository.
 
 ```bash
-./gradlew clientJar          # → build/libs/teebox-client-<version>.jar  (e.g. teebox-client-1.31.0.jar)
+./gradlew clientJar          # → build/libs/teebox-client-<version>.jar  (e.g. teebox-client-1.32.0.jar)
 ./gradlew clientSourcesJar   # (optional) sources jar for IDE source attachment
 ```
 
@@ -49,7 +49,7 @@ Example of adding the jar to the host build:
 ```groovy
 // Gradle
 dependencies {
-    implementation files('libs/teebox-client-1.31.0.jar')
+    implementation files('libs/teebox-client-1.32.0.jar')
 }
 ```
 
@@ -58,7 +58,7 @@ dependencies {
 <dependency>
   <groupId>com.flatide</groupId>
   <artifactId>teebox-client</artifactId>
-  <version>1.31.0</version>
+  <version>1.32.0</version>
 </dependency>
 ```
 
