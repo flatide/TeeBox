@@ -2,7 +2,7 @@
  *
  * Ported from the ProperTee playground (propertee-js/docs/index.html). The syntax highlighter
  * (highlightSyntax/escapeHtml) and the builtin catalog (RESULT_NOTE/BUILTIN_DOCS) are copied VERBATIM
- * (last synced: spec v0.19.0 — multi ... limit K; keyword list + v0.18.0 file builtins). When the language gains
+ * (last synced: spec v0.24.0 — WORDS, TRIM/SPLIT, and the v0.15.0 CONTAINS array form). When the language gains
  * builtins, re-diff against the playground and sync; playground-only annotations ("in-memory FS",
  * mocked SHELL/HTTP notes) are intentionally NOT carried over. TeeBox-only host builtins
  * (STREAM_FILE/THUMBNAIL) are kept on separate, clearly-marked lines/categories so the verbatim parts
@@ -95,7 +95,7 @@
             { name: 'WORDS', sig: 'WORDS(s)', desc: 'Split s into its whitespace-separated words (spec v0.24.0): runs of whitespace separate words and leading/trailing whitespace is ignored. Whitespace is the same six characters as TRIM.', returns: 'An array of non-empty strings ([] for an empty or all-whitespace string).', fails: 'Runtime error if s is not a string.', sample: 'PRINT(WORDS("    test 1  2"))' },
             { name: 'JOIN', sig: 'JOIN(arr, [separator])', desc: 'Join array elements into a string.', returns: 'A string (default separator is "").', fails: 'Runtime error if arr is not an array or separator is not a string.', sample: 'PRINT(JOIN(["a", "b"], "-"))' },
             { name: 'CHARS', sig: 'CHARS(s)', desc: 'Split a string into characters.', returns: 'An array of single-character strings.', fails: 'Runtime error if s is not a string.', sample: 'PRINT(CHARS("hi"))' },
-            { name: 'CONTAINS', sig: 'CONTAINS(s, sub)', desc: 'Substring test.', returns: 'A boolean.', fails: 'Runtime error if either argument is not a string.', sample: 'PRINT(CONTAINS("hello", "ell"))' },
+            { name: 'CONTAINS', sig: 'CONTAINS(s, sub) / CONTAINS(arr, item)', desc: 'Substring test on a string, or array membership test (spec v0.15.0) — elements compared with == (by value, deep for objects/arrays, strict across types).', returns: 'A boolean.', fails: 'Runtime error if the first argument is not a string or array, or if it is a string and sub is not a string.', sample: 'PRINT(CONTAINS("hello", "ell"))\nPRINT(CONTAINS([1, 2, 3], 2))' },
             { name: 'STARTS_WITH', sig: 'STARTS_WITH(s, prefix)', desc: 'Prefix test.', returns: 'A boolean.', fails: 'Runtime error if either argument is not a string.', sample: 'PRINT(STARTS_WITH("hello", "he"))' },
             { name: 'ENDS_WITH', sig: 'ENDS_WITH(s, suffix)', desc: 'Suffix test.', returns: 'A boolean.', fails: 'Runtime error if either argument is not a string.', sample: 'PRINT(ENDS_WITH("hello", "lo"))' },
             { name: 'FIND', sig: 'FIND(s, sub)', desc: 'All 1-based positions where sub occurs in s (spec v0.17.0). Literal match, not regex; ascending, overlapping occurrences included.', returns: 'An array of positions ([] if there is no occurrence).', fails: 'Runtime error if either argument is not a string, or sub is empty.', sample: 'PRINT(FIND("banana", "an"))\nPRINT(FIND("aaa", "aa"))' },

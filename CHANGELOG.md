@@ -16,6 +16,9 @@ All notable changes to TeeBox are documented here.
   automatically, the inlined browser bundle is refreshed byte-for-byte from propertee-js `75b71a9`,
   and the syntax highlighter + built-in reference panel gained its entry, with the `TRIM`/`SPLIT`
   entries updated (ported verbatim from the playground). The detail-page test guards all three.
+- The built-in reference panel now documents the array form `CONTAINS(arr, item)` (spec v0.15.0,
+  membership by `==`), which an earlier catalog sync had missed; the entry is verbatim with the
+  playground again.
 
 ## 1.32.0
 
