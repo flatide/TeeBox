@@ -2,7 +2,7 @@
  *
  * Ported from the ProperTee playground (propertee-js/docs/index.html). The syntax highlighter
  * (highlightSyntax/escapeHtml) and the builtin catalog (RESULT_NOTE/BUILTIN_DOCS) are copied VERBATIM
- * (last synced: spec v0.24.0 — WORDS, TRIM/SPLIT, and the v0.15.0 CONTAINS array form). When the language gains
+ * (last synced: spec v0.25.0 — TO_NUMBER; v0.24.0 — WORDS, TRIM/SPLIT, CONTAINS arrays). When the language gains
  * builtins, re-diff against the playground and sync; playground-only annotations ("in-memory FS",
  * mocked SHELL/HTTP notes) are intentionally NOT carried over. TeeBox-only host builtins
  * (STREAM_FILE/THUMBNAIL) are kept on separate, clearly-marked lines/categories so the verbatim parts
@@ -81,7 +81,7 @@
             { name: 'RANDOM', sig: 'RANDOM() | RANDOM(min, max)', desc: 'Random decimal [0,1), or random integer in an inclusive range. The single-argument form was removed in spec v0.7.0.', returns: 'A number: decimal in [0,1) with no args, else an integer.', fails: 'Runtime error if called with one argument, arguments are not numbers, or min > max.', sample: 'PRINT(RANDOM(1, 6))' },
         ]},
         { cat: 'Conversion', fns: [
-            { name: 'TO_NUMBER', sig: 'TO_NUMBER(s)', desc: 'Convert a string to a number.', returns: 'A number.', fails: 'Runtime error if s is not a string, is empty, or is not a valid numeric string.', sample: 'PRINT(TO_NUMBER("42") + 1)' },
+            { name: 'TO_NUMBER', sig: 'TO_NUMBER(s)', desc: 'Convert a decimal numeral to a number (spec v0.25.0): an optional sign, digits with an optional fraction (.5 and 5. included), and an optional exponent (1e3, 2.5E-4). Surrounding whitespace — the six TRIM characters — is ignored. Hexadecimal, octal and binary, type suffixes, Infinity and NaN do not convert.', returns: 'A number — an integer for digits-only text that fits 32 bits, otherwise a decimal.', fails: 'Runtime error if s is not a string, is not a decimal numeral (empty text included), or is too large to represent (1e999).', sample: 'PRINT(TO_NUMBER(" 42\\n") + 1, TO_NUMBER("2.5e3"))' },
             { name: 'TO_STRING', sig: 'TO_STRING(v)', desc: 'Convert any value to its string form.', returns: 'A string.', fails: 'Does not fail (accepts any value).', sample: 'PRINT(TO_STRING(true))' },
             { name: 'TYPE_OF', sig: 'TYPE_OF(v)', desc: 'Type name of a value.', returns: 'A string: "number", "string", "boolean", "array", "object", or "null".', fails: 'Does not fail (accepts any value).', sample: 'PRINT(TYPE_OF([1, 2]))' },
         ]},

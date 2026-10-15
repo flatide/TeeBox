@@ -353,6 +353,9 @@ public class TeeBoxMultiUserUiTest {
             // Spec v0.24.0 WORDS (engine 0.32.0) is highlighted and documented like the rest.
             Assert.assertTrue("WORDS in the highlighter regex", html.contains("|SPLIT|WORDS|JOIN|"));
             Assert.assertTrue("WORDS documented in the panel", html.contains("name: 'WORDS'"));
+            // Spec v0.25.0 (engine 0.33.0): the TO_NUMBER entry documents the decimal-numeral rule.
+            Assert.assertTrue("TO_NUMBER panel entry at spec v0.25.0",
+                    html.contains("desc: 'Convert a decimal numeral to a number (spec v0.25.0)"));
 
             // The builtin panel is hidden by default and toggled by the ƒ button pinned to the
             // editor's top-right (TeeBox addition); the choice persists via localStorage.
@@ -377,6 +380,8 @@ public class TeeBoxMultiUserUiTest {
             // ...and at the same builtin catalog level (spec v0.24.0).
             Assert.assertTrue("embedded visitor carries the spec v0.24.0 WORDS builtin",
                     html.contains("'WORDS': (str) =>"));
+            Assert.assertTrue("embedded visitor carries the spec v0.25.0 TO_NUMBER rule",
+                    html.contains("if (!DECIMAL_NUMERAL.test(text))"));
             Assert.assertTrue("client-first check wired", html.contains("ptClientCheck"));
             int knownStart = html.indexOf("var PT_KNOWN=[");
             Assert.assertTrue("runtime known-name set rendered", knownStart >= 0);

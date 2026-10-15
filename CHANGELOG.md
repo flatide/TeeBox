@@ -2,6 +2,22 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.33.0** (spec v0.25.0): `TO_NUMBER` reads exactly a
+  decimal numeral — an optional sign, digits with an optional fraction (`.5` and `5.` included), an
+  optional exponent — and ignores only the six `TRIM` whitespace characters around it. Mildly
+  breaking: forms the previous engine's Java parsers also accepted are runtime errors now — type
+  suffixes (`"1f"`, `"1.5d"`), hexadecimal floating point (`"0x1p3"`), `"NaN"`, `"Infinity"`,
+  non-ASCII digits (`"１２"`), and the other C0 control characters around a numeral. A numeral too
+  large to represent fails with `TO_NUMBER() value out of range: '1e999'` instead of becoming an
+  infinity that `JSON_FORMAT` wrote as the invalid JSON token `Infinity`. Hexadecimal strings
+  (`"0x10"`) stay errors, and the conversion error now reads
+  `TO_NUMBER() cannot convert 'x' to number` (was `Cannot convert 'x' to number`). The editor
+  follows: the inlined browser bundle is refreshed byte-for-byte from propertee-js `11d5b95`, and
+  the reference panel's `TO_NUMBER` entry is ported verbatim from the playground. The detail-page
+  test guards both.
+
 ## 1.33.0
 
 - **Embedded engine upgraded to propertee2 0.32.0** (spec v0.24.0): scripts gain **`WORDS(s)`**,
