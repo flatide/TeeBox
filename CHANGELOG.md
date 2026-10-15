@@ -2,6 +2,18 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.34.0** — no change for scripts, runs, or the TeeBox
+  API. That release changes the engine's own CLI and REPL (`--result-only` prints a script's
+  result; the REPL's `:load` loads without running), which TeeBox does not embed, and adds the
+  host-side `Engine.execute(...)` / `Engine.Outcome`, which TeeBox does not call: its executor
+  already reports a run's result by the same rule (the top-level return value, else the final
+  `result` global, else `{}`).
+- Refresh the embedded propertee-js browser bundle byte-for-byte from upstream `f0e1423`. The only
+  change is the visitor's new `scriptResult()` (behind propertee-js's own `--result-only`); the
+  editor's client-side syntax check is unaffected.
+
 ## 1.34.0
 
 - **Embedded engine upgraded to propertee2 0.33.0** (spec v0.25.0): `TO_NUMBER` reads exactly a
