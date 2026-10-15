@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.34.1
 
 - **Embedded engine upgraded to propertee2 0.34.0** — no change for scripts, runs, or the TeeBox
   API. That release changes the engine's own CLI and REPL (`--result-only` prints a script's
@@ -13,6 +13,9 @@ All notable changes to TeeBox are documented here.
 - Refresh the embedded propertee-js browser bundle byte-for-byte from upstream `f0e1423`. The only
   change is the visitor's new `scriptResult()` (behind propertee-js's own `--result-only`); the
   editor's client-side syntax check is unaffected.
+
+**276 TeeBox tests and 132 propertee-js tests green. Packaged with propertee2 0.34.0 at
+`567419cc74e5`.**
 
 ## 1.34.0
 
