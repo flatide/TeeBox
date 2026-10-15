@@ -2,6 +2,21 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.32.0** (spec v0.24.0): scripts gain **`WORDS(s)`**,
+  the whitespace-separated words of `s` — never an empty string, unlike `SPLIT(s, " ")`, which
+  keeps every empty field (`WORDS("    test 1  2")` → `["test", "1", "2"]`; empty or
+  all-whitespace input → `[]`). Two mildly breaking corners come with it: whitespace for `TRIM` and
+  `WORDS` is exactly six ASCII characters (space, `\t`, `\n`, `\r`, vertical tab, form feed), so
+  `TRIM` no longer strips the other C0 control characters U+0000–U+0008 / U+000E–U+001F; and
+  `SPLIT(s, "")` is a runtime error (`SPLIT() requires a non-empty delimiter`) instead of returning
+  the characters plus a trailing `""` — use `CHARS(s)`. The editor picks `WORDS` up across all three
+  layers: the server lint and the injected `PT_KNOWN` set enumerate it from the runtime
+  automatically, the inlined browser bundle is refreshed byte-for-byte from propertee-js `75b71a9`,
+  and the syntax highlighter + built-in reference panel gained its entry, with the `TRIM`/`SPLIT`
+  entries updated (ported verbatim from the playground). The detail-page test guards all three.
+
 ## 1.32.0
 
 - The admin session cookie is now instance-specific (`teebox-session-<id>`), so two TeeBox

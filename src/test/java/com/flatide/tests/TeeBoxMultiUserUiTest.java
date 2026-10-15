@@ -350,6 +350,9 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("UNWRAP documented in the panel", html.contains("name: 'UNWRAP'"));
             Assert.assertTrue("TeeBox Host category in the panel docs", html.contains("cat: 'TeeBox Host'"));
             Assert.assertTrue("STREAM_FILE documented in the panel", html.contains("name: 'STREAM_FILE'"));
+            // Spec v0.24.0 WORDS (engine 0.32.0) is highlighted and documented like the rest.
+            Assert.assertTrue("WORDS in the highlighter regex", html.contains("|SPLIT|WORDS|JOIN|"));
+            Assert.assertTrue("WORDS documented in the panel", html.contains("name: 'WORDS'"));
 
             // The builtin panel is hidden by default and toggled by the ƒ button pinned to the
             // editor's top-right (TeeBox addition); the choice persists via localStorage.
@@ -371,6 +374,9 @@ public class TeeBoxMultiUserUiTest {
                     html.contains("localctx.moduleAlias = this.match(ProperTeeParser.ID)"));
             Assert.assertTrue("embedded visitor dispatches qualified module calls",
                     html.contains("if (ctx.moduleAlias)"));
+            // ...and at the same builtin catalog level (spec v0.24.0).
+            Assert.assertTrue("embedded visitor carries the spec v0.24.0 WORDS builtin",
+                    html.contains("'WORDS': (str) =>"));
             Assert.assertTrue("client-first check wired", html.contains("ptClientCheck"));
             int knownStart = html.indexOf("var PT_KNOWN=[");
             Assert.assertTrue("runtime known-name set rendered", knownStart >= 0);
@@ -378,6 +384,7 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("TeeBox host builtins in the injected known set",
                     knownList.contains("'STREAM_FILE'") && knownList.contains("'THUMBNAIL'"));
             Assert.assertTrue("engine builtins in the injected known set", knownList.contains("'SHELL'"));
+            Assert.assertTrue("engine 0.32.0 WORDS in the injected known set", knownList.contains("'WORDS'"));
 
 
             // The Active Version Source card is now the single edit + add-version surface: the separate
