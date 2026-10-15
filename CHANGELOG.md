@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.34.0
 
 - **Embedded engine upgraded to propertee2 0.33.0** (spec v0.25.0): `TO_NUMBER` reads exactly a
   decimal numeral — an optional sign, digits with an optional fraction (`.5` and `5.` included), an
@@ -17,6 +17,9 @@ All notable changes to TeeBox are documented here.
   follows: the inlined browser bundle is refreshed byte-for-byte from propertee-js `11d5b95`, and
   the reference panel's `TO_NUMBER` entry is ported verbatim from the playground. The detail-page
   test guards both.
+
+**276 TeeBox tests and 131 propertee-js tests green. Packaged with propertee2 0.33.0 at
+`4df33661e53d`.**
 
 ## 1.33.0
 
