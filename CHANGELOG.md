@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.33.0
 
 - **Embedded engine upgraded to propertee2 0.32.0** (spec v0.24.0): scripts gain **`WORDS(s)`**,
   the whitespace-separated words of `s` — never an empty string, unlike `SPLIT(s, " ")`, which
@@ -19,6 +19,9 @@ All notable changes to TeeBox are documented here.
 - The built-in reference panel now documents the array form `CONTAINS(arr, item)` (spec v0.15.0,
   membership by `==`), which an earlier catalog sync had missed; the entry is verbatim with the
   playground again.
+
+**276 TeeBox tests and 128 propertee-js tests green. Packaged with propertee2 0.32.0 at
+`3bcfd2e661c8`.**
 
 ## 1.32.0
 
