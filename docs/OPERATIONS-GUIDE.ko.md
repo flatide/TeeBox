@@ -219,6 +219,25 @@ JSON 의 `origin` 으로 표시되며, 위의 user 역할 kill/cancel 권한 판
 `GET /api/admin/runs` 도 같은 필터를 받습니다: `instant=exclude|only` (미지정 = 전체),
 `q=<substring>`, 그리고 기존 `status`/`offset`/`limit`.
 
+### 스크립트 입력 정의
+
+스크립트 상세의 **Inputs** 카드에서 선택한 버전의 Props를 정의합니다. 이름·타입·필수 여부·설명을
+행으로 편집하고, 기본값·선택값·중첩 구조는 **JSON Schema (advanced)**에서 편집합니다.
+**Save inputs**는 메타데이터만 저장합니다. 소스의 **Save**와 **Save as new version**도 현재 정의를
+함께 저장하며, 스크립트 복제 시 모든 버전의 정의를 복사합니다. Admin과 소유자는 수정할 수 있고,
+monitor와 다른 사용자는 조회만 할 수 있습니다.
+
+정의는 선택 사항이며 버전별로 기존 `script.json`에 저장합니다(새 index/주기 I/O 없음).
+Client 토큰으로 `GET /api/client/scripts`에서 목록을 찾고,
+`GET /api/client/scripts/{scriptId}/inputs?version=1`로 정의를 조회합니다.
+버전 생략 시 최신이 아닌 **active 버전**을 선택합니다. Publisher 토큰은
+`/api/publisher/scripts/{scriptId}/versions/{version}/inputs`의 GET/PUT/DELETE 또는
+버전 등록의 `inputSchema`를 사용합니다.
+
+설명용 메타데이터이므로 실행 시 필수값·타입 검증이나 기본값 주입은 하지 않습니다(Debug도 동일).
+빈 편집기는 정의 제거를, `{}`는 제약 없는 정의를 뜻합니다. 정의·기본값·예제는 Client 토큰으로도
+조회되므로 비밀값을 넣지 마세요. 자세한 예시는 [클라이언트 가이드](TEEBOX-CLIENT-GUIDE.ko.md)를 참고하세요.
+
 ### 스크립트별 동시 실행 제어
 
 > **참고:** 두 가지 별개의 동시 실행 제한이 있습니다:

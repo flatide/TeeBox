@@ -278,6 +278,55 @@ for (Object item : teebox.listScripts()) {
 
 ---
 
+### 6.6 Input definitions
+
+Each version can store an optional `inputSchema` describing its `props`. It uses JSON Schema
+keywords such as `type`, `properties`, `required`, `description`, `enum`, `default`, and `items`.
+Definitions are descriptive: neither Run nor Debug rejects props or injects defaults based on them.
+Common keyword shapes are checked on save; other keywords are retained for consumers, with no
+full schema validation or external reference resolution. The root must be an object (if `type` is
+specified, it must be `object`); definitions are limited to 65536 characters and 32 nesting levels.
+
+```java
+Map<String, Object> file = new LinkedHashMap<String, Object>();
+file.put("type", "string");
+file.put("description", "File to process");
+Map<String, Object> properties = new LinkedHashMap<String, Object>();
+properties.put("filePath", file);
+Map<String, Object> schema = new LinkedHashMap<String, Object>();
+schema.put("type", "object");
+schema.put("properties", properties);
+schema.put("required", java.util.Arrays.asList("filePath"));
+
+teebox.registerScriptWithInputs("process_files", source, schema, true);
+teebox.addScriptVersionWithInputs("process_files", nextSource, schema, false);
+teebox.updateScriptInputs("process_files", "2", schema); // metadata only; no source change
+List<Object> catalog = teebox.listScriptCatalog();        // uses clientApiToken
+Map<String, Object> inputs = teebox.getScriptInputs("process_files"); // active version
+Map<String, Object> v2 = teebox.getScriptInputs("process_files", "2");
+teebox.deleteScriptInputs("process_files", "2");
+```
+
+The catalog includes non-deleted scripts with `scriptId`, optional `alias`/`activeVersion`, and
+`hasInputSchema` for the active version. The definition response contains `scriptId`, optional
+`alias`, actual `version`, `hasInputSchema`, and `inputSchema` when defined. Undefined means
+`hasInputSchema=false` with `inputSchema` omitted; `{}` is a defined unrestricted schema.
+An omitted/blank lookup version selects **active**, never newest; no active version is HTTP 409,
+and a missing/deleted script or missing version is HTTP 404. Use the returned version when pinning a run.
+
+Writes use the publisher token. Raw `POST /api/publisher/scripts` and `POST .../{id}/versions`
+accept `inputSchema`; omitted/null on a new version means undefined (no automatic inheritance).
+The full `registerScriptWithInputs` / `addScriptVersionWithInputs` overload accepts
+`(scriptId, version, content, description, alias, inputSchema, activate, outputRules)`;
+null version auto-increments. Existing overloads remain compatible.
+
+In the admin UI, Inputs belongs to the selected source version. Save inputs changes just metadata;
+Save and Save as new version also submit the current definition. Blank JSON removes it.
+Older source-save callers that omit the field keep the existing definition. Script duplication
+copies all definitions. Run Props follows the run version selector; Debug Props refers to the
+editor's definition. Editing is limited to the owner/admin; monitors can read it.
+Definitions containing high-precision numbers use the JSON editor only, avoiding browser number rounding.
+
 ## 7. Execution & tracking
 
 ### 7.1 Execution model (sync vs async)
@@ -799,6 +848,12 @@ The full list of public methods. For detailed response shapes/examples, see ยง4โ
 | `activateScriptVersion(scriptId, version)` | `Map` | Change the active version |
 | `updateScriptSettings(scriptId, maxConcurrentRuns, immediate, alias)` | `Map` | Replace execution settings and set/clear the script-level alias |
 | `listScripts()` | `List<Object>` | Full script list |
+| `listScriptCatalog()` | `List<Object>` | Client-token catalog: scriptId, alias, activeVersion, hasInputSchema |
+| `getScriptInputs(scriptId)` / `getScriptInputs(scriptId, version)` | `Map` | Client-token input definition; omitted version selects active |
+| `updateScriptInputs(scriptId, version, inputSchema)` | `Map` | Replace a version's definition using the publisher token |
+| `deleteScriptInputs(scriptId, version)` | `Map` | Remove the definition, preserving the version and source |
+| `registerScriptWithInputs(scriptId, content, inputSchema, activate)` | `Map` | Register source and inputs together; full overload also accepts version, description, alias and outputRules |
+| `addScriptVersionWithInputs(scriptId, content, inputSchema, activate)` | `Map` | Add a version with inputs; same full overload as registration |
 | `listActiveScripts()` | `List<Object>` | List (each script's `versions[]` reduced to the active version only) |
 | `getScript(scriptId)` | `Map` | Script detail (versions/active/settings) |
 | `getActiveScript(scriptId)` | `Map` | Detail (`versions[]` reduced to the active version only) |

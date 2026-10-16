@@ -23,6 +23,9 @@ TeeBox is the ProperTee execution service module. It exposes an HTTP admin UI an
   that module's immutable source snapshot, then restores the editable entry buffer on return;
   monitor bodies remain excluded — see `DebugSessionManager`)
 - debugger Globals includes the effective `_PROPS` object, including live eval changes
+- version-specific input definitions: edit named fields/JSON Schema in Inputs, discover them with
+  `GET /api/client/scripts` and `GET /api/client/scripts/{id}/inputs?version=1`; metadata only,
+  with no runtime enforcement or automatic default injection
 - admin-UI roles: `admin` (full access), `user` (owned scripts/UI Runs, including debugging), and
   read-only `monitor` (ordinary script/Run/Task visibility with Debug fully hidden)
 - external task tracking through `ManagedTaskEngine`

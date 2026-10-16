@@ -48,6 +48,38 @@ public class TeeBoxClient {
         return getJsonList("/api/publisher/scripts", 200);
     }
 
+    public List<Map<String, Object>> listScriptCatalog() throws IOException {
+        return getJsonList("/api/client/scripts", 200);
+    }
+
+    public Map<String, Object> getScriptInputs(String scriptId, String version) throws IOException {
+        String path = "/api/client/scripts/" + urlPath(scriptId) + "/inputs";
+        if (version != null && !version.isBlank()) path += "?version=" + urlPath(version.trim());
+        return getJsonMap(path, 200);
+    }
+
+    public Map<String, Object> updateScriptInputs(String scriptId, String version,
+                                                 ScriptInputSchema inputSchema) throws IOException {
+        if (inputSchema == null) throw new IllegalArgumentException("inputSchema is required");
+        return putJson("/api/publisher/scripts/" + urlPath(scriptId) + "/versions/"
+                + urlPath(version) + "/inputs", inputSchema, 200);
+    }
+
+    public Map<String, Object> deleteScriptInputs(String scriptId, String version) throws IOException {
+        return readJsonMap(open("DELETE", "/api/publisher/scripts/" + urlPath(scriptId)
+                + "/versions/" + urlPath(version) + "/inputs"), 200);
+    }
+
+    public Map<String, Object> registerScriptWithInputs(String scriptId, String content,
+            ScriptInputSchema inputSchema, boolean activate) throws IOException {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("scriptId", scriptId);
+        payload.put("content", content);
+        payload.put("activate", activate);
+        payload.put("inputSchema", inputSchema);
+        return postJson("/api/publisher/scripts", payload, 201);
+    }
+
     public Map<String, Object> getScript(String scriptId) throws IOException {
         return getJsonMap("/api/publisher/scripts/" + urlPath(scriptId), 200);
     }

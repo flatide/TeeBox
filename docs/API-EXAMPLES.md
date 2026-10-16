@@ -165,7 +165,45 @@ curl -X POST $HOST/api/publisher/scripts/hello/restore
 
 ---
 
+### 1.12 버전별 입력 정의
+
+기존 버전의 입력 정의만 교체합니다. 본문은 래퍼 없는 JSON Schema 객체입니다.
+버전 등록 시에도 같은 객체를 `inputSchema` 필드에 넣을 수 있습니다.
+
+```bash
+curl -X PUT "$HOST/api/publisher/scripts/hello/versions/1/inputs" \
+  -H "Authorization: Bearer $PUBLISHER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"object","properties":{"name":{"type":"string","description":"인사할 이름"},"count":{"type":"integer","default":1}},"required":["name"]}'
+
+# 정의만 제거 (버전과 소스는 유지)
+curl -X DELETE "$HOST/api/publisher/scripts/hello/versions/1/inputs" \
+  -H "Authorization: Bearer $PUBLISHER_TOKEN"
+```
+
+필수 여부·기본값은 설명용입니다. Run/Debug 실행 시 자동 검증·기본값 주입은 하지 않습니다.
+정의에는 비밀값을 넣지 마세요. 입력 정의를 제거하면 `hasInputSchema:false`이고,
+빈 객체 `{}`를 저장하면 `hasInputSchema:true`입니다.
+
+---
+
 ## 2. Client API — Run 제출 및 조회
+
+### 입력 정의 조회
+
+```bash
+# Client 토큰만으로 소스나 관리 설정 없이 카탈로그 조회
+curl "$HOST/api/client/scripts" -H "Authorization: Bearer $CLIENT_TOKEN"
+
+# 버전 생략 = active 버전 (latest 아님)
+curl "$HOST/api/client/scripts/hello/inputs" -H "Authorization: Bearer $CLIENT_TOKEN"
+curl "$HOST/api/client/scripts/hello/inputs?version=1" -H "Authorization: Bearer $CLIENT_TOKEN"
+```
+
+응답: `scriptId`, `alias`(있을 때), 실제 선택된 `version`, `hasInputSchema`,
+`inputSchema`(정의가 있을 때). 스크립트/버전이 없으면 404, 버전을 생략했는데 active가 없으면 409입니다.
+예제의 `CLIENT_TOKEN`/`PUBLISHER_TOKEN`은 해당 환경의 namespace 토큰으로 설정하고,
+인증 없는 테스트 환경에서는 Authorization 헤더를 생략합니다.
 
 ### 2.1 Run 제출
 

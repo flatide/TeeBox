@@ -2,6 +2,20 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- Add per-version input definitions (`inputSchema`) persisted with script metadata and copied on
+  duplication. The Inputs editor supports named fields and full JSON editing; Save and Save as
+  new version carry the definition, while Save inputs updates metadata alone. Monitor/non-owner
+  views remain read-only. Run Props shows the selected version's definition; Debug Props shows
+  the editor's input fields.
+- Add the client-token script catalog and version input lookup, plus publisher GET/PUT/DELETE for
+  existing definitions and an optional `inputSchema` on version registration. Both Java clients
+  expose input APIs; the standalone client can publish source and schema together. Definitions
+  are descriptive only: existing execution is unchanged, with no required/type enforcement or
+  automatic defaults. Undefined and an explicit empty schema remain distinct; nested null values
+  and numeric precision survive persistence and API serialization.
+
 ## 1.34.1
 
 - **Embedded engine upgraded to propertee2 0.34.0** — no change for scripts, runs, or the TeeBox

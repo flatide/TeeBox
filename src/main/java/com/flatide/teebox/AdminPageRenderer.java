@@ -43,6 +43,7 @@ public class AdminPageRenderer {
      *  would block a separate /admin asset request anyway). */
     private static final String EDITOR_CSS = loadResource("/propertee-editor.css");
     private static final String EDITOR_JS = loadResource("/propertee-editor.js");
+    private static final String INPUTS_JS = loadResource("/script-inputs.js");
     /** The propertee-js browser bundle, copied verbatim from ../propertee-js/docs/dist/ — provides
      *  the client-side checkScript (syntax + builtin lint) used by the editor pre-check. Inlined
      *  (TeeBox serves no static files) and emitted only on the script detail page. Refresh the
@@ -1682,6 +1683,8 @@ public class AdminPageRenderer {
         }
         sb.append("</div>");
 
+        sb.append(ScriptInputsRenderer.editor(script, selectedVersion, canModify(script)));
+
         // Version Source doubles as the "add a version" surface: editing the source and pressing
         // "Save as new version" posts the editor content to /admin/scripts/register (blank version =>
         // next auto-increment integer). It renders for any modifiable script — including a freshly
@@ -1744,6 +1747,7 @@ public class AdminPageRenderer {
                     sb.append("<label>Debug Props (JSON) <span class='dim'>(Debug only)</span></label>");
                     sb.append("<input type='text' name='propsJson' value='{}' ")
                       .append("title='Input properties used only by Debug; Save ignores this field'/>");
+                    sb.append("<p class='dim' id='debug-input-hint'></p>");
                     sb.append("</div>");
                 }
                 sb.append("<div class='form-row-inline' style='align-items:center;'>");
@@ -1796,7 +1800,7 @@ public class AdminPageRenderer {
         }
         sb.append("<form method='post' action='/admin/submit' class='form-grid'>");
         sb.append("<input type='hidden' name='scriptId' value='").append(escape(scriptId)).append("'/>");
-        sb.append("<div class='form-row'><label>Version").append(runNoActive ? "" : " (blank = active)").append("</label><select name='version' style='padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;'>");
+        sb.append("<div class='form-row'><label>Version").append(runNoActive ? "" : " (blank = active)").append("</label><select id='run-input-version' data-script-id='").append(escape(scriptId)).append("' name='version' style='padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;'>");
         if (runNoActive) {
             sb.append("<option value='' disabled selected>&mdash; select a version &mdash;</option>");
         } else {
@@ -1807,6 +1811,7 @@ public class AdminPageRenderer {
         }
         sb.append("</select></div>");
         sb.append("<div class='form-row'><label>Props (JSON)</label><input type='text' name='propsJson' value='{}'/></div>");
+        sb.append("<details><summary>Inputs for this run version</summary><pre id='run-input-hint'>Select a version to view its inputs.</pre></details>");
         sb.append("<div class='form-row-inline'>");
         sb.append("<div><label>Max Iterations</label><input type='text' name='maxIterations' value='1000' style='width:100px'/></div>");
         sb.append("<div><label>Timeout (ms, 0 = server default)</label><input type='text' name='timeoutMs' value='0' style='width:100px'/></div>");
@@ -1830,6 +1835,7 @@ public class AdminPageRenderer {
 
         sb.append(bundleScript());
         sb.append(editorScript());
+        sb.append("<script>").append(INPUTS_JS).append("</script>");
         sb.append(pageEnd());
         return sb.toString();
     }
@@ -2385,6 +2391,7 @@ public class AdminPageRenderer {
         sb.append("var form=document.getElementById('version-source-form');");
         sb.append("if(!form)return;");
         sb.append("form.addEventListener('submit',function(ev){");
+        sb.append("if(ev.defaultPrevented||(ev.submitter&&ev.submitter.hasAttribute('data-inputs-save')))return;");
         // No ev.submitter (old browser) => skip the pre-check; the server still validates on save.
         sb.append("if(ev.submitter===undefined)return;");
         sb.append("if(form.dataset.syntaxOk==='1'){form.dataset.syntaxOk='';return;}");

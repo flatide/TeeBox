@@ -227,6 +227,25 @@ The `/admin/runs` list filters server-side:
 `GET /api/admin/runs` accepts the same filters: `instant=exclude|only` (absent = all) and
 `q=<substring>`, alongside `status`/`offset`/`limit`.
 
+### Script Input Definitions
+
+The script detail page's **Inputs** card describes the selected version's Props. Add named
+fields with a type, required flag and description; use **JSON Schema (advanced)** for defaults,
+choices and nested structures. **Save inputs** changes only metadata. Source **Save** and
+**Save as new version** also save the current definition, and script duplication copies every
+version's definition. Admins and the script owner may edit; monitors and other users may read.
+
+Definitions are optional and version-specific, stored in the existing `script.json` (no new
+index or background I/O). Client-token callers use `GET /api/client/scripts` to discover scripts
+and `GET /api/client/scripts/{scriptId}/inputs?version=1` to read a definition. Omitting `version`
+selects the active version, not the latest. Publisher-token callers can GET/PUT/DELETE
+`/api/publisher/scripts/{scriptId}/versions/{version}/inputs` or include `inputSchema` at registration.
+
+This is descriptive metadata only: execution does **not** enforce required fields/types or inject
+defaults, including in Debug. A blank editor removes the definition; `{}` is a defined,
+unrestricted schema. Keep secrets out of definitions/defaults/examples: client-token callers can
+read them. See the [client guide](TEEBOX-CLIENT-GUIDE.md#66-input-definitions) for details.
+
 ### Per-Script Concurrency Control
 
 > **Note:** There are two separate concurrency limits:

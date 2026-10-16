@@ -279,6 +279,31 @@ public class RunManager {
         return info != null ? info.copy() : null;
     }
 
+    public List<Map<String, Object>> listClientScripts() {
+        List<Map<String, Object>> catalog = new ArrayList<>();
+        for (ScriptInfo script : scriptRegistry.listScripts()) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("scriptId", script.scriptId);
+            entry.put("alias", script.alias);
+            entry.put("activeVersion", script.activeVersion);
+            boolean defined = false;
+            for (ScriptVersionInfo version : script.versions) {
+                if (version.version.equals(script.activeVersion)) defined = version.inputSchema != null;
+            }
+            entry.put("hasInputSchema", defined);
+            catalog.add(entry);
+        }
+        return catalog;
+    }
+
+    public ScriptInputs getScriptInputs(String scriptId, String version) {
+        return scriptRegistry.getVersionInputs(scriptId, version);
+    }
+
+    public ScriptInputs updateScriptInputs(String scriptId, String version, ScriptInputSchema schema) {
+        return scriptRegistry.updateVersionInputs(scriptId, version, schema);
+    }
+
     public ScriptInfo registerScriptVersion(String scriptId,
                                             String version,
                                             String content,
@@ -348,6 +373,13 @@ public class RunManager {
             description, alias, activate, outputRules, owner);
     }
 
+    public ScriptRegistry.RegisteredVersion registerScriptVersionWithInputs(String scriptId,
+            String version, String content, String description, String alias, boolean activate,
+            List<OutputPublishRule> outputRules, String owner, ScriptInputSchema inputSchema) {
+        return scriptRegistry.registerVersionDetailedWithAlias(scriptId, version, content,
+                description, alias, activate, outputRules, owner, inputSchema);
+    }
+
     /** Create an empty script shell (no versions, not active); code is added later. See ScriptRegistry. */
     public ScriptInfo createScript(String scriptId, String owner) {
         return scriptRegistry.createScript(scriptId, owner);
@@ -369,6 +401,13 @@ public class RunManager {
     public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content,
                                                  List<OutputPublishRule> outputRules, String description) {
         return scriptRegistry.updateVersionContent(scriptId, version, content, outputRules, description);
+    }
+
+    public ScriptInfo updateScriptVersionContent(String scriptId, String version, String content,
+            List<OutputPublishRule> outputRules, String description,
+            boolean inputSchemaPresent, ScriptInputSchema inputSchema) {
+        return scriptRegistry.updateVersionContent(scriptId, version, content, outputRules,
+                description, inputSchemaPresent, inputSchema);
     }
 
     public ScriptInfo updateScriptSettings(String scriptId, int maxConcurrentRuns, boolean immediate) {

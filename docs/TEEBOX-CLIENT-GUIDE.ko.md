@@ -278,6 +278,57 @@ for (Object item : teebox.listScripts()) {
 
 ---
 
+### 6.6 입력 정의
+
+각 버전에 `props`를 설명하는 선택적 `inputSchema`를 저장할 수 있습니다. JSON Schema의
+`type`, `properties`, `required`, `description`, `enum`, `default`, `items` 등을 사용합니다.
+조회·안내용 메타데이터이므로 Run/Debug 실행 시 필수값·타입을 강제하거나 기본값을 주입하지 않습니다.
+저장 시 주요 키워드의 형태만 검사하며 나머지 키워드도 보존합니다. 전체 JSON Schema 검증이나
+외부 참조 해석은 수행하지 않습니다. 루트는 객체이고 `type`을 지정하면 `object`여야 하며,
+크기는 65536자, 중첩은 32단계로 제한합니다.
+
+```java
+Map<String, Object> file = new LinkedHashMap<String, Object>();
+file.put("type", "string");
+file.put("description", "처리할 파일");
+Map<String, Object> properties = new LinkedHashMap<String, Object>();
+properties.put("filePath", file);
+Map<String, Object> schema = new LinkedHashMap<String, Object>();
+schema.put("type", "object");
+schema.put("properties", properties);
+schema.put("required", java.util.Arrays.asList("filePath"));
+
+teebox.registerScriptWithInputs("process_files", source, schema, true);
+teebox.addScriptVersionWithInputs("process_files", nextSource, schema, false);
+teebox.updateScriptInputs("process_files", "2", schema); // 메타데이터만 수정
+List<Object> catalog = teebox.listScriptCatalog();        // clientApiToken 사용
+Map<String, Object> inputs = teebox.getScriptInputs("process_files"); // active 버전
+Map<String, Object> v2 = teebox.getScriptInputs("process_files", "2");
+teebox.deleteScriptInputs("process_files", "2");
+```
+
+목록은 삭제되지 않은 스크립트의 `scriptId`, 선택적 `alias`/`activeVersion`, 활성 버전의
+`hasInputSchema`를 반환합니다. 입력 조회 응답은 `scriptId`, 선택적 `alias`, 실제 `version`,
+`hasInputSchema`, 정의가 있을 때의 `inputSchema`입니다. 미정의는 `hasInputSchema=false`이고
+`inputSchema`가 생략됩니다. `{}`는 정의된 무제약 스키마입니다. 조회에서 버전을 생략하거나
+비우면 최신이 아닌 **active**를 선택합니다. 활성 버전이 없으면 409, 스크립트/버전이 없거나
+스크립트가 삭제되었으면 404입니다. 조회한 버전으로 실행하려면 응답의 `version`을 제출하세요.
+
+수정 API는 publisher 토큰을 사용합니다. 기존 `POST /api/publisher/scripts` 및
+`POST .../{id}/versions`에 `inputSchema`를 함께 보낼 수 있습니다. 새 버전에서 생략/null이면
+미정의로 등록하며 다른 버전에서 자동 상속하지 않습니다. 클라이언트의 전체
+`registerScriptWithInputs` / `addScriptVersionWithInputs` 오버로드는
+`(scriptId, version, content, description, alias, inputSchema, activate, outputRules)`를 받습니다.
+null 버전은 자동 증가하며 기존 오버로드도 그대로 동작합니다.
+
+Admin UI의 Inputs는 선택한 소스 버전에 속합니다. Save inputs는 정의만, Save와
+Save as new version은 소스와 현재 정의를 함께 저장합니다. 빈 JSON은 정의를 제거합니다.
+기존 소스 저장 호출에서 필드를 생략하면 기존 정의를 유지하고, 스크립트 복제는 모든 정의를
+복사합니다. Run Props 안내는 Run의 버전 선택을, Debug Props 안내는 에디터 정의를 따릅니다.
+소유자/admin만 수정할 수 있고 monitor는 조회만 가능합니다.
+
+큰 정수나 고정밀 숫자가 있는 정의는 브라우저 반올림을 방지하기 위해 JSON 편집기만 사용합니다.
+
 ## 7. 실행 & 추적
 
 ### 7.1 실행 모델 (동기 vs 비동기)
@@ -799,6 +850,12 @@ try {
 | `activateScriptVersion(scriptId, version)` | `Map` | 활성 버전 변경 |
 | `updateScriptSettings(scriptId, maxConcurrentRuns, immediate, alias)` | `Map` | 실행 설정을 교체하고 스크립트 단위 alias 설정/삭제 |
 | `listScripts()` | `List<Object>` | 전체 스크립트 목록 |
+| `listScriptCatalog()` | `List<Object>` | Client 토큰 카탈로그: scriptId, alias, activeVersion, hasInputSchema |
+| `getScriptInputs(scriptId)` / `getScriptInputs(scriptId, version)` | `Map` | Client 토큰으로 입력 정의 조회; 버전 생략 시 active 선택 |
+| `updateScriptInputs(scriptId, version, inputSchema)` | `Map` | Publisher 토큰으로 버전의 입력 정의 교체 |
+| `deleteScriptInputs(scriptId, version)` | `Map` | 버전·소스는 유지하고 입력 정의만 제거 |
+| `registerScriptWithInputs(scriptId, content, inputSchema, activate)` | `Map` | 소스와 입력 정의 함께 등록; 전체 오버로드는 version, description, alias, outputRules도 지정 |
+| `addScriptVersionWithInputs(scriptId, content, inputSchema, activate)` | `Map` | 입력 정의가 있는 버전 추가; 등록과 동일한 전체 오버로드 제공 |
 | `listActiveScripts()` | `List<Object>` | 목록(각 스크립트 `versions[]`를 활성 버전만으로 축소) |
 | `getScript(scriptId)` | `Map` | 스크립트 상세(versions/active/settings) |
 | `getActiveScript(scriptId)` | `Map` | 상세(`versions[]`를 활성 버전만으로 축소) |

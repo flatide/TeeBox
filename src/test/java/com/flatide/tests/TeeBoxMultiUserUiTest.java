@@ -29,6 +29,42 @@ public class TeeBoxMultiUserUiTest {
     private static final String SCRIPT_BODY = "return {\"v\": 1}\n";
 
     @Test
+    public void inputDefinitionsRespectOwnershipAndMonitorVisibility() throws Exception {
+        File dataDir = Files.createTempDirectory("teebox-inputs-ownership").toFile();
+        writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"},"
+                + "{\"username\":\"alice\",\"role\":\"user\"},{\"username\":\"bob\",\"role\":\"user\"},"
+                + "{\"username\":\"monitor\",\"role\":\"monitor\"}]");
+        TeeBoxServer server = startServer(dataDir);
+        String base = "http://127.0.0.1:" + server.getPort();
+        try {
+            String alice = login(base, "alice", "alice-pw");
+            String bob = login(base, "bob", "bob-pw");
+            String monitor = login(base, "monitor", "monitor-pw");
+            String admin = login(base, "admin", "admin-pw");
+            String schema = "{\"type\":\"object\",\"properties\":{\"file\":{\"type\":\"string\",\"description\":\"Input file\"}}}";
+            assertRedirect("register owned input definition", postForm(base, "/admin/scripts/register",
+                    "scriptId=defined&content=" + enc(SCRIPT_BODY) + "&inputSchemaJson=" + enc(schema), alice));
+            Assert.assertTrue(getBody(base, "/admin/scripts/defined/inputs?version=1", monitor).contains("Input file"));
+            String readOnly = getBody(base, "/admin/scripts/defined", monitor);
+            Assert.assertTrue(readOnly.contains("Inputs (1)"));
+            Assert.assertFalse(readOnly.contains("data-inputs-save"));
+            assertForbidden("other user changes definition", postForm(base, "/admin/scripts/inputs/defined",
+                    "version=1&inputSchemaJson=", bob));
+            assertForbidden("monitor changes definition", postForm(base, "/admin/scripts/inputs/defined",
+                    "version=1&inputSchemaJson=", monitor));
+            assertForbidden("monitor registers a version with inputs", postForm(base, "/admin/scripts/register",
+                    "scriptId=defined&content=" + enc(SCRIPT_BODY) + "&inputSchemaJson={}", monitor));
+            assertRedirect("owner updates definition", postForm(base, "/admin/scripts/inputs/defined",
+                    "version=1&inputSchemaJson={}", alice));
+            assertRedirect("admin removes definition", postForm(base, "/admin/scripts/inputs/defined",
+                    "version=1&inputSchemaJson=", admin));
+            Assert.assertFalse(server.getRunManager().getScriptInputs("defined", "1").hasInputSchema);
+        } finally {
+            server.stop();
+        }
+    }
+
+    @Test
     public void ownershipGovernsAdminUiActions() throws Exception {
         File dataDir = Files.createTempDirectory("teebox-multiuser").toFile();
         writeRoster(dataDir, "[{\"username\":\"admin\",\"role\":\"admin\"},"

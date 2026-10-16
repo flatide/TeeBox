@@ -160,6 +160,15 @@ public class ScriptRegistry {
                                                    boolean activate,
                                                    List<OutputPublishRule> outputRules,
                                                    String owner) {
+        return registerVersionDetailedWithAlias(scriptId, version, content, description, alias,
+                activate, outputRules, owner, null);
+    }
+
+    public synchronized RegisteredVersion registerVersionDetailedWithAlias(String scriptId,
+                                                   String version, String content, String description,
+                                                   String alias, boolean activate,
+                                                   List<OutputPublishRule> outputRules, String owner,
+                                                   ScriptInputSchema inputSchema) {
         validateName("scriptId", scriptId);
         if (content == null || content.trim().length() == 0) {
             throw new IllegalArgumentException("content is required");
@@ -211,6 +220,7 @@ public class ScriptRegistry {
         versionInfo.sha256 = sha256(content);
         versionInfo.createdAt = now;
         versionInfo.active = false;
+        versionInfo.inputSchema = inputSchema != null ? inputSchema.copy() : null;
         if (outputRules != null && !outputRules.isEmpty()) {
             versionInfo.outputRules = new ArrayList<OutputPublishRule>();
             for (OutputPublishRule rule : outputRules) {
@@ -262,6 +272,13 @@ public class ScriptRegistry {
     /** @param description tri-state like {@code outputRules}: null = keep, "" = clear, text = replace. */
     public synchronized ScriptInfo updateVersionContent(String scriptId, String version, String content,
                                                         List<OutputPublishRule> outputRules, String description) {
+        return updateVersionContent(scriptId, version, content, outputRules, description, false, null);
+    }
+
+    /** Omitted definition keeps the existing one; a supplied null clears it. */
+    public synchronized ScriptInfo updateVersionContent(String scriptId, String version, String content,
+                                                        List<OutputPublishRule> outputRules, String description,
+                                                        boolean inputSchemaPresent, ScriptInputSchema inputSchema) {
         if (content == null || content.trim().length() == 0) {
             throw new IllegalArgumentException("content is required");
         }
@@ -278,6 +295,7 @@ public class ScriptRegistry {
         File scriptFile = new File(new File(scriptDir(scriptId), "versions"), version + ".tee");
         writeFile(scriptFile, content);
         vi.sha256 = sha256(content);
+        if (inputSchemaPresent) vi.inputSchema = inputSchema != null ? inputSchema.copy() : null;
         // Update outputRules: null means no change, empty list means clear
         if (outputRules != null) {
             if (outputRules.isEmpty()) {
@@ -306,6 +324,29 @@ public class ScriptRegistry {
         sortVersions(info);
         saveScript(info);
         return info.copy();
+    }
+
+    /** Null for an unknown/deleted script or version; an implicit version always means active. */
+    public synchronized ScriptInputs getVersionInputs(String scriptId, String version) {
+        ScriptInfo info = loadScript(scriptId);
+        if (info == null || info.deletedAt > 0) return null;
+        String selected = version == null || version.isBlank() ? info.activeVersion : version.trim();
+        if (selected == null) throw new IllegalStateException("No active version for script: " + scriptId);
+        validateVersion(selected);
+        ScriptVersionInfo vi = findVersion(info, selected);
+        return vi == null ? null : new ScriptInputs(info, vi);
+    }
+
+    public synchronized ScriptInputs updateVersionInputs(String scriptId, String version, ScriptInputSchema schema) {
+        validateVersion(version);
+        ScriptInfo info = loadScript(scriptId);
+        if (info == null || info.deletedAt > 0) return null;
+        ScriptVersionInfo vi = findVersion(info, version);
+        if (vi == null) return null;
+        vi.inputSchema = schema != null ? schema.copy() : null;
+        info.updatedAt = System.currentTimeMillis();
+        saveScript(info);
+        return new ScriptInputs(info, vi);
     }
 
     /**

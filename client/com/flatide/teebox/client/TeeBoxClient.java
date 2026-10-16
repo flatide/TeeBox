@@ -138,6 +138,86 @@ public class TeeBoxClient {
 
     // ===================== Scripts (register / update / inspect) =====================
 
+    /** Public catalog (id, alias, activeVersion, hasInputSchema), using the client token. */
+    public List<Object> listScriptCatalog() throws IOException {
+        return asList(request("GET", "/api/client/scripts", null, 200));
+    }
+
+    /** Input definition of the active version. No source or admin settings are returned. */
+    public Map<String, Object> getScriptInputs(String scriptId) throws IOException {
+        return getScriptInputs(scriptId, null);
+    }
+
+    /** Input definition of a specific version (null = active), using the client token. */
+    public Map<String, Object> getScriptInputs(String scriptId, String version) throws IOException {
+        requireText("scriptId", scriptId);
+        String path = "/api/client/scripts/" + enc(scriptId) + "/inputs";
+        if (version != null && version.trim().length() > 0) path += "?version=" + enc(version.trim());
+        return asMap(request("GET", path, null, 200));
+    }
+
+    /** Replace the descriptive input schema of an existing version; does not change run behavior. */
+    public Map<String, Object> updateScriptInputs(String scriptId, String version,
+                                                 Map<String, Object> inputSchema) throws IOException {
+        requireText("scriptId", scriptId);
+        requireText("version", version);
+        if (inputSchema == null) throw new IllegalArgumentException("inputSchema is required; use deleteScriptInputs");
+        return asMap(request("PUT", "/api/publisher/scripts/" + enc(scriptId) + "/versions/"
+                + enc(version) + "/inputs", inputSchema, 200));
+    }
+
+    /** Remove a version's input definition; the version and source remain available. */
+    public Map<String, Object> deleteScriptInputs(String scriptId, String version) throws IOException {
+        requireText("scriptId", scriptId);
+        requireText("version", version);
+        return asMap(request("DELETE", "/api/publisher/scripts/" + enc(scriptId) + "/versions/"
+                + enc(version) + "/inputs", null, 200));
+    }
+
+    public Map<String, Object> registerScriptWithInputs(String scriptId, String content,
+            Map<String, Object> inputSchema, boolean activate) throws IOException {
+        return registerScriptWithInputs(scriptId, null, content, null, null, inputSchema, activate, null);
+    }
+
+    /** Register source and input definition together. Null version auto-increments. */
+    public Map<String, Object> registerScriptWithInputs(String scriptId, String version, String content,
+            String description, String alias, Map<String, Object> inputSchema, boolean activate,
+            List<Map<String, Object>> outputRules) throws IOException {
+        requireText("scriptId", scriptId);
+        return publishScriptWithInputs("/api/publisher/scripts", scriptId, version, content,
+                description, alias, inputSchema, activate, outputRules);
+    }
+
+    public Map<String, Object> addScriptVersionWithInputs(String scriptId, String content,
+            Map<String, Object> inputSchema, boolean activate) throws IOException {
+        return addScriptVersionWithInputs(scriptId, null, content, null, null, inputSchema, activate, null);
+    }
+
+    /** Add source and its input definition together. Null version auto-increments. */
+    public Map<String, Object> addScriptVersionWithInputs(String scriptId, String version, String content,
+            String description, String alias, Map<String, Object> inputSchema, boolean activate,
+            List<Map<String, Object>> outputRules) throws IOException {
+        requireText("scriptId", scriptId);
+        return publishScriptWithInputs("/api/publisher/scripts/" + enc(scriptId) + "/versions", scriptId,
+                version, content, description, alias, inputSchema, activate, outputRules);
+    }
+
+    private Map<String, Object> publishScriptWithInputs(String path, String scriptId, String version,
+            String content, String description, String alias, Map<String, Object> inputSchema,
+            boolean activate, List<Map<String, Object>> outputRules) throws IOException {
+        requireText("content", content);
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("scriptId", scriptId);
+        if (version != null) body.put("version", version);
+        body.put("content", content);
+        if (description != null) body.put("description", description);
+        if (alias != null) body.put("alias", alias);
+        if (inputSchema != null) body.put("inputSchema", inputSchema);
+        if (outputRules != null) body.put("outputRules", outputRules);
+        body.put("activate", Boolean.valueOf(activate));
+        return asMap(request("POST", path, body, 201));
+    }
+
     /** Register a script and its first version. Returns the script detail. (POST /api/publisher/scripts) */
     public Map<String, Object> registerScript(String scriptId, String version, String content, boolean activate)
             throws IOException {

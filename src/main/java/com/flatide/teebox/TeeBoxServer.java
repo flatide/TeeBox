@@ -332,14 +332,38 @@ public class TeeBoxServer {
                     String trimmedVersion = (version != null && version.trim().length() > 0) ? version.trim() : null;
                     List<OutputPublishRule> outputRules = parseOutputRuleFromForm(form);
                     String owner = session != null ? session.username : null;
-                    ScriptRegistry.RegisteredVersion registered = runManager.registerScriptVersionDetailedWithAlias(
-                            scriptId.trim(), trimmedVersion, content, description, alias, activate, outputRules, owner);
+                    ScriptRegistry.RegisteredVersion registered = runManager.registerScriptVersionWithInputs(
+                            scriptId.trim(), trimmedVersion, content, description, alias, activate, outputRules, owner,
+                            ScriptInputSchema.parse(form.get("inputSchemaJson")));
                     // Land on the version just saved. The page's no-?version= fallback is the ACTIVE
                     // version, and a new version doesn't auto-activate — so "Save as new version" used
                     // to bounce back to the OLD content in the editor, and the next in-place Save
                     // (whose button targets the displayed version) silently overwrote the old version.
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim())
                             + "?version=" + urlParam(registered.version));
+                    return;
+                }
+                if ("GET".equals(method) && path.startsWith("/admin/scripts/") && path.endsWith("/inputs")
+                        && path.length() > "/admin/scripts/".length() + "/inputs".length()) {
+                    String scriptId = path.substring("/admin/scripts/".length(), path.length() - "/inputs".length());
+                    writeScriptInputs(exchange, runManager.getScriptInputs(scriptId, parseQuery(exchange).get("version")));
+                    return;
+                }
+                if ("POST".equals(method) && path.startsWith("/admin/scripts/inputs/")) {
+                    String scriptId = path.substring("/admin/scripts/inputs/".length());
+                    if (!canModifyScript(session, scriptId)) {
+                        forbidden(exchange);
+                        return;
+                    }
+                    Map<String, String> form = parseForm(exchange);
+                    if (!form.containsKey("inputSchemaJson")) throw new IllegalArgumentException("inputSchemaJson is required");
+                    ScriptInputs inputs = runManager.updateScriptInputs(scriptId, form.get("version"),
+                            ScriptInputSchema.parse(form.get("inputSchemaJson")));
+                    if (inputs == null) {
+                        writeScriptInputs(exchange, null);
+                    } else {
+                        redirect(exchange, "/admin/scripts/" + urlPath(scriptId) + "?version=" + urlParam(inputs.version));
+                    }
                     return;
                 }
                 if ("POST".equals(method) && path.startsWith("/admin/scripts/settings/")) {
@@ -601,7 +625,8 @@ public class TeeBoxServer {
                     // The editor prefills the field with the version's current description, so the
                     // posted value IS the desired state ("" clears). Absent field (non-UI post) = keep.
                     String description = form.get("description");
-                    runManager.updateScriptVersionContent(scriptId.trim(), version.trim(), content, outputRules, description);
+                    runManager.updateScriptVersionContent(scriptId.trim(), version.trim(), content, outputRules, description,
+                            form.containsKey("inputSchemaJson"), ScriptInputSchema.parse(form.get("inputSchemaJson")));
                     // Return to the version just edited (which may not be the active one), not the default.
                     redirect(exchange, "/admin/scripts/" + urlPath(scriptId.trim()) + "?version=" + urlParam(version.trim()));
                     return;
@@ -1154,6 +1179,10 @@ public class TeeBoxServer {
     }
 
     private void handleClientApi(HttpExchange exchange, String method, String path) throws IOException {
+        if ("GET".equals(method) && "/api/client/scripts".equals(path)) {
+            writeJson(exchange, HttpURLConnection.HTTP_OK, runManager.listClientScripts());
+            return;
+        }
         if ("POST".equals(method) && path.startsWith("/api/client/runs/") && path.endsWith("/cancel")) {
             String runId = path.substring("/api/client/runs/".length(), path.length() - "/cancel".length());
             String userId = sanitizeUserId(exchange.getRequestHeaders().getFirst(USER_HEADER));
@@ -1273,6 +1302,14 @@ public class TeeBoxServer {
         }
         String scriptId = suffix.substring(0, slashIdx);
         String rest = suffix.substring(slashIdx);
+        if ("/inputs".equals(rest)) {
+            if (!"GET".equals(method)) {
+                writeJson(exchange, HttpURLConnection.HTTP_BAD_METHOD, errorMap("Use GET"));
+            } else {
+                writeScriptInputs(exchange, runManager.getScriptInputs(scriptId, parseQuery(exchange).get("version")));
+            }
+            return;
+        }
         if ("/runs".equals(rest)) {
             if ("POST".equals(method)) {
                 RunRequest request = parseScriptRunRequest(exchange, scriptId);
@@ -1519,15 +1556,37 @@ public class TeeBoxServer {
     }
 
     private void handlePublisherApi(HttpExchange exchange, String method, String path) throws IOException {
+        // The script id itself may be "inputs"; only a nested suffix denotes this resource.
+        if (path.startsWith("/api/publisher/scripts/") && path.endsWith("/inputs")
+                && path.length() > "/api/publisher/scripts/".length() + "/inputs".length()) {
+            String[] parts = path.substring("/api/publisher/scripts/".length()).split("/", -1);
+            if (parts.length != 4 || !"versions".equals(parts[1])) {
+                writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Not found"));
+                return;
+            }
+            if ("GET".equals(method)) {
+                if (parts[2].isBlank()) throw new IllegalArgumentException("version is required");
+                writeScriptInputs(exchange, runManager.getScriptInputs(parts[0], parts[2]));
+            } else if ("PUT".equals(method)) {
+                ScriptInputSchema schema = ScriptInputSchema.parse(readBody(exchange));
+                if (schema == null) throw new IllegalArgumentException("inputSchema object is required; use DELETE to remove it");
+                writeScriptInputs(exchange, runManager.updateScriptInputs(parts[0], parts[2], schema));
+            } else if ("DELETE".equals(method)) {
+                writeScriptInputs(exchange, runManager.updateScriptInputs(parts[0], parts[2], null));
+            } else {
+                writeJson(exchange, HttpURLConnection.HTTP_BAD_METHOD, errorMap("Use GET, PUT or DELETE"));
+            }
+            return;
+        }
         if ("GET".equals(method) && "/api/publisher/scripts".equals(path)) {
             writeJson(exchange, HttpURLConnection.HTTP_OK, runManager.listScripts());
             return;
         }
         if ("POST".equals(method) && "/api/publisher/scripts".equals(path)) {
             ScriptPublishRequest request = parseScriptPublishRequest(exchange);
-            ScriptInfo info = runManager.registerScriptVersionWithAlias(request.scriptId,
+            ScriptInfo info = runManager.registerScriptVersionWithInputs(request.scriptId,
                 request.version, request.content, request.description, request.alias,
-                request.activate, request.outputRules, null);
+                request.activate, request.outputRules, null, request.inputSchema).script;
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
@@ -1581,9 +1640,9 @@ public class TeeBoxServer {
             if (!scriptId.equals(request.scriptId)) {
                 throw new IllegalArgumentException("scriptId in path and body must match");
             }
-            ScriptInfo info = runManager.registerScriptVersionWithAlias(request.scriptId,
+            ScriptInfo info = runManager.registerScriptVersionWithInputs(request.scriptId,
                 request.version, request.content, request.description, request.alias,
-                request.activate, request.outputRules, null);
+                request.activate, request.outputRules, null, request.inputSchema).script;
             writeJson(exchange, HttpURLConnection.HTTP_CREATED, info);
             return;
         }
@@ -1766,8 +1825,13 @@ public class TeeBoxServer {
     }
 
     private ScriptPublishRequest parseScriptPublishRequest(HttpExchange exchange) throws IOException {
-        Map<String, Object> raw = parseJsonBody(exchange);
+        String body = readBody(exchange);
+        Map<String, Object> raw = parseJsonObject(body);
         ScriptPublishRequest request = new ScriptPublishRequest();
+        // Read this subtree without Map<String,Object>'s Double conversion (enum/default precision).
+        com.google.gson.JsonElement document = com.google.gson.JsonParser.parseString(body);
+        if (!document.isJsonObject()) throw new IllegalArgumentException("Request body must be an object");
+        request.inputSchema = ScriptInputSchema.fromJson(document.getAsJsonObject().get("inputSchema"));
         Object scriptId = raw.get("scriptId");
         request.scriptId = scriptId instanceof String ? ((String) scriptId).trim() : null;
         Object version = raw.get("version");
@@ -1842,6 +1906,14 @@ public class TeeBoxServer {
             throw new IllegalArgumentException("Request body is required");
         }
         return parseJsonObject(body);
+    }
+
+    private void writeScriptInputs(HttpExchange exchange, ScriptInputs inputs) throws IOException {
+        if (inputs == null) {
+            writeJson(exchange, HttpURLConnection.HTTP_NOT_FOUND, errorMap("Script or version not found"));
+        } else {
+            writeJson(exchange, HttpURLConnection.HTTP_OK, inputs);
+        }
     }
 
     /** Like {@link #parseJsonBody} but an EMPTY body is legitimate (returns null); a non-empty
@@ -2585,6 +2657,7 @@ public class TeeBoxServer {
         String content;
         String description;
         String alias;
+        ScriptInputSchema inputSchema;
         boolean activate;
         List<OutputPublishRule> outputRules;
     }

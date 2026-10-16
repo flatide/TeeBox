@@ -33,6 +33,55 @@ security:
 paths:
   # ── Client API ──────────────────────────────────────────────
 
+  /api/client/scripts:
+    get:
+      tags: [Client]
+      summary: List script IDs, aliases and active-version input-definition availability
+      operationId: clientListScriptCatalog
+      security:
+        - ClientToken: []
+      responses:
+        '200':
+          description: Non-deleted scripts, including scripts with no active version. Source and administrative settings are excluded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ScriptCatalogEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/client/scripts/{scriptId}/inputs:
+    get:
+      tags: [Client]
+      summary: Read a version's descriptive input schema
+      operationId: clientGetScriptInputs
+      security:
+        - ClientToken: []
+      parameters:
+        - $ref: '#/components/parameters/ScriptId'
+        - name: version
+          in: query
+          description: Canonical positive integer version; omitted or blank selects active, never newest.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Resolved version and input definition. hasInputSchema=false means undefined, not zero inputs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInputs'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Unknown/deleted script or unknown version
+        '409':
+          description: Version omitted but no active version exists
+
   /api/client/runs:
     get:
       tags: [Client]
@@ -610,6 +659,79 @@ paths:
 
   # ── Publisher API ───────────────────────────────────────────
 
+  /api/publisher/scripts/{scriptId}/versions/{version}/inputs:
+    parameters:
+      - $ref: '#/components/parameters/ScriptId'
+      - name: version
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^[1-9][0-9]*$'
+    get:
+      tags: [Publisher]
+      summary: Read an exact version's input definition with the publisher token
+      operationId: publisherGetScriptInputs
+      security:
+        - PublisherToken: []
+      responses:
+        '200':
+          description: Version input definition
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInputs'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Publisher]
+      summary: Replace an existing version's input definition without changing source
+      operationId: publisherUpdateScriptInputs
+      security:
+        - PublisherToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScriptInputSchema'
+      responses:
+        '200':
+          description: Saved definition; this does not enable runtime input validation or defaults
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInputs'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Publisher]
+      summary: Remove a version's input definition
+      operationId: publisherDeleteScriptInputs
+      security:
+        - PublisherToken: []
+      responses:
+        '200':
+          description: Definition removed; hasInputSchema is false and inputSchema is omitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScriptInputs'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/publisher/scripts:
     get:
       tags: [Publisher]
@@ -638,7 +760,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ScriptPublishRequest'
+              allOf:
+                - $ref: '#/components/schemas/ScriptPublishRequest'
+                - type: object
+                  required: [scriptId]
       responses:
         '201':
           description: Script version registered
@@ -1475,6 +1600,9 @@ components:
       properties:
         scriptId:
           type: string
+        alias:
+          type: string
+          description: Optional script-level display name
         activeVersion:
           type: string
           nullable: true
@@ -1510,10 +1638,8 @@ components:
         description:
           type: string
           nullable: true
-        labels:
-          type: array
-          items:
-            type: string
+        inputSchema:
+          $ref: '#/components/schemas/ScriptInputSchema'
         sha256:
           type: string
           description: SHA-256 hash of script content
@@ -1525,24 +1651,28 @@ components:
 
     ScriptPublishRequest:
       type: object
-      required: [scriptId, version, content]
+      required: [content]
+      description: scriptId is required on POST /api/publisher/scripts; the versions endpoint can take it from the path. Legacy labels are accepted but ignored.
       properties:
         scriptId:
           type: string
           description: Script identifier
+        alias:
+          type: string
+          maxLength: 128
+          description: Optional shared script display name; omitted preserves the existing alias
         version:
           type: string
-          description: Version string
+          pattern: '^[1-9][0-9]*$'
+          description: Canonical positive integer. Omitted or blank auto-allocates the next never-used number.
         content:
           type: string
           description: ProperTee script source code
         description:
           type: string
           nullable: true
-        labels:
-          type: array
-          items:
-            type: string
+        inputSchema:
+          $ref: '#/components/schemas/ScriptInputSchema'
         activate:
           type: boolean
           default: false
@@ -1586,6 +1716,54 @@ components:
                 description: >
                   Deprecated pre-1.18 input alias, still accepted — true maps to
                   maxCaptures=1; false with no explicit maxCaptures maps to 0 (unlimited).
+
+    ScriptInputSchema:
+      type: object
+      additionalProperties: true
+      description: |
+        Descriptive JSON Schema for the version's props. Root type, if supplied, must be object.
+        Common keyword shapes are checked; this is not full JSON Schema validation. Other keywords
+        are preserved, and external references are not resolved. Limit 65536 characters / 32 nesting
+        levels. Required, enum and default do not enforce or alter Run/Debug inputs. Omitted/null
+        on a NEW version leaves it undefined. PUT requires an object (use DELETE to remove it).
+      example:
+        type: object
+        properties:
+          filePath:
+            type: string
+            description: File to process
+        required: [filePath]
+
+    ScriptCatalogEntry:
+      type: object
+      required: [scriptId, hasInputSchema]
+      properties:
+        scriptId:
+          type: string
+        alias:
+          type: string
+        activeVersion:
+          type: string
+          description: Omitted if no version is active
+        hasInputSchema:
+          type: boolean
+          description: Whether the active version has an input definition
+
+    ScriptInputs:
+      type: object
+      required: [scriptId, version, hasInputSchema]
+      properties:
+        scriptId:
+          type: string
+        alias:
+          type: string
+        version:
+          type: string
+          description: Actual selected version, even when the request omitted version
+        hasInputSchema:
+          type: boolean
+        inputSchema:
+          $ref: '#/components/schemas/ScriptInputSchema'
 
     # ── System ──
 
