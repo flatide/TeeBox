@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.35.0
 
 - Add per-version input definitions (`inputSchema`) persisted with script metadata and copied on
   duplication. The Inputs editor supports named fields and full JSON editing; Save and Save as
@@ -37,6 +37,9 @@ All notable changes to TeeBox are documented here.
   entry, with `READ_FILE`'s entry pointing at it for large files (ported verbatim from the
   playground). The detail-page test guards all three, and a server test runs `FILE_LINES`
   through a run both as a returned value and as the `result` global.
+
+**284 TeeBox tests and 133 propertee-js tests green. Packaged with propertee2 0.35.0 at
+`e76ad86d0b5c`.**
 
 ## 1.34.1
 
