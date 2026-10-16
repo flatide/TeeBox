@@ -392,6 +392,12 @@ public class TeeBoxMultiUserUiTest {
             // Spec v0.25.0 (engine 0.33.0): the TO_NUMBER entry documents the decimal-numeral rule.
             Assert.assertTrue("TO_NUMBER panel entry at spec v0.25.0",
                     html.contains("desc: 'Convert a decimal numeral to a number (spec v0.25.0)"));
+            // Spec v0.26.0 FILE_LINES (engine 0.35.0) is highlighted and documented like the rest, and
+            // READ_FILE's entry points at it for large files.
+            Assert.assertTrue("FILE_LINES in the highlighter regex", html.contains("|READ_LINES|FILE_LINES|"));
+            Assert.assertTrue("FILE_LINES documented in the panel", html.contains("name: 'FILE_LINES'"));
+            Assert.assertTrue("READ_FILE panel entry points at FILE_LINES",
+                    html.contains("for large files use FILE_LINES (spec v0.26.0)"));
 
             // The builtin panel is hidden by default and toggled by the ƒ button pinned to the
             // editor's top-right (TeeBox addition); the choice persists via localStorage.
@@ -418,6 +424,10 @@ public class TeeBoxMultiUserUiTest {
                     html.contains("'WORDS': (str) =>"));
             Assert.assertTrue("embedded visitor carries the spec v0.25.0 TO_NUMBER rule",
                     html.contains("if (!DECIMAL_NUMERAL.test(text))"));
+            // Spec v0.26.0: the bundle knows FILE_LINES as a builtin (a stub there — the browser has no
+            // files — but a known name, so the client-side lint does not flag it).
+            Assert.assertTrue("embedded visitor carries the spec v0.26.0 FILE_LINES builtin",
+                    html.contains("this.functions['FILE_LINES'] = () => {"));
             Assert.assertTrue("client-first check wired", html.contains("ptClientCheck"));
             int knownStart = html.indexOf("var PT_KNOWN=[");
             Assert.assertTrue("runtime known-name set rendered", knownStart >= 0);
@@ -426,6 +436,8 @@ public class TeeBoxMultiUserUiTest {
                     knownList.contains("'STREAM_FILE'") && knownList.contains("'THUMBNAIL'"));
             Assert.assertTrue("engine builtins in the injected known set", knownList.contains("'SHELL'"));
             Assert.assertTrue("engine 0.32.0 WORDS in the injected known set", knownList.contains("'WORDS'"));
+            Assert.assertTrue("engine 0.35.0 FILE_LINES in the injected known set",
+                    knownList.contains("'FILE_LINES'"));
 
 
             // The Active Version Source card is now the single edit + add-version surface: the separate

@@ -15,6 +15,28 @@ All notable changes to TeeBox are documented here.
   are descriptive only: existing execution is unchanged, with no required/type enforcement or
   automatic defaults. Undefined and an explicit empty schema remain distinct; nested null values
   and numeric precision survive persistence and API serialization.
+- **Embedded engine upgraded to propertee2 0.35.0** (spec v0.26.0): scripts gain
+  **`FILE_LINES(path)`**, the lines of a file as an ordinary array that the engine reads as the
+  array is used — `loop line in FILE_LINES(path) do` streams the file keeping only the current
+  line, `LEN` counts without keeping, a copy shares the recipe, and using the array as a whole (an
+  element, `SLICE`, `SORT`, `PRINT`, a run result) reads it in full, refused above 64 MB with a
+  message that points at the loop. The array is the file as it was at the call: lines appended
+  later are not part of it, and a file truncated, rewritten or deleted since fails the next read
+  ("call `FILE_LINES()` again"). A missing or unreadable file is a runtime error at the call, not
+  a Result. A million lines stream in 0.65 s where the `READ_LINES` window idiom took 19.6 s; ten
+  million lines (495 MB) run in a 32 MB heap. No TeeBox-side change was needed: the reads go
+  through the engine's `PlatformProvider`, which `TeeBoxPlatformProvider` leaves at the host
+  default; every read releases the cooperative baton, so a worker's `LEN` over a huge file no
+  longer stalls the monitor; a run's result — the explicit return, or the final `result` global
+  that `ScriptExecutor` deep-copies — arrives as a plain array; and a debugger pause displays the
+  value by reading it (above the limit it shows as `[lines of 'path']`). The editor follows: the
+  server lint and the injected `PT_KNOWN` set enumerate `FILE_LINES` from the runtime
+  automatically, the inlined browser bundle is refreshed byte-for-byte from propertee-js `29580b2`
+  (its client-side check knows the name; the Node runtime itself has no file access, so the stub
+  there is a runtime error), and the syntax highlighter + built-in reference panel gained the
+  entry, with `READ_FILE`'s entry pointing at it for large files (ported verbatim from the
+  playground). The detail-page test guards all three, and a server test runs `FILE_LINES`
+  through a run both as a returned value and as the `result` global.
 
 ## 1.34.1
 

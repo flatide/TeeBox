@@ -1069,6 +1069,82 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void serverShouldReadFileLinesArraysThroughRuns() throws Exception {
+        // Spec v0.26.0 (engine 0.35.0): FILE_LINES(path) is an ordinary array the engine reads as it
+        // is used — a loop streams the file, LEN counts it — and the host boundary (an explicit
+        // return, or the final `result` global that ScriptExecutor deep-copies) gets a plain array.
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript(
+                "file_lines",
+                "1",
+                "MKDIR(baseDir)\n" +
+                "WRITE_LINES(baseDir + \"/rows.csv\", [\"name,age\", \"Alice,30\", \"Bob,25\"])\n" +
+                "rows = FILE_LINES(baseDir + \"/rows.csv\")\n" +
+                "names = []\n" +
+                "loop n, line in rows do\n" +
+                "    if n == 1 then continue end\n" +
+                "    names = PUSH(names, SPLIT(line, \",\").1)\n" +
+                "end\n" +
+                "return {\n" +
+                "  \"type\": TYPE_OF(rows),\n" +
+                "  \"count\": LEN(rows),\n" +
+                "  \"names\": names,\n" +
+                "  \"rows\": rows\n" +
+                "}\n",
+                "file lines test",
+                Arrays.asList("test"),
+                true
+            );
+            client.registerScript(
+                "file_lines_result",
+                "1",
+                "WRITE_LINES(baseDir + \"/two.txt\", [\"a\", \"b\"])\n" +
+                "result = FILE_LINES(baseDir + \"/two.txt\")\n",
+                "file lines as the result global",
+                Arrays.asList("test"),
+                true
+            );
+            client.registerScript(
+                "file_lines_missing",
+                "1",
+                "lines = FILE_LINES(baseDir + \"/no-such-file.txt\")\n" +
+                "return LEN(lines)\n",
+                "file lines of a missing file",
+                Arrays.asList("test"),
+                true
+            );
+
+            Map<String, Object> props = new LinkedHashMap<String, Object>();
+            props.put("baseDir", new File(testServer.dataDir, "file-lines").getAbsolutePath());
+
+            String runId = (String) client.submitRun("file_lines", null, props).get("runId");
+            Assert.assertEquals("COMPLETED", client.waitForRunTerminal(runId, 8000L).get("status"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resultData = (Map<String, Object>) client.getRunResult(runId).get("resultData");
+            Assert.assertEquals("array", resultData.get("type"));
+            Assert.assertEquals(3.0, ((Number) resultData.get("count")).doubleValue(), 0.0);
+            Assert.assertEquals(Arrays.asList("Alice", "Bob"), resultData.get("names"));
+            Assert.assertEquals(Arrays.asList("name,age", "Alice,30", "Bob,25"), resultData.get("rows"));
+
+            String resultRunId = (String) client.submitRun("file_lines_result", null, props).get("runId");
+            Assert.assertEquals("COMPLETED", client.waitForRunTerminal(resultRunId, 8000L).get("status"));
+            Assert.assertEquals(Arrays.asList("a", "b"), client.getRunResult(resultRunId).get("resultData"));
+
+            // Not a Result: a file that cannot be read fails the run at the call.
+            String missingRunId = (String) client.submitRun("file_lines_missing", null, props).get("runId");
+            Map<String, Object> missingStatus = client.waitForRunTerminal(missingRunId, 8000L);
+            Assert.assertEquals("FAILED", missingStatus.get("status"));
+            String message = String.valueOf(missingStatus.get("errorMessage"));
+            Assert.assertTrue(message, message.contains("FILE_LINES() cannot read '")
+                    && message.contains("no-such-file.txt': no such file"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void serverShouldRunActivatedPublisherVersionByDefault() throws Exception {
         TestServer testServer = createServer();
         try {
