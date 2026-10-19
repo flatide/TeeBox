@@ -2,6 +2,27 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- Fix retention settings in `teebox.properties` being silently ignored: run/task archive and
+  purge ages, `maintenanceIntervalMs`, and `scriptRetentionMs` now flow through `TeeBoxConfig`
+  into each server instance, including startup maintenance. Nonblank JVM `-D` values still take
+  precedence; defaults remain 24h to archive, 7d to purge, and 1m between sweeps. Resolved values
+  are logged at startup. Invalid/overflowing durations and non-positive maintenance intervals
+  reject startup before any archival instead of silently falling back to shorter defaults.
+  Negative retention disables the corresponding action (including soft-deleted script purge).
+  Restart to apply changes; previously discarded input properties cannot be restored by this fix.
+- Keep webhook delivery tombstones indefinitely when run archival or purge is disabled, and
+  saturate the retention safety-margin calculation at `Long.MAX_VALUE` to prevent overflow.
+  Finite retention uses the longer of the run archive/purge ages plus the greater of 24h and
+  twice the maintenance interval (both multiplication and addition saturate), covering a late
+  archive threshold and the normal scheduling delay of separate archive/purge sweeps. This avoids
+  premature tombstone expiry and restart re-enqueue under these settings, without guaranteeing
+  against unbounded maintenance failures or delays. Clarify that disabling archival prevents
+  unarchived runs/tasks from reaching purge, while already archived records can still be purged.
+- Invalid `runTimeoutMs` and `debugIdleTimeoutMs` values now reject startup with the setting
+  name, like the retention durations, instead of a bare number-format error.
+
 ## 1.35.0
 
 - Add per-version input definitions (`inputSchema`) persisted with script metadata and copied on

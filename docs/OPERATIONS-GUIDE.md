@@ -53,21 +53,36 @@ propertee.teebox.maxRuns=64
 | `webhookUrlAllowlist` | none | **Comma-separated** `host[:port]` allowlist for callback URLs (required when enabled — an unset allowlist rejects every callback). A `host` entry matches any port; `host:port` must match exactly. |
 | `webhookTimeoutMs` | `10000` | Per-POST connect/read timeout (ms) for webhook delivery. |
 
-**Duration / retention knobs — system properties ONLY.** The following are read exclusively as
-`-D` system properties and are **silently ignored if put in `teebox.properties`** — set them via
-`JAVA_OPTS` (e.g. `JAVA_OPTS="-Dpropertee.teebox.runRetentionMs=48h"`):
+**Duration / retention settings** can be set in `teebox.properties` or with JVM `-D` options
+(e.g. `JAVA_OPTS="-Dpropertee.teebox.runRetentionMs=48h"`). Nonblank `-D` values take precedence
+over the file, then defaults apply. **Restart to apply changes**; effective values are logged
+at startup. Older releases through 1.35.0 ignored these settings in the file.
 
-| System property | Default | Description |
+| Property | Default | Description |
 |-----------------|---------|-------------|
-| `propertee.teebox.runRetentionMs` | `24h` | Run retention before transitioning to archived |
-| `propertee.teebox.runArchiveRetentionMs` | `7d` | Archived run retention before deletion (purge) |
+| `propertee.teebox.runRetentionMs` | `24h` | Age since run completion before archival |
+| `propertee.teebox.runArchiveRetentionMs` | `7d` | Total age since run completion before purge (not additional time after archival) |
 | `propertee.teebox.maintenanceIntervalMs` | `1m` | Background maintenance interval |
 | `propertee.teebox.scriptRetentionMs` | `7d` | Soft-deleted script retention before purge |
-| `propertee.task.retentionMs` | `24h` | Task retention before archival |
-| `propertee.task.archiveRetentionMs` | `7d` | Archived task retention before deletion |
-| `propertee.teebox.logDir` | `logs` | Log output directory (see §7) |
+| `propertee.task.retentionMs` | `24h` | Age since task completion before archival |
+| `propertee.task.archiveRetentionMs` | `7d` | Total age since task completion before purge |
 
 Duration format: a bare number = ms, or suffixes `ms`, `s`, `m`, `h`, `d` (e.g. `500ms`, `30s`, `1m`, `24h`, `7d`).
+Negative retention disables the corresponding archive/purge action; `0` makes it eligible on
+the next sweep. `maintenanceIntervalMs` must be positive. Invalid or overflowing durations
+reject startup with the setting name, before any archival can discard data.
+
+Purge applies **only to archived runs/tasks**: for example, `runRetentionMs=-1` with
+`runArchiveRetentionMs=30d` keeps unarchived runs indefinitely, not just 30 days. Existing
+archives can still be purged; the same rule applies to the task settings. Plan disk capacity
+accordingly. With webhooks enabled, disabling either run archival or run purge also keeps
+delivery tombstones indefinitely to prevent startup reconciliation from sending them again.
+Otherwise, tombstone retention is `max(runRetentionMs, runArchiveRetentionMs)` plus
+`max(24h, 2 × maintenanceIntervalMs)`, with both multiplication and addition saturated at
+`Long.MAX_VALUE`. The margin covers the normal scheduling delay of separate archive and purge
+sweeps, not unbounded maintenance failures or scheduler delays; receivers must remain idempotent.
+
+`propertee.teebox.logDir` (default `logs`) remains **JVM system-property only**; see §7.
 
 Environment variables:
 - `PROPERTEE_TEEBOX_CONFIG` — Path to the configuration file (default: `conf/teebox.properties`)
@@ -576,10 +591,17 @@ Active (0~24h) → Archived (24h~7d) → Purged (7d~)
 - Archived: Thread list and input properties removed, stdout trimmed to 50 lines and stderr to 20 lines. **The run's result (`resultData`) is kept until purge** (1.15.1+ — older versions dropped it at archival, leaving only the 300-char `resultSummary`)
 - Purged: Deleted from disk
 
-(Windows are the `propertee.teebox.runRetentionMs` / `runArchiveRetentionMs` system properties — see §1.)
+These are the default ages **since completion**, not time since archival; running/queued runs
+are not archived. Set `propertee.teebox.runRetentionMs` / `runArchiveRetentionMs` in the config
+file or via `-D` (see §1). For example, `14d` / `60d` archives after 14 days and purges after
+60 days from completion, not 74 days. If `endedAt` is absent, a run's `createdAt` is used.
+Runs/tasks are swept once at startup and then every `maintenanceIntervalMs`; a newly archived
+item is eligible for purge on a later sweep. Raising retention does not unarchive existing
+records or recover input properties/logs already discarded.
 
 **Task:**
-- Same retention model (`propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`)
+- Same retention model (`propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`),
+  measured from `endTime` (or `startTime` if no end time was recorded).
 
 ### dataDir Structure
 

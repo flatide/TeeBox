@@ -136,6 +136,7 @@ Primary settings use the `propertee.teebox.*` prefix:
 - `propertee.teebox.runRetentionMs`
 - `propertee.teebox.runArchiveRetentionMs`
 - `propertee.teebox.maintenanceIntervalMs`
+- `propertee.teebox.scriptRetentionMs`
 - `propertee.teebox.debugMaxSessions` (concurrent debug sessions, default 2)
 - `propertee.teebox.debugIdleTimeoutMs` (debug-session idle kill, default 30m)
 - `propertee.teebox.instanceId` (distinguishes this instance's admin session cookie
@@ -144,6 +145,11 @@ Primary settings use the `propertee.teebox.*` prefix:
   browsers scope cookies by host+path, not port, so distinct ports already produce distinct cookies)
 
 Duration-style settings accept `ms`, `s`, `m`, `h`, and `d` suffixes. Example: `500ms`, `1m`, `24h`, `7d`.
+Run/script retention and the maintenance interval can be set in `teebox.properties`, as can task
+retention (`propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`). Nonblank JVM `-D`
+values take precedence; restart to apply changes. Run/task archive and purge thresholds are both
+measured from completion, so `14d` / `60d` means archive at 14 days and purge at 60, not 74. See the
+[operations guide](docs/OPERATIONS-GUIDE.md) for defaults and validation rules.
 
 Token behavior:
 

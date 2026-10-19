@@ -53,21 +53,36 @@ propertee.teebox.maxRuns=64
 | `webhookUrlAllowlist` | 없음 | 콜백 URL 의 **콤마 구분** `host[:port]` allowlist (활성화 시 필수 — 미설정이면 모든 콜백 거절). `host` 항목은 임의 포트 허용, `host:port` 는 정확히 일치. |
 | `webhookTimeoutMs` | `10000` | webhook 전달 per-POST connect/read 타임아웃(ms). |
 
-**duration / 보존 기간 설정 — 시스템 프로퍼티 전용.** 아래 항목들은 `-D` 시스템 프로퍼티로만
-읽히며, **`teebox.properties` 에 적으면 조용히 무시됩니다** — `JAVA_OPTS` 로 지정하세요
-(예: `JAVA_OPTS="-Dpropertee.teebox.runRetentionMs=48h"`):
+**duration / 보존 기간 설정**은 `teebox.properties` 또는 JVM `-D` 옵션으로 지정할 수 있습니다
+(예: `JAVA_OPTS="-Dpropertee.teebox.runRetentionMs=48h"`). 빈 값이 아닌 `-D`가 파일보다
+우선하며, 둘 다 없으면 기본값을 사용합니다. **변경 후 재시작이 필요**하며 실제 적용값은 기동
+로그에 출력됩니다. 1.35.0까지의 구버전은 파일에 적힌 이 설정들을 무시했습니다.
 
-| 시스템 프로퍼티 | 기본값 | 설명 |
+| 속성 | 기본값 | 설명 |
 |-----------------|--------|------|
-| `propertee.teebox.runRetentionMs` | `24h` | run 보관 -> archived 전환 |
-| `propertee.teebox.runArchiveRetentionMs` | `7d` | archived -> 완전 삭제(purge) |
+| `propertee.teebox.runRetentionMs` | `24h` | run 종료 후 archive까지의 기간 |
+| `propertee.teebox.runArchiveRetentionMs` | `7d` | run 종료 후 purge까지의 총기간 (archive 이후 추가 기간이 아님) |
 | `propertee.teebox.maintenanceIntervalMs` | `1m` | 백그라운드 유지보수 주기 |
 | `propertee.teebox.scriptRetentionMs` | `7d` | soft-delete 된 스크립트 보관 -> purge |
-| `propertee.task.retentionMs` | `24h` | task 보관 -> archive 전환 |
-| `propertee.task.archiveRetentionMs` | `7d` | archived task -> 삭제 |
-| `propertee.teebox.logDir` | `logs` | 로그 출력 디렉터리 (§7 참고) |
+| `propertee.task.retentionMs` | `24h` | task 종료 후 archive까지의 기간 |
+| `propertee.task.archiveRetentionMs` | `7d` | task 종료 후 purge까지의 총기간 |
 
 duration 형식: 숫자만 쓰면 ms, suffix 는 `ms`, `s`, `m`, `h`, `d` (예: `500ms`, `30s`, `1m`, `24h`, `7d`).
+음수 보존 기간은 해당 archive/purge 작업을 비활성화하고, `0`은 다음 스윕부터 처리 대상이
+됩니다. `maintenanceIntervalMs`는 양수여야 합니다. 잘못된 형식이나 오버플로는 설정 이름을
+명시한 기동 오류로 처리하며, 이때 archive에 의한 데이터 제거는 시작하지 않습니다.
+
+Purge는 **archived인 run/task만 대상**입니다. 예를 들어 `runRetentionMs=-1`과
+`runArchiveRetentionMs=30d`를 함께 설정하면 미아카이브 run은 30일 후 삭제되지 않고
+계속 보존됩니다. 기존 archived 항목은 여전히 purge될 수 있으며, task 설정도 동일합니다.
+디스크 용량 계획에 주의하세요. Webhook 활성화 시 run archive 또는 purge 중 하나라도
+비활성화하면 재시작 시 중복 전송을 막기 위해 전달 기록(tombstone)도 계속 보존합니다.
+그 외 tombstone 보존 기간은 `max(runRetentionMs, runArchiveRetentionMs)`에
+`max(24h, 2 × maintenanceIntervalMs)`를 더하며, 곱셈·덧셈 모두 `Long.MAX_VALUE`에서
+포화시킵니다. 이 여유는 archive와 후속 purge의 정상 주기 지연을 반영하지만, 무한한
+유지보수 장애나 스케줄러 지연까지 보장하지 않으므로 수신자는 멱등 처리를 유지해야 합니다.
+
+`propertee.teebox.logDir`(기본 `logs`)은 여전히 **JVM 시스템 프로퍼티 전용**입니다. §7 참고.
 
 환경 변수:
 - `PROPERTEE_TEEBOX_CONFIG` - 설정 파일 경로 (기본: `conf/teebox.properties`)
@@ -560,10 +575,17 @@ Active (0~24h) -> Archived (24h~7d) -> Purged (7d~)
 - Archived: 스레드 목록·입력 properties 제거, stdout 50줄/stderr 20줄로 축소. **run 결과(`resultData`)는 purge 까지 유지** (1.15.1+ — 이전 버전은 아카이브 시 삭제되어 300자 `resultSummary` 만 남았음)
 - Purged: 디스크에서 삭제
 
-(기간은 시스템 프로퍼티 `propertee.teebox.runRetentionMs` / `runArchiveRetentionMs` — §1 참고.)
+위 기간은 **종료 시각 기준** 기본값이며 archive 후 경과 시간이 아닙니다. 실행/대기 중인 run은
+archive하지 않습니다. `propertee.teebox.runRetentionMs` / `runArchiveRetentionMs`를 파일
+또는 `-D`로 지정합니다(§1 참고). 예를 들어 `14d` / `60d`는 종료 14일 후 archive, 종료 60일
+후 purge이며 74일 후가 아닙니다. `endedAt`이 없으면 `createdAt`을 기준으로 합니다.
+Run/task는 기동 시 한 번, 이후 `maintenanceIntervalMs`마다 스윕하며 새로 archive된 항목의
+purge는 후속 스윕에서 수행합니다. 보존 기간을 늘려도 기존 archive를 되돌리거나 이미 제거된
+입력값·로그를 복구하지는 않습니다.
 
 **Task:**
-- 동일한 retention 구조 (`propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`)
+- 동일한 retention 구조 (`propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`),
+  `endTime` 기준이며 종료 시각이 없으면 `startTime`을 사용합니다.
 
 ### dataDir 구조
 

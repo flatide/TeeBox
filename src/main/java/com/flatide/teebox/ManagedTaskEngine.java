@@ -45,8 +45,6 @@ import java.util.function.Supplier;
 public class ManagedTaskEngine implements TaskRunner {
     private static final boolean IS_WINDOWS =
             System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("win");
-    private static final long DEFAULT_RETENTION_MS = 24L * 60L * 60L * 1000L;
-    private static final long DEFAULT_ARCHIVE_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L;
 
     private static final Set<String> DENIED_ENV_VARS = new HashSet<String>(Arrays.asList(
             "LD_PRELOAD", "LD_LIBRARY_PATH",
@@ -84,6 +82,15 @@ public class ManagedTaskEngine implements TaskRunner {
     private final ConcurrentHashMap<String, Object> taskLocks = new ConcurrentHashMap<>();
 
     public ManagedTaskEngine(String baseDir, String hostInstanceId) {
+        this(baseDir, hostInstanceId,
+                TeeBoxConfig.durationProperty("propertee.task.retentionMs", TeeBoxConfig.DEFAULT_RETENTION_MS),
+                TeeBoxConfig.durationProperty("propertee.task.archiveRetentionMs", TeeBoxConfig.DEFAULT_ARCHIVE_RETENTION_MS));
+    }
+
+    /** Explicit per-instance values, already resolved from the server's config file / -D options. */
+    public ManagedTaskEngine(String baseDir, String hostInstanceId, long retentionMs, long archiveRetentionMs) {
+        this.retentionMs = retentionMs;
+        this.archiveRetentionMs = archiveRetentionMs;
         this.taskBaseDir = new File(baseDir);
         this.tasksDir = new File(taskBaseDir, "tasks");
         this.hostInstanceId = hostInstanceId;
@@ -92,8 +99,6 @@ public class ManagedTaskEngine implements TaskRunner {
             throw new IllegalStateException("Failed to create tasks directory: " + tasksDir.getAbsolutePath());
         }
         deleteLegacyIndexFiles();
-        this.retentionMs = parseDurationProperty("propertee.task.retentionMs", DEFAULT_RETENTION_MS);
-        this.archiveRetentionMs = parseDurationProperty("propertee.task.archiveRetentionMs", DEFAULT_ARCHIVE_RETENTION_MS);
         this.runner = createRunner(baseDir);
     }
 
@@ -1529,18 +1534,6 @@ public class ManagedTaskEngine implements TaskRunner {
             sb.append(lines[i]);
         }
         return sb.toString();
-    }
-
-    private long parseDurationProperty(String name, long defaultValue) {
-        String raw = System.getProperty(name);
-        if (raw == null || raw.trim().length() == 0) {
-            return defaultValue;
-        }
-        try {
-            return DurationParser.parseMillis(raw);
-        } catch (RuntimeException e) {
-            return defaultValue;
-        }
     }
 
     private String readFile(File file) {

@@ -109,6 +109,42 @@ public class TeeBoxConfigTest {
         Assert.assertEquals("teebox-session-a-b-c", dirty.sessionCookieName());
     }
 
+    @Test
+    public void timeoutDurationsFailWithTheSettingName() throws Exception {
+        File root = Files.createTempDirectory("propertee-teebox-config-durations").toFile();
+        File configFile = new File(root, "teebox.properties");
+        String dataDir = "propertee.teebox.dataDir=" + new File(root, "data").getAbsolutePath() + "\n";
+
+        String oldConfig = System.getProperty("propertee.teebox.config");
+        String oldRunTimeout = System.getProperty("propertee.teebox.runTimeoutMs");
+        String oldDebugIdle = System.getProperty("propertee.teebox.debugIdleTimeoutMs");
+        System.setProperty("propertee.teebox.config", configFile.getAbsolutePath());
+        System.clearProperty("propertee.teebox.runTimeoutMs");
+        System.clearProperty("propertee.teebox.debugIdleTimeoutMs");
+        try {
+            write(configFile, dataDir
+                + "propertee.teebox.runTimeoutMs=30m\n"
+                + "propertee.teebox.debugIdleTimeoutMs=45m\n");
+            TeeBoxConfig config = TeeBoxConfig.fromArgs(new String[0]);
+            Assert.assertEquals(30L * 60L * 1000L, config.runTimeoutMs);
+            Assert.assertEquals(45L * 60L * 1000L, config.debugIdleTimeoutMs);
+
+            // An unparseable value names the setting (and the value) instead of surfacing a bare
+            // NumberFormatException from the duration parser.
+            for (String key : new String[]{"propertee.teebox.runTimeoutMs", "propertee.teebox.debugIdleTimeoutMs"}) {
+                write(configFile, dataDir + key + "=30 minutes\n");
+                IllegalArgumentException error = Assert.assertThrows(IllegalArgumentException.class,
+                        () -> TeeBoxConfig.fromArgs(new String[0]));
+                Assert.assertTrue(error.getMessage(), error.getMessage().contains(key));
+                Assert.assertTrue(error.getMessage(), error.getMessage().contains("30 minutes"));
+            }
+        } finally {
+            restoreProperty("propertee.teebox.config", oldConfig);
+            restoreProperty("propertee.teebox.runTimeoutMs", oldRunTimeout);
+            restoreProperty("propertee.teebox.debugIdleTimeoutMs", oldDebugIdle);
+        }
+    }
+
     private static void write(File file, String content) throws Exception {
         File parent = file.getParentFile();
         if (parent != null && !parent.exists()) {

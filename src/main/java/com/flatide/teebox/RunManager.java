@@ -29,11 +29,8 @@ public class RunManager {
     private static final int MAX_LOG_LINES = 200;
     private static final int ARCHIVED_STDOUT_LINES = 50;
     private static final int ARCHIVED_STDERR_LINES = 20;
-    private static final long DEFAULT_RUN_RETENTION_MS = 24L * 60L * 60L * 1000L;
-    private static final long DEFAULT_RUN_ARCHIVE_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L;
-    private static final long DEFAULT_SCRIPT_RETENTION_MS = 7L * 24L * 60L * 60L * 1000L;
+    private static final long WEBHOOK_TOMBSTONE_MARGIN_MS = 24L * 60L * 60L * 1000L;
     private static final long FLUSH_INTERVAL_MS = 2000L;
-    private static final long DEFAULT_MAINTENANCE_INTERVAL_MS = 60L * 1000L;
 
     private final File dataDir;
     private final RunRegistry runRegistry;
@@ -45,6 +42,7 @@ public class RunManager {
     private final SystemInfoCollector systemInfoCollector;
     private final ScheduledExecutorService maintenanceScheduler;
     private final long maintenanceIntervalMs;
+    private final long scriptRetentionMs;
     private final WebhookDispatcher webhookDispatcher;   // null when webhooks are disabled
     private final java.util.concurrent.ConcurrentHashMap<String, Future<?>> activeRuns = new java.util.concurrent.ConcurrentHashMap<String, Future<?>>();
     // --- run cancel/timeout state (per runId; entries live only while the run is active) ---
@@ -90,19 +88,31 @@ public class RunManager {
     }
 
     public RunManager(File dataDir, int maxConcurrentRuns, TeeBoxConfig teeBoxConfig) {
+        // Resolve every retention setting before loading/archiving anything. In particular, an
+        // invalid maintenance interval must not fail only after startup archival has run.
+        TeeBoxConfig settings = teeBoxConfig != null ? teeBoxConfig : new TeeBoxConfig();
+        long runRetentionMs = TeeBoxConfig.durationProperty("propertee.teebox.runRetentionMs", settings.runRetentionMs);
+        long runArchiveRetentionMs = TeeBoxConfig.durationProperty("propertee.teebox.runArchiveRetentionMs", settings.runArchiveRetentionMs);
+        this.maintenanceIntervalMs = TeeBoxConfig.positiveDurationProperty("propertee.teebox.maintenanceIntervalMs", settings.maintenanceIntervalMs);
+        this.scriptRetentionMs = TeeBoxConfig.durationProperty("propertee.teebox.scriptRetentionMs", settings.scriptRetentionMs);
+        long taskRetentionMs = TeeBoxConfig.durationProperty("propertee.task.retentionMs", settings.taskRetentionMs);
+        long taskArchiveRetentionMs = TeeBoxConfig.durationProperty("propertee.task.archiveRetentionMs", settings.taskArchiveRetentionMs);
+        TeeBoxLog.info("RunManager", "Retention settings (ms): runRetentionMs=" + runRetentionMs
+                + ", runArchiveRetentionMs=" + runArchiveRetentionMs + ", taskRetentionMs=" + taskRetentionMs
+                + ", taskArchiveRetentionMs=" + taskArchiveRetentionMs + ", scriptRetentionMs=" + scriptRetentionMs
+                + ", maintenanceIntervalMs=" + maintenanceIntervalMs);
         this.dataDir = dataDir;
         if (!this.dataDir.exists() && !this.dataDir.mkdirs()) {
             throw new IllegalStateException("Failed to create data directory: " + this.dataDir.getAbsolutePath());
         }
-        long runRetentionMs = parseDurationProperty("runRetentionMs", DEFAULT_RUN_RETENTION_MS);
-        long runArchiveRetentionMs = parseDurationProperty("runArchiveRetentionMs", DEFAULT_RUN_ARCHIVE_RETENTION_MS);
         int maxLogLines = (teeBoxConfig != null && teeBoxConfig.runOutputMaxLines > 0)
             ? teeBoxConfig.runOutputMaxLines : MAX_LOG_LINES;
         this.defaultRunTimeoutMs = (teeBoxConfig != null && teeBoxConfig.runTimeoutMs > 0)
             ? teeBoxConfig.runTimeoutMs : 0L;
         this.runRegistry = new RunRegistry(this.dataDir, maxLogLines, ARCHIVED_STDOUT_LINES, ARCHIVED_STDERR_LINES, runRetentionMs, runArchiveRetentionMs);
         this.scriptRegistry = new ScriptRegistry(this.dataDir);
-        this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId());
+        this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId(),
+                taskRetentionMs, taskArchiveRetentionMs);
         this.managedTaskEngine.init();
         this.managedTaskEngine.archiveExpiredTasks();
         String streamRootsSetting = teeBoxConfig != null ? teeBoxConfig.streamRoots : null;
@@ -110,7 +120,6 @@ public class RunManager {
         this.scriptExecutor = new ScriptExecutor(new TeeBoxPlatformProvider(this.dataDir),
             this.streamSupport, this.scriptRegistry);
         this.systemInfoCollector = teeBoxConfig != null ? new SystemInfoCollector(teeBoxConfig) : null;
-        this.maintenanceIntervalMs = parseDurationProperty("maintenanceIntervalMs", DEFAULT_MAINTENANCE_INTERVAL_MS);
         this.runExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(Math.max(1, maxConcurrentRuns));
         this.immediateExecutor = (ThreadPoolExecutor) Executors.newCachedThreadPool();
         this.maintenanceScheduler = Executors.newSingleThreadScheduledExecutor();
@@ -123,9 +132,18 @@ public class RunManager {
             }
         });
         if (teeBoxConfig != null && teeBoxConfig.webhookEnabled) {
-            // Keep webhook tombstones longer than the run purge horizon so a delivered record always
-            // outlives its run; reconcile then never re-enqueues an already-delivered run.
-            long tombstoneRetentionMs = runArchiveRetentionMs + DEFAULT_RUN_RETENTION_MS;
+            // Purge only handles archived runs, so either disabled stage makes the retention
+            // horizon unbounded; otherwise use the longer age (archive may be later than purge).
+            // Archive and purge need separate sweeps: allow up to two normal scheduling delays,
+            // with a minimum 24h margin. Saturate multiplication and addition so large intervals
+            // cannot wrap and let startup reconcile re-enqueue delivered/dead callbacks.
+            long runPurgeHorizonMs = runRetentionMs < 0 || runArchiveRetentionMs < 0
+                    ? Long.MAX_VALUE : Math.max(runRetentionMs, runArchiveRetentionMs);
+            long sweepDelayMs = maintenanceIntervalMs > Long.MAX_VALUE / 2
+                    ? Long.MAX_VALUE : maintenanceIntervalMs * 2;
+            long tombstoneMarginMs = Math.max(WEBHOOK_TOMBSTONE_MARGIN_MS, sweepDelayMs);
+            long tombstoneRetentionMs = runPurgeHorizonMs > Long.MAX_VALUE - tombstoneMarginMs
+                    ? Long.MAX_VALUE : runPurgeHorizonMs + tombstoneMarginMs;
             this.webhookDispatcher = new WebhookDispatcher(
                 new WebhookStore(this.dataDir), new WebhookHttpClient(),
                 teeBoxConfig.webhookUrlAllowlist, teeBoxConfig.webhookTimeoutMs, 4, tombstoneRetentionMs);
@@ -1407,18 +1425,6 @@ public class RunManager {
         }
     }
 
-    private long parseDurationProperty(String suffix, long defaultValue) {
-        String raw = System.getProperty("propertee.teebox." + suffix);
-        if (raw == null || raw.trim().length() == 0) {
-            return defaultValue;
-        }
-        try {
-            return DurationParser.parseMillis(raw);
-        } catch (RuntimeException e) {
-            return defaultValue;
-        }
-    }
-
     /**
      * Allowed roots for STREAM_FILE / stream-result responses: the system property
      * {@code propertee.teebox.streamRoots} (a {@code File.pathSeparator}-separated list), defaulting
@@ -1504,8 +1510,8 @@ public class RunManager {
     }
 
     private void maintainScripts() {
-        long retention = parseDurationProperty("scriptRetentionMs", DEFAULT_SCRIPT_RETENTION_MS);
-        List<String> purged = scriptRegistry.purgeExpiredScripts(retention);
+        List<String> purged = scriptRetentionMs < 0 ? java.util.Collections.emptyList()
+                : scriptRegistry.purgeExpiredScripts(scriptRetentionMs);
         for (String scriptId : purged) {
             TeeBoxLog.info("RunManager", "Purged soft-deleted script: " + scriptId);
             // Clean up concurrency tracking for purged scripts

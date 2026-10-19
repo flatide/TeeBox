@@ -7,6 +7,9 @@ import java.io.InputStream;
 import java.util.Properties;
 
 public class TeeBoxConfig {
+    static final long DEFAULT_RETENTION_MS = 24L * 60L * 60L * 1000L;
+    static final long DEFAULT_ARCHIVE_RETENTION_MS = 7L * DEFAULT_RETENTION_MS;
+
     public String bindAddress = "127.0.0.1";
     public int port = 18080;
     public File dataDir;
@@ -30,6 +33,17 @@ public class TeeBoxConfig {
     public long runTimeoutMs = 0;
     /** Retained script-output ring size per run (stdout and stderr each). 0 = default (200). */
     public int runOutputMaxLines = 0;
+    /** Age since completion before archival; negative disables archival. */
+    public long runRetentionMs = DEFAULT_RETENTION_MS;
+    /** Total age since completion before purge, not an additional archive window. */
+    public long runArchiveRetentionMs = DEFAULT_ARCHIVE_RETENTION_MS;
+    /** Archive/purge sweep interval; must be positive. Changes require a restart. */
+    public long maintenanceIntervalMs = 60L * 1000L;
+    /** Age since soft deletion before script purge; negative disables purge. */
+    public long scriptRetentionMs = DEFAULT_ARCHIVE_RETENTION_MS;
+    /** Uses the propertee.task.* namespace, independently of Run retention. */
+    public long taskRetentionMs = DEFAULT_RETENTION_MS;
+    public long taskArchiveRetentionMs = DEFAULT_ARCHIVE_RETENTION_MS;
     /** Max concurrent interactive debug sessions (each holds a dedicated debug-executor thread
      *  for its whole lifetime — keep this small). */
     public int debugMaxSessions = DebugSessionManager.DEFAULT_MAX_SESSIONS;
@@ -110,22 +124,22 @@ public class TeeBoxConfig {
         if (webhookTimeoutMs != null && webhookTimeoutMs.trim().length() > 0) {
             config.webhookTimeoutMs = Integer.parseInt(webhookTimeoutMs.trim());
         }
-        String runTimeoutMs = getSetting("runTimeoutMs", fileProps);
-        if (runTimeoutMs != null && runTimeoutMs.trim().length() > 0) {
-            config.runTimeoutMs = DurationParser.parseMillis(runTimeoutMs.trim());
-        }
+        config.runTimeoutMs = durationSetting("propertee.teebox.runTimeoutMs", fileProps, config.runTimeoutMs);
         String runOutputMaxLines = getSetting("runOutputMaxLines", fileProps);
         if (runOutputMaxLines != null && runOutputMaxLines.trim().length() > 0) {
             config.runOutputMaxLines = Integer.parseInt(runOutputMaxLines.trim());
         }
+        config.runRetentionMs = durationSetting("propertee.teebox.runRetentionMs", fileProps, config.runRetentionMs);
+        config.runArchiveRetentionMs = durationSetting("propertee.teebox.runArchiveRetentionMs", fileProps, config.runArchiveRetentionMs);
+        config.maintenanceIntervalMs = positiveDurationSetting("propertee.teebox.maintenanceIntervalMs", fileProps, config.maintenanceIntervalMs);
+        config.scriptRetentionMs = durationSetting("propertee.teebox.scriptRetentionMs", fileProps, config.scriptRetentionMs);
+        config.taskRetentionMs = durationSetting("propertee.task.retentionMs", fileProps, config.taskRetentionMs);
+        config.taskArchiveRetentionMs = durationSetting("propertee.task.archiveRetentionMs", fileProps, config.taskArchiveRetentionMs);
         String debugMaxSessions = getSetting("debugMaxSessions", fileProps);
         if (debugMaxSessions != null && debugMaxSessions.trim().length() > 0) {
             config.debugMaxSessions = Integer.parseInt(debugMaxSessions.trim());
         }
-        String debugIdleTimeoutMs = getSetting("debugIdleTimeoutMs", fileProps);
-        if (debugIdleTimeoutMs != null && debugIdleTimeoutMs.trim().length() > 0) {
-            config.debugIdleTimeoutMs = DurationParser.parseMillis(debugIdleTimeoutMs.trim());
-        }
+        config.debugIdleTimeoutMs = durationSetting("propertee.teebox.debugIdleTimeoutMs", fileProps, config.debugIdleTimeoutMs);
         String instanceId = getSetting("instanceId", fileProps);
         if (instanceId != null && instanceId.trim().length() > 0) {
             config.instanceId = instanceId.trim();
@@ -160,15 +174,55 @@ public class TeeBoxConfig {
     }
 
     private static String getSetting(String suffix, Properties fileProps) {
-        String sysValue = System.getProperty("propertee.teebox." + suffix);
+        return getSettingByKey("propertee.teebox." + suffix, fileProps);
+    }
+
+    private static String getSettingByKey(String key, Properties fileProps) {
+        String sysValue = System.getProperty(key);
         if (sysValue != null && sysValue.trim().length() > 0) {
             return sysValue;
         }
-        String fileValue = fileProps.getProperty("propertee.teebox." + suffix);
+        String fileValue = fileProps.getProperty(key);
         if (fileValue != null && fileValue.trim().length() > 0) {
             return fileValue;
         }
         return null;
+    }
+
+    /** A duration setting (-D over file over {@code defaultValue}); any long is accepted. */
+    private static long durationSetting(String key, Properties fileProps, long defaultValue) {
+        return parseDurationSetting(key, getSettingByKey(key, fileProps), defaultValue, false);
+    }
+
+    /** Like {@link #durationSetting} but the resolved value must be greater than zero. */
+    private static long positiveDurationSetting(String key, Properties fileProps, long defaultValue) {
+        return parseDurationSetting(key, getSettingByKey(key, fileProps), defaultValue, true);
+    }
+
+    /** Preserve -D overrides for programmatic/legacy constructors too, without global writes. */
+    static long durationProperty(String key, long configuredValue) {
+        return parseDurationSetting(key, System.getProperty(key), configuredValue, false);
+    }
+
+    /** Like {@link #durationProperty} but the resolved value must be greater than zero. */
+    static long positiveDurationProperty(String key, long configuredValue) {
+        return parseDurationSetting(key, System.getProperty(key), configuredValue, true);
+    }
+
+    private static long parseDurationSetting(String key, String raw, long defaultValue, boolean mustBePositive) {
+        long value = defaultValue;
+        if (raw != null && !raw.isBlank()) {
+            try {
+                value = DurationParser.parseMillis(raw);
+            } catch (RuntimeException e) {
+                // Falling back to a short default here could destroy retained history.
+                throw new IllegalArgumentException("Invalid duration for " + key + ": " + raw, e);
+            }
+        }
+        if (mustBePositive && value <= 0) {
+            throw new IllegalArgumentException(key + " must be greater than zero");
+        }
+        return value;
     }
 
     private static File resolveConfigFile(String[] args) {

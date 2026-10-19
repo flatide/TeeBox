@@ -15,7 +15,12 @@
 테스트: `WebhookDispatcherTest`(validate/enqueue/reconcile/2xx 전달/실패 재시도), `WebhookServerIntegrationTest`(live 서버: terminal 전달 + 콜백 거절 — webhooks disabled/allowlist 위반 시 400), `StandaloneClientIntegrationTest.submitWithCallbackUrlThroughDeployableClient`(임베디드 클라이언트 4-인자 `submitRun(...,callbackUrl)` 종단 검증).
 
 **구현된 config 키:** `webhookEnabled`(기본 false), `webhookUrlAllowlist`(host[:port] **콤마 구분**), `webhookTimeoutMs`(기본 10000).
-나머지 §11 키와 튜닝값은 **현재 코드 상수**(`WebhookDispatcher`: backoff base 5s·cap 10m·max 12회·concurrency 4·scan 2s). **tombstone(DELIVERED/DEAD) 보존 = run purge horizon(`runArchiveRetentionMs`) + 24h** 로 잡아 항상 run보다 오래 남긴다 → §9 갭 봉쇄의 근거.
+나머지 §11 키와 튜닝값은 **현재 코드 상수**(`WebhookDispatcher`: backoff base 5s·cap 10m·max 12회·concurrency 4·scan 2s).
+**tombstone(DELIVERED/DEAD) 보존:** `runRetentionMs` 또는 `runArchiveRetentionMs`가 음수이면 `Long.MAX_VALUE`(만료 안 함).
+둘 다 유한하면 `max(runRetentionMs, runArchiveRetentionMs) + max(24h, 2 × maintenanceIntervalMs)`이며,
+곱셈과 덧셈은 각각 `Long.MAX_VALUE`에서 포화시킨다. 기본 유지보수 주기에서는 기존 24h 여유를 유지하고,
+긴 주기에서는 archive와 후속 purge의 주기 지연을 각 한 번씩 반영한다. 장애나 무한한 스케줄러 지연까지
+보장하는 공식은 아니다 → §9 갭 봉쇄의 근거와 한계.
 **reconcile 동작:** (a) 부팅 시 비-purge terminal run **전체** 1회 + (b) maintenance마다 **최근 1h** 종료분(둘 다 인메모리 캐시 기반, 디스크 재로딩 없음). 설계 §4의 *in-memory enqueue retry queue*는 **MVP 미구현** — 대신 이 reconcile + tombstone-outlives-run 으로 enqueue 저장 실패/크래시 갭을 회수한다(시간 window 휴리스틱 없음).
 
 **MVP 미구현(설계만):** HMAC 서명, 사용자 인증 헤더/redaction, payloadMode(현재 **SUMMARY 고정**), 고급 SSRF hardening(사설/내부 IP 차단·redirect 대상 재검증·DNS rebinding 완화 — **redirect 비활성·timeout은 MVP에 있음**; 현재 게이트는 scheme+allowlist), Admin API/UI, per-script 기본 webhook, fan-out, webhook index.
@@ -96,7 +101,7 @@ payload       : Map|null      // enqueue 시점 SUMMARY 스냅샷(보존창과 �
 
 ### enqueue 내구성 (WebhookStore 저장 실패 대비)
 enqueue의 `WebhookStore.save`가 I/O로 실패하면 **파일이 없어 scanner가 재시도 대상을 알 수 없다**(단순 "다음 tick"만으로는 복원 불가).
-- **(MVP) 주기적 reconcile + tombstone-outlives-run**(부팅 시 비-purge terminal run 전체 1회 + maintenance마다 최근 1h, §9): `terminal + callback 있음 + delivery 레코드 없음`인 run을 찾아 enqueue. tombstone(DELIVERED/DEAD)이 run보다 오래 남으므로 "레코드 없음 = 아직 enqueue 안 됨"이 **시간 window 없이** 결정 가능 → 메모리 상태를 들고 죽어도 run 기록(source of truth)으로 결국 복원된다.
+- **(MVP) 주기적 reconcile + tombstone-outlives-run**(부팅 시 비-purge terminal run 전체 1회 + maintenance마다 최근 1h, §9): `terminal + callback 있음 + delivery 레코드 없음`인 run을 찾아 enqueue. tombstone(DELIVERED/DEAD)이 run보다 오래 남는 조건에서 "레코드 없음 = 아직 enqueue 안 됨"이 **시간 window 없이** 결정 가능 → 메모리 상태를 들고 죽어도 run 기록(source of truth)으로 복원한다. 보존 계산과 유지보수 지연의 한계는 §"구현 현황"·§9 참고.
 - **(미구현, 설계 옵션) in-memory enqueue retry queue**: 저장 실패한 `runId`를 메모리 큐에 적재해 다음 tick에 재저장 — reconcile 주기를 기다리지 않고 '완료 직후' 갭을 더 빨리 메우는 보강책. MVP는 위 reconcile만으로 회수하므로 미구현.
 
 ### scan tick (전용 단일 스레드 스케줄러, 주기 `webhookScanIntervalMs`; **MVP 상수 2s**, 설계 기본 1s)
@@ -122,7 +127,7 @@ PENDING --attempts>=max | allowlist 위반--> DEAD --(tombstone retention 후)--
 DEAD/PENDING --admin retry(Phase 2)--> PENDING(attempts/nextAttemptAt 리셋)
 ```
 
-> **MVP**: 종료 조건은 `attempts>=12`만(`maxAge` 미적용). tombstone retention = `runArchiveRetentionMs`+24h. `admin retry`는 Phase 2.
+> **MVP**: 종료 조건은 `attempts>=12`만(`maxAge` 미적용). tombstone retention은 §"구현 현황"의 계산식: run archive/purge 중 하나라도 비활성화하면 무기한, 그 외에는 두 임계값 중 큰 값 + `max(24h, 2 × maintenanceIntervalMs)`(곱셈·덧셈 포화). `admin retry`는 Phase 2.
 
 ## 6. 페이로드 & 서명
 
@@ -175,9 +180,9 @@ Body(JSON):
 ## 9. 재시작 복구 & 갭 봉쇄 (핵심 장점)
 
 - 부팅 시 `WebhookStore`의 `PENDING` 전부 자동 재개(`nextAttemptAt` 과거면 즉시 재시도).
-- **enqueue 갭 봉쇄(서버사이드라 결정 가능)**: "run terminal + `callback` 있음 + delivery 레코드 없음"이 **결정 가능**한 이유는 **tombstone이 run보다 오래 남기 때문**(보존 = run purge + 24h). 그래서 "레코드 없음"은 항상 *아직 enqueue 안 됨*을 뜻하고(이미 배달됐다면 tombstone이 남아 `store.exists`로 skip), **시간 window 없이** 안전하게 재enqueue한다.
+- **enqueue 갭 봉쇄(서버사이드라 결정 가능)**: "run terminal + `callback` 있음 + delivery 레코드 없음"을 **아직 enqueue 안 됨**으로 해석하려면 tombstone이 run보다 오래 남아야 한다(이미 배달됐다면 `store.exists`로 skip). run archive/purge 중 하나라도 음수이면 tombstone도 무기한 보존한다. 둘 다 유한하면 보존 기간은 `max(runRetentionMs, runArchiveRetentionMs) + max(24h, 2 × maintenanceIntervalMs)`이며, 곱셈·덧셈을 `Long.MAX_VALUE`에서 포화시킨다. 긴 archive 임계값과 archive→purge 두 번의 정상 주기 지연까지 고려하여, 별도 시간 window 없이 재enqueue 여부를 판단한다.
   - **부팅 reconcile은 비-purge terminal run 전체**를 본다 → run 영속 직후 ~ enqueue 직전 크래시는 **다운 시간과 무관하게**(run 보존창 내) 복원. 주기 reconcile은 런타임 저장 실패(완료 '직후')만 잡으면 되므로 최근 1h만.
-  - **잔여 한계**: 다운이 run purge 기간(`runArchiveRetentionMs`, 기본 7d)을 넘기면 run 자체가 purge되어 복원 대상이 사라짐(설계상 당연 — 결과 보존창도 그때 끝남).
+  - **잔여 한계**: 실제 run purge 이후에는 복원 대상이 사라진다(기본 임계값은 종료 후 7d이며, archive 후 후속 스윕에서 purge). 유한 tombstone 여유는 정상 유지보수 주기를 기준으로 하므로, 유지보수 장애나 장시간 스케줄러 지연으로 run purge만 더 늦어지면 tombstone 선만료를 절대적으로 막지는 못한다. 수신자 멱등 처리는 여전히 필요하다.
   - `deliveryId=runId` 라 "이미 있나?"가 파일 존재 검사로 끝나 멱등.
   - -> 호스트사이드 설계(클라이언트 §5)가 `clientRequestId` 없이는 못 닫던 갭을, **여기선 추가 식별자 없이 닫는다.**
 - **SERVER_RESTARTED run도 통지 대상**: 재시작 복구 경로(비-terminal run을 `SERVER_RESTARTED`로 마킹)에서도 `callback`이 있으면 enqueue -> 호스트가 "이 run은 못 끝났다"를 통지받음.
@@ -213,7 +218,7 @@ Body(JSON):
 
 system-property 전용 duration(설계 목표, **MVP 미구현** — 현재는 `WebhookDispatcher` 하드코딩 상수):
 - `webhookScanIntervalMs`(설계 1s / **MVP 2s**), `webhookBackoffBaseMs`(**5s**), `webhookBackoffCapMs`(설계 1h / **MVP 10m**),
-  `webhookMaxAttempts`(설계 20 / **MVP 12**), `webhookMaxAgeMs`(24h, **MVP 미적용**), `webhookRetentionMs`(7d; **MVP tombstone 보존은 `runArchiveRetentionMs`+24h**), `webhookMaxPayloadBytes`(256KB).
+  `webhookMaxAttempts`(설계 20 / **MVP 12**), `webhookMaxAgeMs`(24h, **MVP 미적용**), `webhookRetentionMs`(7d; **MVP는 별도 키 없이 §"구현 현황"의 run archive/purge 임계값·유지보수 주기 기반 tombstone 보존 계산을 사용**), `webhookMaxPayloadBytes`(256KB).
 
 ## 12. 통합 지점(구체)
 
