@@ -4,6 +4,22 @@ All notable changes to TeeBox are documented here.
 
 ## Unreleased
 
+- Add a **Default (JSON)** field to the Inputs editor's named-field table. Blank removes the
+  default; JSON strings (including `""`), numbers, booleans, `null`, arrays and objects are
+  preserved through Save, Save inputs and Save as new version. High-precision values stay in
+  the advanced JSON editor to avoid rounding. Invalid JSON blocks saving at once but is reported
+  when the field loses focus or a save is attempted, not while a value is still being typed. A
+  default whose JSON type differs from the declared `type` shows a non-blocking hint, such as
+  quoting `123` for a string input or unquoting `"5"` for a number. Defaults remain descriptive
+  metadata: this does not fill Run/Debug Props or change execution behavior.
+- Fix Enter in a Version Source text field (Description, Debug Props, Output Capture Rule)
+  submitting **Save inputs** since 1.35.0: the Inputs card's button became the form's default
+  button, so Enter saved only the input definition and reloaded the page, discarding unsaved
+  source edits. Enter no longer submits from these fields; in Debug Props it runs Debug, as
+  before 1.35.0.
+- Build: `check` (and so `build`) now runs the admin UI script tests in `src/test/js` through the
+  new `jsTest` task (Node 18+, no npm install); it is skipped with a warning when `node` is not
+  on PATH.
 - Fix retention settings in `teebox.properties` being silently ignored: run/task archive and
   purge ages, `maintenanceIntervalMs`, and `scriptRetentionMs` now flow through `TeeBoxConfig`
   into each server instance, including startup maintenance. Nonblank JVM `-D` values still take

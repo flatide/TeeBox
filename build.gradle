@@ -97,6 +97,28 @@ task compileStandaloneClient(type: JavaCompile) {
 }
 tasks.named('check') { dependsOn 'compileStandaloneClient' }
 
+// Browser-free tests for the admin UI scripts in src/main/resources: src/test/js, run by Node's
+// built-in test runner (Node 18+, no npm install). Runs as part of `check` / `build`; skipped with a
+// warning when node is not on PATH, so a JDK-only machine still builds. node is resolved from the
+// build's PATH to an absolute path, so the skip check and the launch always agree.
+def nodeExecutable = providers.environmentVariable('PATH').map { String path ->
+    String name = System.getProperty('os.name').toLowerCase().contains('windows') ? 'node.exe' : 'node'
+    path.split(File.pathSeparator).collect { new File(it, name) }.find { it.isFile() && it.canExecute() }?.absolutePath
+}
+def jsTestFiles = fileTree('src/test/js') { include '**/*.test.js' }
+tasks.register('jsTest', Exec) {
+    description = 'Run the admin UI script tests in src/test/js with the Node built-in test runner.'
+    group = 'verification'
+    commandLine([nodeExecutable.getOrElse('node'), '--test'] + jsTestFiles.files.collect { it.absolutePath }.sort())
+    onlyIf('node is on PATH') {
+        if (!nodeExecutable.present) {
+            logger.warn('jsTest skipped: node was not found on PATH (Node 18+ runs src/test/js).')
+        }
+        nodeExecutable.present
+    }
+}
+tasks.named('check') { dependsOn 'jsTest' }
+
 // Compile the client to genuine Java 7 bytecode (major 51) so the distributable jar loads on Java 7
 // hosts. JDK 17+ can no longer emit bytecode 7, so this uses a JDK 8 toolchain (whose javac still
 // targets -source/-target 7). Gradle auto-provisions JDK 8 via the foojay resolver if it is not

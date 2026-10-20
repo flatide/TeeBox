@@ -9,6 +9,9 @@ cd propertee-teebox && ./gradlew teeBoxZip
 # -> build/distributions/propertee-teebox-dist.zip
 ```
 
+`./gradlew check`는 JUnit 테스트와 관리 UI 스크립트 테스트(`jsTest`, Node 18 이상)를 실행한다.
+`node`가 PATH에 없으면 `jsTest`는 경고를 남기고 건너뛴다.
+
 ### 설치
 
 ```bash
@@ -236,8 +239,13 @@ JSON 의 `origin` 으로 표시되며, 위의 user 역할 kill/cancel 권한 판
 
 ### 스크립트 입력 정의
 
-스크립트 상세의 **Inputs** 카드에서 선택한 버전의 Props를 정의합니다. 이름·타입·필수 여부·설명을
-행으로 편집하고, 기본값·선택값·중첩 구조는 **JSON Schema (advanced)**에서 편집합니다.
+스크립트 상세의 **Inputs** 카드에서 선택한 버전의 Props를 정의합니다. 이름·타입·필수 여부·설명과
+**Default (JSON)**을 행으로 편집합니다. 기본값 칸을 비우면 해당 default를 지정하지 않거나 제거합니다.
+빈 문자열은 `""`, 문자열은 `"hello"`처럼 쓰며 `0`, `false`, `null`, `[1,2]`, `{"enabled":true}` 등
+JSON 값도 지정할 수 있습니다. 선택값·중첩 스키마 정의와 필드 편집기가 정확히 보존할 수 없는
+고정밀 숫자는 **JSON Schema (advanced)**에서 편집합니다. 고정밀 기본값을 반올림하여 저장하지 않습니다.
+잘못된 JSON은 칸을 벗어나거나 저장할 때 표시되며, 고치거나 비울 때까지 저장을 막습니다. 선택한 타입과
+JSON 타입이 다른 기본값(예: string 입력의 `123`)은 힌트를 표시하지만 그대로 저장됩니다.
 **Save inputs**는 메타데이터만 저장합니다. 소스의 **Save**와 **Save as new version**도 현재 정의를
 함께 저장하며, 스크립트 복제 시 모든 버전의 정의를 복사합니다. Admin과 소유자는 수정할 수 있고,
 monitor와 다른 사용자는 조회만 할 수 있습니다.
@@ -250,7 +258,8 @@ Client 토큰으로 `GET /api/client/scripts`에서 목록을 찾고,
 버전 등록의 `inputSchema`를 사용합니다.
 
 설명용 메타데이터이므로 실행 시 필수값·타입 검증이나 기본값 주입은 하지 않습니다(Debug도 동일).
-빈 편집기는 정의 제거를, `{}`는 제약 없는 정의를 뜻합니다. 정의·기본값·예제는 Client 토큰으로도
+Run/Debug Props도 자동으로 채우지 않습니다. **JSON Schema** 편집기를 비우면 전체 정의 제거를,
+`{}`는 제약 없는 정의를 뜻합니다. 정의·기본값·예제는 Client 토큰으로도
 조회되므로 비밀값을 넣지 마세요. 자세한 예시는 [클라이언트 가이드](TEEBOX-CLIENT-GUIDE.ko.md)를 참고하세요.
 
 ### 스크립트별 동시 실행 제어

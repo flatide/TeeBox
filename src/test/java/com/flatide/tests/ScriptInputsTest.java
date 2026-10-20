@@ -29,6 +29,16 @@ public class ScriptInputsTest {
             + "\"path\":{\"type\":\"string\",\"description\":\"File to read\"},"
             + "\"optional\":{\"type\":[\"string\",\"null\"],\"default\":null},"
             + "\"large\":{\"type\":\"integer\",\"default\":9007199254740993}},\"required\":[\"path\"]}";
+    private static final String DEFAULTS_SCHEMA = """
+            {"type":"object","additionalProperties":false,"properties":{
+              "text":{"type":"string","description":"Empty text is a value","default":"","enum":["","hello"]},
+              "nullable":{"type":["string","null"],"default":null},
+              "count":{"type":"integer","default":0,"minimum":0},
+              "enabled":{"type":"boolean","default":false},
+              "items":{"type":"array","default":[0,false,null,""],"items":{}},
+              "options":{"type":"object","default":{"enabled":false,"nested":{"value":null}}}
+            },"required":["text","count"],"x-ui":{"order":["text","count"]}}
+            """;
 
     @Test
     public void schemaRoundTripPreservesNullAndLargeNumbersWithoutExposingMutableState() {
@@ -189,17 +199,83 @@ public class ScriptInputsTest {
         }
     }
 
+    @Test
+    public void uiFormsPreserveJsonDefaultsAcrossSavePathsAndRegistryReload() throws Exception {
+        try (Fixture f = new Fixture()) {
+            JsonObject schema = JsonParser.parseString(DEFAULTS_SCHEMA).getAsJsonObject();
+            f.form("/admin/scripts/register", "scriptId=defaults&content=" + enc("return 1\n")
+                    + "&inputSchemaJson=" + enc(schema.toString()), 302);
+            assertStoredInputs(f, "defaults", "1", schema);
+
+            // Source Save must carry all JSON value kinds, not just string-like defaults.
+            schema.addProperty("description", "Saved together with the source");
+            f.form("/admin/scripts/update-source", "scriptId=defaults&version=1&content=" + enc("return _PROPS\n")
+                    + "&inputSchemaJson=" + enc(schema.toString()), 302);
+            assertStoredInputs(f, "defaults", "1", schema);
+            Assert.assertEquals("return _PROPS\n", f.server.getRunManager().getScriptVersionContent("defaults", "1"));
+
+            // Save inputs changes only the metadata, keeping the same source and defaults.
+            schema.addProperty("description", "Saved as metadata only");
+            f.form("/admin/scripts/inputs/defaults", "version=1&inputSchemaJson=" + enc(schema.toString()), 302);
+            assertStoredInputs(f, "defaults", "1", schema);
+            Assert.assertEquals("return _PROPS\n", f.server.getRunManager().getScriptVersionContent("defaults", "1"));
+
+            JsonObject next = schema.deepCopy();
+            next.addProperty("description", "Saved as a new version");
+            f.form("/admin/scripts/register", "scriptId=defaults&content=" + enc("return _PROPS\n")
+                    + "&inputSchemaJson=" + enc(next.toString()), 302);
+            assertStoredInputs(f, "defaults", "2", next);
+            assertStoredInputs(f, "defaults", "1", schema);
+
+            TeeBoxClient client = new TeeBoxClient(f.base).setClientApiToken("client");
+            Map<String, Object> run = client.runAndWait("defaults", "2", new LinkedHashMap<String, Object>(), 10000L);
+            Assert.assertEquals("COMPLETED", run.get("status"));
+            Assert.assertTrue("editing defaults must not inject runtime props", ((Map<?, ?>) run.get("resultData")).isEmpty());
+        }
+    }
+
+    @Test
+    public void removingAnInputDefaultPreservesOtherDefaultsAndSchemaKeywords() throws Exception {
+        try (Fixture f = new Fixture()) {
+            JsonObject expected = JsonParser.parseString(DEFAULTS_SCHEMA).getAsJsonObject();
+            f.form("/admin/scripts/register", "scriptId=remove_defaults&content=" + enc("return 1\n")
+                    + "&inputSchemaJson=" + enc(expected.toString()), 302);
+            for (String name : List.of("text", "nullable", "count", "enabled", "items", "options")) {
+                // A blank Default field removes just this keyword, not the property definition.
+                JsonObject definition = expected.getAsJsonObject("properties").getAsJsonObject(name);
+                Assert.assertTrue(definition.has("default"));
+                definition.remove("default");
+                f.form("/admin/scripts/inputs/remove_defaults", "version=1&inputSchemaJson=" + enc(expected.toString()), 302);
+                assertStoredInputs(f, "remove_defaults", "1", expected);
+            }
+            Assert.assertEquals("return 1\n", f.server.getRunManager().getScriptVersionContent("remove_defaults", "1"));
+        }
+    }
+
+    private static void assertStoredInputs(Fixture fixture, String scriptId, String version, JsonObject expected)
+            throws Exception {
+        Assert.assertEquals(expected, fixture.server.getRunManager().getScriptInputs(scriptId, version).inputSchema.toJson());
+        Assert.assertEquals(expected, fixture.request("GET", "/api/client/scripts/" + scriptId + "/inputs?version=" + version,
+                null, "client", 200).getAsJsonObject().get("inputSchema"));
+        Assert.assertEquals(expected, fixture.request("GET", "/api/publisher/scripts/" + scriptId + "/versions/" + version + "/inputs",
+                null, "publisher", 200).getAsJsonObject().get("inputSchema"));
+        Assert.assertEquals("defaults survive a fresh registry load", expected,
+                new ScriptRegistry(fixture.dataDir).getVersionInputs(scriptId, version).inputSchema.toJson());
+    }
+
     private static String enc(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private static final class Fixture implements AutoCloseable {
+        final File dataDir;
         final TeeBoxServer server;
         final String base;
 
         Fixture() throws Exception {
             TeeBoxConfig config = new TeeBoxConfig();
-            config.dataDir = Files.createTempDirectory("teebox-inputs-api").toFile();
+            dataDir = Files.createTempDirectory("teebox-inputs-api").toFile();
+            config.dataDir = dataDir;
             config.bindAddress = "127.0.0.1";
             config.port = 0;
             config.maxConcurrentRuns = 2;
