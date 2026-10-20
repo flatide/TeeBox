@@ -1747,7 +1747,7 @@ public class AdminPageRenderer {
                     sb.append("<label>Debug Props (JSON) <span class='dim'>(Debug only)</span></label>");
                     sb.append("<input type='text' name='propsJson' value='{}' ")
                       .append("title='Input properties used only by Debug; Save ignores this field'/>");
-                    sb.append("<p class='dim' id='debug-input-hint'></p>");
+                    sb.append("<p class='dim' id='debug-input-hint' style='font-size:12px;'></p>");
                     sb.append("</div>");
                 }
                 sb.append("<div class='form-row-inline' style='align-items:center;'>");
@@ -1811,7 +1811,7 @@ public class AdminPageRenderer {
         }
         sb.append("</select></div>");
         sb.append("<div class='form-row'><label>Props (JSON)</label><input type='text' name='propsJson' value='{}'/></div>");
-        sb.append("<details><summary>Inputs for this run version</summary><pre id='run-input-hint'>Select a version to view its inputs.</pre></details>");
+        sb.append("<details><summary style='cursor:pointer;font-size:12px;color:#64748b;'>Inputs for this run version</summary><pre id='run-input-hint' style='margin:8px 0 0;'>Select a version to view its inputs.</pre></details>");
         sb.append("<div class='form-row-inline'>");
         sb.append("<div><label>Max Iterations</label><input type='text' name='maxIterations' value='1000' style='width:100px'/></div>");
         sb.append("<div><label>Timeout (ms, 0 = server default)</label><input type='text' name='timeoutMs' value='0' style='width:100px'/></div>");

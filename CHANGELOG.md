@@ -12,6 +12,12 @@ All notable changes to TeeBox are documented here.
   default whose JSON type differs from the declared `type` shows a non-blocking hint, such as
   quoting `123` for a string input or unquoting `"5"` for a number. Defaults remain descriptive
   metadata: this does not fill Run/Debug Props or change execution behavior.
+- Tidy the Inputs card. **Add parameter** (formerly Add input) and **Save inputs** are now the
+  same size on one row, with Save inputs right-aligned. The **Remove definition** button is gone:
+  removing the last parameter removes the definition unless JSON Schema gives it other keywords,
+  and clearing the JSON Schema text still removes it. The help paragraphs became tooltips plus one
+  note that runs do not check Required or fill in defaults. The JSON Schema and run-version input
+  summaries use the small style of Output Capture Rule.
 - Fix Enter in a Version Source text field (Description, Debug Props, Output Capture Rule)
   submitting **Save inputs** since 1.35.0: the Inputs card's button became the form's default
   button, so Enter saved only the input definition and reloaded the page, discarding unsaved

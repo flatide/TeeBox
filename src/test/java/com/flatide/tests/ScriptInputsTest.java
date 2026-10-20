@@ -184,6 +184,8 @@ public class ScriptInputsTest {
             String page = f.html("/admin/scripts/ui_inputs?version=1");
             Assert.assertTrue(page.contains("name='inputSchemaJson' form='version-source-form'"));
             Assert.assertTrue(page.contains("data-inputs-save"));
+            Assert.assertTrue(page.contains(">Add parameter</button>"));
+            Assert.assertFalse(page.contains("input-clear"));
             Assert.assertTrue(page.contains("File to read"));
             Assert.assertTrue(page.contains("id='run-input-version'"));
             f.form("/admin/scripts/register", versionForm, 302); // Save as new version carries textarea

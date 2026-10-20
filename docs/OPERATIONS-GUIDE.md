@@ -247,17 +247,19 @@ The `/admin/runs` list filters server-side:
 
 ### Script Input Definitions
 
-The script detail page's **Inputs** card describes the selected version's Props. Add named
-fields with a type, required flag, description and **Default (JSON)**. Leave the default field
-blank to omit/remove that default; enter `""` for an empty string, `"hello"` for text, or JSON
-such as `0`, `false`, `null`, `[1,2]` or `{"enabled":true}`. Use **JSON Schema (advanced)** for
-choices, nested schema definitions and high-precision numbers that the field editor cannot
-preserve exactly; such values are not rounded into saved defaults. Invalid JSON is reported when
-you leave the field or save, and blocks saving until it is fixed or cleared. A default whose JSON
-type differs from the selected type (for example `123` for a string input) gets a hint but is
-still saved. **Save inputs** changes only metadata. Source **Save** and **Save as new version**
-also save the current definition, and script duplication copies every version's definition.
-Admins and the script owner may edit; monitors and other users may read.
+The script detail page's **Inputs** card describes the selected version's Props.
+**Add parameter** adds a named field with a type, required flag, description and
+**Default (JSON)**. Leave the default field blank to omit/remove that default; enter `""` for an
+empty string, `"hello"` for text, or JSON such as `0`, `false`, `null`, `[1,2]` or
+`{"enabled":true}`. Use **JSON Schema (advanced)** for choices, nested schema definitions and
+high-precision numbers that the field editor cannot preserve exactly; such values are not rounded
+into saved defaults. Invalid JSON is reported when you leave the field or save, and blocks saving
+until it is fixed or cleared. A default whose JSON type differs from the selected type (for
+example `123` for a string input) gets a hint but is still saved. Removing the last parameter
+removes the definition unless JSON Schema gives it other keywords; clearing the JSON Schema text
+also removes it. **Save inputs** changes only metadata. Source **Save** and
+**Save as new version** also save the current definition, and script duplication copies every
+version's definition. Admins and the script owner may edit; monitors and other users may read.
 
 Definitions are optional and version-specific, stored in the existing `script.json` (no new
 index or background I/O). Client-token callers use `GET /api/client/scripts` to discover scripts

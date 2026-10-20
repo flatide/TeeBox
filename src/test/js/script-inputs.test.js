@@ -171,7 +171,6 @@ function createEditor(properties, {raw, readOnly = false} = {}) {
     add('debug-input-hint', 'p', form || root);
     if (!readOnly) {
         add('input-add', 'button', form);
-        add('input-clear', 'button', form);
         add('input-json-details', 'details', form);
         source.value = raw === undefined ? JSON.stringify({type: 'object', properties}) : raw;
         source.form = form;
@@ -425,7 +424,7 @@ test('removing an invalid row clears only that row error', () => {
 
     editor.remove('second');
     assert.equal(editor.error.textContent, '');
-    assert.deepEqual(editor.schema().properties, {});
+    assert.equal(editor.source.value, '');
     assert.equal(editor.submit().defaultPrevented, false);
 });
 
@@ -443,15 +442,51 @@ test('an explicit advanced JSON edit replaces pending default drafts and resynch
     assert.equal(editor.submit().defaultPrevented, false);
 });
 
-test('clearing the input definition also clears pending invalid defaults', () => {
-    const editor = createEditor({value: {default: 1}});
+test('removing the last parameter removes the definition and its pending invalid default', () => {
+    const editor = createEditor({}, {raw: JSON.stringify({
+        type: 'object',
+        properties: {value: {type: 'string', default: 'x'}},
+        required: ['value']
+    })});
     editor.editDefault('value', '{"unfinished":');
-    editor.elements['input-clear'].dispatch('click');
+    editor.remove('value');
 
     assert.equal(editor.source.value, '');
     assert.equal(editor.error.textContent, '');
     assert.equal(descendants(editor.fields).filter(element => element.tagName === 'INPUT').length, 0);
+    assert.equal(editor.fields.textContent, 'No parameters');
     assert.equal(editor.submit().defaultPrevented, false);
+});
+
+test('adding and then removing a parameter leaves no definition behind', () => {
+    const editor = createEditor({}, {raw: ''});
+    assert.equal(editor.fields.textContent, 'No parameters');
+    editor.elements['input-add'].dispatch('click');
+    assert.deepEqual(editor.schema(), {type: 'object', properties: {input: {type: 'string'}}});
+    editor.remove('input');
+    assert.equal(editor.source.value, '');
+    assert.equal(editor.fields.textContent, 'No parameters');
+});
+
+test('other schema keywords keep the definition when its last parameter is removed', () => {
+    const editor = createEditor({}, {raw: JSON.stringify({
+        type: 'object',
+        properties: {first: {type: 'string'}, second: {type: 'number'}},
+        required: ['first', 'second'],
+        additionalProperties: false
+    })});
+    editor.remove('first');
+    assert.deepEqual(editor.schema().required, ['second']);
+    editor.remove('second');
+    assert.deepEqual(editor.schema(), {type: 'object', properties: {}, additionalProperties: false});
+    assert.match(editor.fields.textContent, /^No named parameters/);
+});
+
+test('an explicit empty definition from JSON Schema is kept as entered', () => {
+    const editor = createEditor({});
+    assert.match(editor.fields.textContent, /^No named parameters/);
+    assert.equal(editor.submit().defaultPrevented, false);
+    assert.deepEqual(editor.schema(), {type: 'object', properties: {}});
 });
 
 test('boolean subschemas cannot receive defaults while custom object schemas retain their constraints', () => {

@@ -125,8 +125,8 @@
         var props = schema && object(schema.properties) ? schema.properties : {};
         var names = Object.keys(props);
         if (!names.length) {
-            var empty = document.createElement('p'); empty.className = 'dim';
-            empty.textContent = schema === null ? 'No input definition' : 'No named inputs. See JSON Schema for other constraints.';
+            var empty = document.createElement('p'); empty.className = 'empty';
+            empty.textContent = schema === null ? 'No parameters' : 'No named parameters. See JSON Schema for other constraints.';
             fields.appendChild(empty); showDebugHint(); return;
         }
         var table = document.createElement('table'); var head = document.createElement('thead');
@@ -186,6 +186,7 @@
                 : object(def) && has(def, 'default') ? JSON.stringify(def.default) : '', 'Input default (JSON)');
             defaultInput.className = 'input-default';
             defaultInput.placeholder = 'Not set';
+            defaultInput.title = 'A JSON value: "text", 0, false, null, [1, 2] or {"key": true}. Leave blank for no default.';
             defaultInput.maxLength = source.maxLength;
             defaultInput.disabled = !object(def);
             var warning = document.createElement('div');
@@ -250,7 +251,16 @@
             remove.addEventListener('click', function () {
                 defaultDrafts.delete(def);
                 delete props[name];
-                if (Array.isArray(schema.required)) schema.required = schema.required.filter(function (key) { return key !== name; });
+                if (Array.isArray(schema.required)) {
+                    schema.required = schema.required.filter(function (key) { return key !== name; });
+                    if (!schema.required.length) delete schema.required;
+                }
+                // Removing the last parameter of a plain definition removes the definition, as it was
+                // before any parameter was added. Other keywords keep it; JSON Schema can still save
+                // an explicit empty definition.
+                if (!Object.keys(props).length && Object.keys(schema).every(function (key) {
+                    return key === 'type' || key === 'properties';
+                })) schema = null;
                 persist(); render();
             });
             cell(row, remove); body.appendChild(row);
@@ -288,9 +298,6 @@
             var name = 'input'; var n = 1;
             while (has(schema.properties, name)) name = 'input' + n++;
             put(schema.properties, name, {type: 'string'}); persist(); render();
-        });
-        document.getElementById('input-clear').addEventListener('click', function () {
-            schema = null; rawOnly = false; defaultDrafts.clear(); persist(); render();
         });
         source.addEventListener('invalid', function () { document.getElementById('input-json-details').open = true; });
         var form = document.getElementById('version-source-form');
