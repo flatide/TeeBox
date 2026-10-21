@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.37.0
 
 - **Embedded engine upgraded to propertee2 0.37.0** (spec v0.28.0): `LIST_DIR_NAMES` returns
   each entry's name and type — `{name, type}` objects, sorted by name — instead of the names
@@ -13,6 +13,9 @@ All notable changes to TeeBox are documented here.
   it is for `LIST_DIR`. The built-in reference panel entry follows; the inlined browser bundle is
   unchanged, since the JS runtime only stubs the file built-ins. The server test now also lists a
   link to a file, which `LIST_DIR` reports as the file and `LIST_DIR_NAMES` as a `"link"`.
+
+**307 TeeBox tests (plus 26 admin UI script tests) and 133 propertee-js tests green. Packaged
+with propertee2 0.37.0 at `899fafb66931`.**
 
 ## 1.36.0
 
