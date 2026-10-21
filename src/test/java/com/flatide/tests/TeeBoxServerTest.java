@@ -1074,7 +1074,8 @@ public class TeeBoxServerTest {
     public void serverShouldListDirectoriesWithLinksAndPatterns() throws Exception {
         // Spec v0.27.0 (engine 0.36.0): TeeBox's provider lists like the CLI — a link that cannot be
         // followed is a "link" (it was an empty "file"), a directory has size 0 (it had its on-disk
-        // size), patterns filter by name, LIST_DIR_NAMES gives the names, and failures name a reason.
+        // size), patterns filter by name, and failures name a reason. Spec v0.28.0 (engine 0.37.0):
+        // LIST_DIR_NAMES gives each entry's own type, so every link is a "link" there.
         TestServer testServer = createServer();
         try {
             File base = new File(testServer.dataDir, "list-dir");
@@ -1083,6 +1084,7 @@ public class TeeBoxServerTest {
             Files.write(new File(base, "b.txt").toPath(), "b".getBytes("UTF-8"));
             try {
                 Files.createSymbolicLink(new File(base, "broken").toPath(), Path.of("missing", "target"));
+                Files.createSymbolicLink(new File(base, "to-a").toPath(), Path.of("a.ice"));
             } catch (UnsupportedOperationException | IOException e) {
                 Assume.assumeNoException("symbolic links are not available here", e);
             }
@@ -1116,19 +1118,32 @@ public class TeeBoxServerTest {
             for (Map<String, Object> e : entries) {
                 listed.add(e.get("name") + " " + e.get("type") + " " + ((Number) e.get("size")).intValue());
             }
-            Assert.assertEquals(Arrays.asList("a.ice file 2", "b.txt file 1", "broken link 0", "sub dir 0"), listed);
+            Assert.assertEquals(Arrays.asList("a.ice file 2", "b.txt file 1", "broken link 0", "sub dir 0", "to-a file 2"),
+                    listed);
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> ice = (List<Map<String, Object>>) resultData.get("ice");
             Assert.assertEquals(1, ice.size());
             Assert.assertEquals("a.ice", ice.get(0).get("name"));
-            Assert.assertEquals(Arrays.asList("a.ice", "b.txt", "broken", "sub"), resultData.get("names"));
-            Assert.assertEquals(Arrays.asList("b.txt", "broken", "sub"), resultData.get("notIce"));
+            Assert.assertEquals(Arrays.asList("a.ice file", "b.txt file", "broken link", "sub dir", "to-a link"),
+                    nameTypes(resultData.get("names")));
+            Assert.assertEquals(Arrays.asList("b.txt file", "broken link", "sub dir", "to-a link"),
+                    nameTypes(resultData.get("notIce")));
             Assert.assertEquals("No such file or directory: " + new File(base, "nope").getAbsolutePath(),
                     resultData.get("missing"));
             Assert.assertEquals("LIST_DIR_NAMES() pattern must not be empty", resultData.get("emptyPattern"));
         } finally {
             testServer.close();
         }
+    }
+
+    /** LIST_DIR_NAMES entries as "name type" strings. */
+    @SuppressWarnings("unchecked")
+    private static List<String> nameTypes(Object entries) {
+        List<String> out = new ArrayList<String>();
+        for (Map<String, Object> e : (List<Map<String, Object>>) entries) {
+            out.add(e.get("name") + " " + e.get("type"));
+        }
+        return out;
     }
 
     @Test

@@ -403,6 +403,9 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("LIST_DIR_NAMES in the highlighter regex", html.contains("|LIST_DIR|LIST_DIR_NAMES|"));
             Assert.assertTrue("LIST_DIR panel entry at spec v0.27.0", html.contains("sig: 'LIST_DIR(path, [pattern])'"));
             Assert.assertTrue("LIST_DIR_NAMES documented in the panel", html.contains("name: 'LIST_DIR_NAMES'"));
+            // Spec v0.28.0 (engine 0.37.0): LIST_DIR_NAMES returns each entry's name and type.
+            Assert.assertTrue("LIST_DIR_NAMES panel entry at spec v0.28.0",
+                    html.contains("' .value = an array of {name, type}, sorted by name; type is \"file\", \"dir\" or \"link\".'"));
 
             // The builtin panel is hidden by default and toggled by the ƒ button pinned to the
             // editor's top-right (TeeBox addition); the choice persists via localStorage.

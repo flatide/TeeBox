@@ -2,6 +2,18 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.37.0** (spec v0.28.0): `LIST_DIR_NAMES` returns
+  each entry's name and type — `{name, type}` objects, sorted by name — instead of the names
+  alone. Links are still not followed: every link is `"link"`, whatever it points to, so a large
+  directory of links still lists without touching what the links point to. **Breaking** for a
+  script written against 1.36.0 that used an element as a name: use `entry.name`. A directory
+  whose entries cannot be examined (read but not execute permission) is now an error Result, as
+  it is for `LIST_DIR`. The built-in reference panel entry follows; the inlined browser bundle is
+  unchanged, since the JS runtime only stubs the file built-ins. The server test now also lists a
+  link to a file, which `LIST_DIR` reports as the file and `LIST_DIR_NAMES` as a `"link"`.
+
 ## 1.36.0
 
 - Add a **Default (JSON)** field to the Inputs editor's named-field table. Blank removes the
