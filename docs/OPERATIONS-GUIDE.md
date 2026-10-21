@@ -545,7 +545,7 @@ curl http://host:18080/api/admin/drain-status
 - Catastrophic system-destruction commands are blocked (`shutdown`, `reboot`, dangerous `rm -rf`, `dd` targeting `/dev/*`, etc.).
 - Control characters (`\n`, `\r`, `\0`) are blocked.
 - Dangerous environment variables (`LD_PRELOAD`, `DYLD_*`) are blocked.
-- `ENV`, `FILE_*`, `READ_LINES`, `WRITE_*`, `MKDIR`, `LIST_DIR`, and `DELETE_FILE` access the host environment through a `PlatformProvider` injected by TeeBox.
+- `ENV`, `FILE_*`, `READ_LINES`, `WRITE_*`, `MKDIR`, `LIST_DIR`, `LIST_DIR_NAMES`, and `DELETE_FILE` access the host environment through a `PlatformProvider` injected by TeeBox.
 
 ### Background Process Caveats
 

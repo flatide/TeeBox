@@ -398,6 +398,11 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("FILE_LINES documented in the panel", html.contains("name: 'FILE_LINES'"));
             Assert.assertTrue("READ_FILE panel entry points at FILE_LINES",
                     html.contains("for large files use FILE_LINES (spec v0.26.0)"));
+            // Spec v0.27.0 (engine 0.36.0): LIST_DIR takes a name pattern, and LIST_DIR_NAMES is
+            // highlighted and documented like the rest.
+            Assert.assertTrue("LIST_DIR_NAMES in the highlighter regex", html.contains("|LIST_DIR|LIST_DIR_NAMES|"));
+            Assert.assertTrue("LIST_DIR panel entry at spec v0.27.0", html.contains("sig: 'LIST_DIR(path, [pattern])'"));
+            Assert.assertTrue("LIST_DIR_NAMES documented in the panel", html.contains("name: 'LIST_DIR_NAMES'"));
 
             // The builtin panel is hidden by default and toggled by the ƒ button pinned to the
             // editor's top-right (TeeBox addition); the choice persists via localStorage.
@@ -428,6 +433,8 @@ public class TeeBoxMultiUserUiTest {
             // files — but a known name, so the client-side lint does not flag it).
             Assert.assertTrue("embedded visitor carries the spec v0.26.0 FILE_LINES builtin",
                     html.contains("this.functions['FILE_LINES'] = () => {"));
+            Assert.assertTrue("embedded visitor knows the spec v0.27.0 LIST_DIR_NAMES builtin",
+                    html.contains("'LIST_DIR', 'LIST_DIR_NAMES', 'DELETE_FILE'"));
             Assert.assertTrue("client-first check wired", html.contains("ptClientCheck"));
             int knownStart = html.indexOf("var PT_KNOWN=[");
             Assert.assertTrue("runtime known-name set rendered", knownStart >= 0);
@@ -438,6 +445,8 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("engine 0.32.0 WORDS in the injected known set", knownList.contains("'WORDS'"));
             Assert.assertTrue("engine 0.35.0 FILE_LINES in the injected known set",
                     knownList.contains("'FILE_LINES'"));
+            Assert.assertTrue("engine 0.36.0 LIST_DIR_NAMES in the injected known set",
+                    knownList.contains("'LIST_DIR_NAMES'"));
 
 
             // The Active Version Source card is now the single edit + add-version surface: the separate

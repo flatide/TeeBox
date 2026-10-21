@@ -44,6 +44,22 @@ All notable changes to TeeBox are documented here.
   unarchived runs/tasks from reaching purge, while already archived records can still be purged.
 - Invalid `runTimeoutMs` and `debugIdleTimeoutMs` values now reject startup with the setting
   name, like the retention durations, instead of a bare number-format error.
+- **Embedded engine upgraded to propertee2 0.36.0** (spec v0.27.0): `LIST_DIR` no longer fails
+  as a whole on a link that cannot be followed — its target is missing or inaccessible, or links
+  loop. Such a link is listed as type `"link"` with size 0; TeeBox used to list it as an empty
+  `"file"`, so a script could not tell it from a real empty file. `LIST_DIR(path, pattern)` keeps
+  only the entries whose names match a glob (`*`, `?`, `[...]`, `[!...]`, `{a,b}`), and the new
+  **`LIST_DIR_NAMES(path, [pattern])`** returns the names alone without examining each entry,
+  which is much faster on a large directory of links. TeeBox's `PlatformProvider` now lists the
+  same way as the CLI, which also changes two other results: a directory's `size` is 0 instead of
+  its on-disk size, and an unreadable directory is an error Result instead of an empty listing.
+  A missing directory reports `No such file or directory: <path>` (it said `Not a directory`).
+  No TeeBox-side code changed: `TeeBoxPlatformProvider` inherits the engine's default provider.
+  The editor follows: the server lint and the injected `PT_KNOWN` set pick up `LIST_DIR_NAMES`
+  from the runtime, the inlined browser bundle is refreshed byte-for-byte from propertee-js `b89c488`
+  (its client-side check knows the name), and the syntax highlighter and built-in reference panel gain
+  the new entries. The detail-page test guards all three, and a server test lists a directory
+  with a broken link, patterns and a missing path through a run.
 
 ## 1.35.0
 

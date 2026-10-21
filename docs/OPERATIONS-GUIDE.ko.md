@@ -529,7 +529,7 @@ TeeBox는 process group kill을 우선 시도하고, 필요 시 하위 프로세
 - 치명적인 시스템 파괴 명령은 차단 (`shutdown`, `reboot`, 위험한 `rm -rf`, `/dev/*` 대상 `dd` 등)
 - 제어 문자 (`\n`, `\r`, `\0`) 차단
 - 위험 환경 변수 (`LD_PRELOAD`, `DYLD_*`) 차단
-- `ENV`, `FILE_*`, `READ_LINES`, `WRITE_*`, `MKDIR`, `LIST_DIR`, `DELETE_FILE`은 TeeBox가 주입하는 `PlatformProvider`를 통해 host 환경에 접근
+- `ENV`, `FILE_*`, `READ_LINES`, `WRITE_*`, `MKDIR`, `LIST_DIR`, `LIST_DIR_NAMES`, `DELETE_FILE`은 TeeBox가 주입하는 `PlatformProvider`를 통해 host 환경에 접근
 
 ### Background 프로세스 주의사항
 

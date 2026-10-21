@@ -8,6 +8,7 @@ import com.flatide.teebox.TeeBoxServer;
 import com.flatide.teebox.TeeBoxConfig;
 
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
@@ -21,6 +22,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -1063,6 +1065,67 @@ public class TeeBoxServerTest {
             Assert.assertEquals("line2", resultData.get("line2"));
             Assert.assertEquals("file", resultData.get("fileType"));
             Assert.assertEquals(1.0, ((Number) resultData.get("entryCount")).doubleValue(), 0.0);
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void serverShouldListDirectoriesWithLinksAndPatterns() throws Exception {
+        // Spec v0.27.0 (engine 0.36.0): TeeBox's provider lists like the CLI — a link that cannot be
+        // followed is a "link" (it was an empty "file"), a directory has size 0 (it had its on-disk
+        // size), patterns filter by name, LIST_DIR_NAMES gives the names, and failures name a reason.
+        TestServer testServer = createServer();
+        try {
+            File base = new File(testServer.dataDir, "list-dir");
+            Assert.assertTrue(new File(base, "sub").mkdirs());
+            Files.write(new File(base, "a.ice").toPath(), "aa".getBytes("UTF-8"));
+            Files.write(new File(base, "b.txt").toPath(), "b".getBytes("UTF-8"));
+            try {
+                Files.createSymbolicLink(new File(base, "broken").toPath(), Path.of("missing", "target"));
+            } catch (UnsupportedOperationException | IOException e) {
+                Assume.assumeNoException("symbolic links are not available here", e);
+            }
+
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript(
+                "list_dir",
+                "1",
+                "return {\n" +
+                "  \"entries\": UNWRAP(LIST_DIR(baseDir)),\n" +
+                "  \"ice\": UNWRAP(LIST_DIR(baseDir, \"*.ice\")),\n" +
+                "  \"names\": UNWRAP(LIST_DIR_NAMES(baseDir)),\n" +
+                "  \"notIce\": UNWRAP(LIST_DIR_NAMES(baseDir, \"[!a]*\")),\n" +
+                "  \"missing\": LIST_DIR(baseDir + \"/nope\").value,\n" +
+                "  \"emptyPattern\": LIST_DIR_NAMES(baseDir, \"\").value\n" +
+                "}\n",
+                "list dir test",
+                Arrays.asList("test"),
+                true
+            );
+            Map<String, Object> props = new LinkedHashMap<String, Object>();
+            props.put("baseDir", base.getAbsolutePath());
+
+            String runId = (String) client.submitRun("list_dir", null, props).get("runId");
+            Assert.assertEquals("COMPLETED", client.waitForRunTerminal(runId, 8000L).get("status"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resultData = (Map<String, Object>) client.getRunResult(runId).get("resultData");
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> entries = (List<Map<String, Object>>) resultData.get("entries");
+            List<String> listed = new ArrayList<String>();
+            for (Map<String, Object> e : entries) {
+                listed.add(e.get("name") + " " + e.get("type") + " " + ((Number) e.get("size")).intValue());
+            }
+            Assert.assertEquals(Arrays.asList("a.ice file 2", "b.txt file 1", "broken link 0", "sub dir 0"), listed);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> ice = (List<Map<String, Object>>) resultData.get("ice");
+            Assert.assertEquals(1, ice.size());
+            Assert.assertEquals("a.ice", ice.get(0).get("name"));
+            Assert.assertEquals(Arrays.asList("a.ice", "b.txt", "broken", "sub"), resultData.get("names"));
+            Assert.assertEquals(Arrays.asList("b.txt", "broken", "sub"), resultData.get("notIce"));
+            Assert.assertEquals("No such file or directory: " + new File(base, "nope").getAbsolutePath(),
+                    resultData.get("missing"));
+            Assert.assertEquals("LIST_DIR_NAMES() pattern must not be empty", resultData.get("emptyPattern"));
         } finally {
             testServer.close();
         }
