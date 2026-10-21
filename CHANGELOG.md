@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.36.0
 
 - Add a **Default (JSON)** field to the Inputs editor's named-field table. Blank removes the
   default; JSON strings (including `""`), numbers, booleans, `null`, arrays and objects are
@@ -60,6 +60,9 @@ All notable changes to TeeBox are documented here.
   (its client-side check knows the name), and the syntax highlighter and built-in reference panel gain
   the new entries. The detail-page test guards all three, and a server test lists a directory
   with a broken link, patterns and a missing path through a run.
+
+**307 TeeBox tests (plus 26 admin UI script tests) and 133 propertee-js tests green. Packaged
+with propertee2 0.36.0 at `f72f38fa18aa`.**
 
 ## 1.35.0
 
