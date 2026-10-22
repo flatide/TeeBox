@@ -2,6 +2,15 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- The built-in function panel in the script editor shows each sample's **output** under the
+  sample — what the sample prints when run on TeeBox (the engine's own messages, so `FAIL`
+  shows the Java JSON parser's text). An output that changes from run to run (`RANDOM`,
+  `MILTIME`, `DATE`, `TIME`) is marked *varies per run*; one that depends on the server or its
+  files (`ENV`, `SHELL_CTX`, the HTTP built-ins with their placeholder URLs, `STREAM_FILE`,
+  `THUMBNAIL`) is marked *example*. File samples assume their directory (`/d`) exists.
+
 ## 1.37.0
 
 - **Embedded engine upgraded to propertee2 0.37.0** (spec v0.28.0): `LIST_DIR_NAMES` returns

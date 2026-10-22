@@ -406,6 +406,13 @@ public class TeeBoxMultiUserUiTest {
             // Spec v0.28.0 (engine 0.37.0): LIST_DIR_NAMES returns each entry's name and type.
             Assert.assertTrue("LIST_DIR_NAMES panel entry at spec v0.28.0",
                     html.contains("' .value = an array of {name, type}, sorted by name; type is \"file\", \"dir\" or \"link\".'"));
+            // Each sample's output is shown under it as TeeBox prints it (the engine's own messages,
+            // not the playground's), marked when it varies per run or depends on the server.
+            Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));
+            Assert.assertTrue("SUM sample output", html.contains("sample: 'PRINT(SUM(1, 2, 3))', output: '6'"));
+            Assert.assertTrue("FAIL sample output is the engine's message", html.contains(
+                    "output: 'Runtime Error at line 3:4: config parse failed: Invalid JSON: expected object key at position 1'"));
+            Assert.assertTrue("outputs that vary per run are marked", html.contains("outputNote: 'varies'"));
 
             // The builtin panel is hidden by default and toggled by the ƒ button pinned to the
             // editor's top-right (TeeBox addition); the choice persists via localStorage.
