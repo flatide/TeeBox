@@ -2,7 +2,7 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.38.0
 
 - **Embedded engine upgraded to propertee2 0.38.0** (spec v0.29.0): `REGEX_FIND` returns its first
   match as a match object `{match, position, groups, named}` instead of `[fullMatch, group1, …]` —
@@ -21,6 +21,9 @@ All notable changes to TeeBox are documented here.
   `MILTIME`, `DATE`, `TIME`) is marked *varies per run*; one that depends on the server or its
   files (`ENV`, `SHELL_CTX`, the HTTP built-ins with their placeholder URLs, `STREAM_FILE`,
   `THUMBNAIL`) is marked *example*. File samples assume their directory (`/d`) exists.
+
+**308 TeeBox tests (plus 26 admin UI script tests) and 138 propertee-js tests green. Packaged
+with propertee2 0.38.0 at `d71fc91809f8`.**
 
 ## 1.37.0
 
