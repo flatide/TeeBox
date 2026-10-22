@@ -4,6 +4,17 @@ All notable changes to TeeBox are documented here.
 
 ## Unreleased
 
+- **Embedded engine upgraded to propertee2 0.38.0** (spec v0.29.0): `REGEX_FIND` returns its first
+  match as a match object `{match, position, groups, named}` instead of `[fullMatch, group1, …]` —
+  `groups.N` is group N, `position` is 1-based, and `named` holds the named groups by name — and
+  the new `REGEX_FIND_ALL` returns every match, left to right and without overlap, as an array of
+  such objects. **Breaking** for a script written against 1.37.0 that indexes the old array:
+  `res.1` becomes `res.match` and group N `res.groups.N`, and the old `res.2` now fails with
+  `Property '2' does not exist`. The editor's built-in panel documents both (with their sample
+  outputs), the highlighter knows `REGEX_FIND_ALL`, and the inlined browser bundle is refreshed
+  byte-for-byte from propertee-js `fe706e2`, so the editor's pre-check no longer reports
+  `REGEX_FIND_ALL` as an unknown function. A server test returns match objects through a run's
+  result.
 - The built-in function panel in the script editor shows each sample's **output** under the
   sample — what the sample prints when run on TeeBox (the engine's own messages, so `FAIL`
   shows the Java JSON parser's text). An output that changes from run to run (`RANDOM`,

@@ -2,11 +2,12 @@
  *
  * Ported from the ProperTee playground (propertee-js/docs/index.html). The syntax highlighter
  * (highlightSyntax/escapeHtml) and the builtin catalog (RESULT_NOTE/BUILTIN_DOCS) are copied VERBATIM
- * (last synced: spec v0.28.0 — LIST_DIR_NAMES types; v0.27.0 — LIST_DIR patterns). When the language gains
- * builtins, re-diff against the playground and sync; playground-only annotations ("in-memory FS",
- * mocked SHELL/HTTP notes) are intentionally NOT carried over. Each entry's output is what its
- * sample prints on TeeBox: it differs from the playground's for ENV (mocked there) and FAIL (a JS
- * runtime message), and outputNote marks one that varies or depends on the server.
+ * (last synced: spec v0.29.0 — REGEX_FIND match objects, REGEX_FIND_ALL; v0.28.0 — LIST_DIR_NAMES
+ * types). When the language gains builtins, re-diff against the playground and sync; playground-only
+ * annotations ("in-memory FS", mocked SHELL/HTTP notes) are intentionally NOT carried over. Each
+ * entry's output is what its sample prints on TeeBox: it differs from the playground's for ENV
+ * (mocked there) and FAIL (a JS runtime message), and outputNote marks one that varies or depends on
+ * the server.
  * TeeBox-only host builtins (STREAM_FILE/THUMBNAIL) are kept on separate, clearly-marked
  * lines/categories so the verbatim parts stay diffable.
  * Only the wiring is new: it progressively upgrades any <textarea data-pt-editor> into a highlighted
@@ -24,7 +25,7 @@
     }
 
     function highlightSyntax(code) {
-        var builtins = 'PRINT|SUM|MAX|MIN|ABS|FLOOR|CEIL|ROUND|LEN|TO_NUMBER|TO_STRING|TYPE_OF|SLEEP|PUSH|POP|CONCAT|SLICE|CHARS|SPLIT|WORDS|JOIN|SUBSTRING|UPPERCASE|LOWERCASE|TRIM|CONTAINS|STARTS_WITH|ENDS_WITH|FIND|FIND_FIRST|FIND_LAST|MATCHES|REGEX_FIND|REPLACE|HAS_KEY|KEYS|VALUES|ENTRIES|MERGE|REMOVE_KEY|SORT|SORT_DESC|SORT_BY|SORT_BY_DESC|REVERSE|RANDOM|MILTIME|DATE|TIME|JSON_PARSE|JSON_FORMAT|ENV|FILE_EXISTS|FILE_INFO|READ_FILE|READ_LINES|FILE_LINES|READ_JSON_FILE|WRITE_JSON_FILE|WRITE_FILE|WRITE_LINES|APPEND_FILE|MKDIR|LIST_DIR|LIST_DIR_NAMES|DELETE_FILE|HTTP_GET|HTTP_POST|HTTP|SHELL|SHELL_CTX|FAIL|UNWRAP|OK|ERR|IS_RESULT';
+        var builtins = 'PRINT|SUM|MAX|MIN|ABS|FLOOR|CEIL|ROUND|LEN|TO_NUMBER|TO_STRING|TYPE_OF|SLEEP|PUSH|POP|CONCAT|SLICE|CHARS|SPLIT|WORDS|JOIN|SUBSTRING|UPPERCASE|LOWERCASE|TRIM|CONTAINS|STARTS_WITH|ENDS_WITH|FIND|FIND_FIRST|FIND_LAST|MATCHES|REGEX_FIND|REGEX_FIND_ALL|REPLACE|HAS_KEY|KEYS|VALUES|ENTRIES|MERGE|REMOVE_KEY|SORT|SORT_DESC|SORT_BY|SORT_BY_DESC|REVERSE|RANDOM|MILTIME|DATE|TIME|JSON_PARSE|JSON_FORMAT|ENV|FILE_EXISTS|FILE_INFO|READ_FILE|READ_LINES|FILE_LINES|READ_JSON_FILE|WRITE_JSON_FILE|WRITE_FILE|WRITE_LINES|APPEND_FILE|MKDIR|LIST_DIR|LIST_DIR_NAMES|DELETE_FILE|HTTP_GET|HTTP_POST|HTTP|SHELL|SHELL_CTX|FAIL|UNWRAP|OK|ERR|IS_RESULT';
         // TeeBox host builtins (registered by ScriptExecutor) — NOT part of the playground list above;
         // keep them on this separate line so the verbatim line stays diffable against the playground.
         builtins += '|STREAM_FILE|THUMBNAIL';
@@ -104,7 +105,8 @@
             { name: 'FIND_FIRST', sig: 'FIND_FIRST(s, sub)', desc: 'Position of the first occurrence of sub in s (spec v0.17.0). Literal match, not regex.', returns: 'A 1-based position, or 0 if absent — so "if FIND_FIRST(s, sub) > 0" tests presence.', fails: 'Runtime error if either argument is not a string, or sub is empty.', sample: 'PRINT(FIND_FIRST("abcd", "c"))', output: '3' },
             { name: 'FIND_LAST', sig: 'FIND_LAST(s, sub)', desc: 'Position of the last occurrence of sub in s (spec v0.17.0). Literal match, not regex.', returns: 'A 1-based position, or 0 if absent.', fails: 'Runtime error if either argument is not a string, or sub is empty.', sample: 'PRINT(FIND_LAST("banana", "an"))', output: '4' },
             { name: 'MATCHES', sig: 'MATCHES(s, pattern)', desc: 'Regex match test.', returns: 'A boolean (true if pattern matches anywhere in s).', fails: 'Runtime error if arguments are not strings or pattern is an invalid regex.', sample: 'PRINT(MATCHES("abc123", "[0-9]+"))', output: 'true' },
-            { name: 'REGEX_FIND', sig: 'REGEX_FIND(s, pattern)', desc: 'Find the first regex match and its groups.', returns: 'An array [fullMatch, group1, ...] (1-based), or {} if there is no match.', fails: 'Runtime error if arguments are not strings or pattern is an invalid regex. NOTE: "no match" is not a failure — it returns {}.', sample: 'res = REGEX_FIND("id=42", "id=([0-9]+)")\nPRINT(res.2)', output: '42' },
+            { name: 'REGEX_FIND', sig: 'REGEX_FIND(s, pattern)', desc: 'Find the first regex match (spec v0.29.0).', returns: 'A match object {match, position, groups, named}: the whole match, its 1-based position, the groups in order (groups.N is group N) and the named groups by name; a group that took no part is {}. {} if there is no match.', fails: 'Runtime error if arguments are not strings or pattern is an invalid regex. NOTE: "no match" is not a failure — it returns {}.', sample: 'm = REGEX_FIND("id=42", "id=(?<n>[0-9]+)")\nPRINT(m.match, m.position, m.groups.1, m.named.n)', output: 'id=42 1 42 42' },
+            { name: 'REGEX_FIND_ALL', sig: 'REGEX_FIND_ALL(s, pattern)', desc: 'Find every regex match, left to right and without overlap (spec v0.29.0).', returns: 'An array of match objects like REGEX_FIND\'s ([] if there is no match).', fails: 'Runtime error if arguments are not strings or pattern is an invalid regex.', sample: 'loop m in REGEX_FIND_ALL("id=42, id=7", "id=([0-9]+)") do\n    PRINT(m.position, m.groups.1)\nend', output: '1 42\n8 7' },
             { name: 'REPLACE', sig: 'REPLACE(s, target, replacement)', desc: 'Replace all literal occurrences of target.', returns: 'A string (literal match, not regex).', fails: 'Runtime error if any argument is not a string.', sample: 'PRINT(REPLACE("a.b.c", ".", "-"))', output: 'a-b-c' },
         ]},
         { cat: 'Array', fns: [

@@ -1147,6 +1147,50 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void serverShouldReturnRegexMatchObjects() throws Exception {
+        // Spec v0.29.0 (engine 0.38.0): REGEX_FIND returns a match object {match, position, groups,
+        // named} and REGEX_FIND_ALL an array of them; a run's result carries them as JSON.
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript(
+                "regex",
+                "1",
+                "return {\n" +
+                "  \"first\": REGEX_FIND(\"id=42, id=7\", \"id=(?<n>[0-9]+)\"),\n" +
+                "  \"all\": REGEX_FIND_ALL(\"id=42, id=7\", \"id=([0-9]+)(x)?\"),\n" +
+                "  \"none\": REGEX_FIND_ALL(\"abc\", \"[0-9]\")\n" +
+                "}\n",
+                "regex test",
+                Arrays.asList("test"),
+                true
+            );
+            String runId = (String) client.submitRun("regex", null, new LinkedHashMap<String, Object>()).get("runId");
+            Assert.assertEquals("COMPLETED", client.waitForRunTerminal(runId, 8000L).get("status"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resultData = (Map<String, Object>) client.getRunResult(runId).get("resultData");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> first = (Map<String, Object>) resultData.get("first");
+            Assert.assertEquals("id=42", first.get("match"));
+            Assert.assertEquals(1, ((Number) first.get("position")).intValue());
+            Assert.assertEquals(Arrays.asList("42"), first.get("groups"));
+            Map<String, Object> named = new LinkedHashMap<String, Object>();
+            named.put("n", "42");
+            Assert.assertEquals(named, first.get("named"));
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> all = (List<Map<String, Object>>) resultData.get("all");
+            Assert.assertEquals(2, all.size());
+            Assert.assertEquals("id=7", all.get(1).get("match"));
+            Assert.assertEquals(8, ((Number) all.get(1).get("position")).intValue());
+            // a group that took no part in the match is {}
+            Assert.assertEquals(Arrays.asList("7", new LinkedHashMap<String, Object>()), all.get(1).get("groups"));
+            Assert.assertEquals(new ArrayList<Object>(), resultData.get("none"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void serverShouldReadFileLinesArraysThroughRuns() throws Exception {
         // Spec v0.26.0 (engine 0.35.0): FILE_LINES(path) is an ordinary array the engine reads as it
         // is used — a loop streams the file, LEN counts it — and the host boundary (an explicit

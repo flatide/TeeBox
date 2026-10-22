@@ -406,6 +406,11 @@ public class TeeBoxMultiUserUiTest {
             // Spec v0.28.0 (engine 0.37.0): LIST_DIR_NAMES returns each entry's name and type.
             Assert.assertTrue("LIST_DIR_NAMES panel entry at spec v0.28.0",
                     html.contains("' .value = an array of {name, type}, sorted by name; type is \"file\", \"dir\" or \"link\".'"));
+            // Spec v0.29.0 (engine 0.38.0): REGEX_FIND returns a match object; REGEX_FIND_ALL every match.
+            Assert.assertTrue("REGEX_FIND panel entry at spec v0.29.0",
+                    html.contains("returns: 'A match object {match, position, groups, named}: "));
+            Assert.assertTrue("REGEX_FIND_ALL documented in the panel", html.contains("name: 'REGEX_FIND_ALL'"));
+            Assert.assertTrue("REGEX_FIND_ALL sample output", html.contains("output: '1 42\\n8 7'"));
             // Each sample's output is shown under it as TeeBox prints it (the engine's own messages,
             // not the playground's), marked when it varies per run or depends on the server.
             Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));

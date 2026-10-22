@@ -5425,6 +5425,13 @@ function isGenuineResult(v) {
     return v !== null && typeof v === 'object' && v[TEE_RESULT] === true;
 }
 
+// A script object's keys are its own properties. `in` would also find what every JS object
+// inherits (toString, constructor, and __proto__, which leads to Object.prototype itself), and
+// obj.hasOwnProperty(key) fails on data that has a "hasOwnProperty" key of its own.
+function hasOwnKey(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 class ModuleErrorListener extends antlr4.error.ErrorListener {
     constructor(errors) {
         super();
@@ -5447,6 +5454,28 @@ function intResult(d) {
 // fraction (".5" and "5." included), an optional exponent. Number() alone would also read
 // "0x10", "0o17", "0b101" and "Infinity" (and "" as 0), which the Java runtime rejects.
 const DECIMAL_NUMERAL = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/;
+
+// Spec v0.29.0: a regex pattern is read by RegExp without flags — no `u`, so a character outside
+// the BMP counts as two characters, as LANGUAGE.md documents. An invalid pattern is named in the
+// message, as the reference runtime names it.
+function compileRegex(fn, pattern, flags) {
+    try {
+        return new RegExp(pattern, flags);
+    } catch (e) {
+        throw new Error(`Runtime Error: ${fn}() invalid regex pattern: ${pattern}`);
+    }
+}
+
+// A regex match as {match, position, groups, named} (spec v0.29.0): position is 1-based (UTF-16
+// units, like FIND), groups.N is group N, named lists the named groups in pattern order; a group
+// that took no part in the match is {}.
+function matchObject(match) {
+    const value = (v) => (v === undefined ? {} : v);
+    const named = {};
+    // match.groups has no prototype; its keys are the group names in pattern order.
+    if (match.groups) for (const name of Object.keys(match.groups)) named[name] = value(match.groups[name]);
+    return { match: match[0], position: match.index + 1, groups: match.slice(1).map(value), named };
+}
 
 // Interpreter-dispatched names cannot be replaced by host registrations (spec v0.13.0).
 const INTERPRETER_DISPATCHED = new Set(['PRINT', 'SLEEP', 'FAIL', 'UNWRAP']);
@@ -5616,7 +5645,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
                 if (typeof arr[i] !== 'object' || arr[i] === null || Array.isArray(arr[i])) {
                     throw new Error(`Runtime Error: ${funcName}() requires an array of objects`);
                 }
-                if (!(key in arr[i])) {
+                if (!hasOwnKey(arr[i], key)) {
                     throw new Error(`Runtime Error: Property '${key}' does not exist in array element at index ${i + 1}`);
                 }
             }
@@ -5759,7 +5788,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
                     throw new Error('Runtime Error: HAS_KEY() first argument must be an object');
                 if (typeof key !== 'string')
                     throw new Error('Runtime Error: HAS_KEY() second argument must be a string');
-                return obj.hasOwnProperty(key);
+                return hasOwnKey(obj, key);
             },
             'KEYS': (obj) => {
                 if (typeof obj !== 'object' || obj === null || Array.isArray(obj))
@@ -5864,28 +5893,22 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
                 return str.lastIndexOf(sub) + 1;
             },
             'MATCHES': (str, pattern) => {
-                if (typeof str !== 'string') throw new Error('Runtime Error: MATCHES() first argument must be a string');
-                if (typeof pattern !== 'string') throw new Error('Runtime Error: MATCHES() second argument must be a string');
-                try {
-                    return new RegExp(pattern).test(str);
-                } catch (e) {
-                    throw new Error('Runtime Error: MATCHES() invalid regex pattern: ' + e.message);
-                }
+                if (typeof str !== 'string' || typeof pattern !== 'string')
+                    throw new Error('Runtime Error: MATCHES() requires a string argument');
+                return compileRegex('MATCHES', pattern).test(str);
             },
             'REGEX_FIND': (str, pattern) => {
-                if (typeof str !== 'string') throw new Error('Runtime Error: REGEX_FIND() first argument must be a string');
-                if (typeof pattern !== 'string') throw new Error('Runtime Error: REGEX_FIND() second argument must be a string');
-                try {
-                    const match = new RegExp(pattern).exec(str);
-                    if (!match) return {};
-                    const groups = [];
-                    for (let i = 0; i <= match.length - 1; i++) {
-                        groups.push(match[i] !== undefined && match[i] !== null ? match[i] : {});
-                    }
-                    return groups;
-                } catch (e) {
-                    throw new Error('Runtime Error: REGEX_FIND() invalid regex pattern: ' + e.message);
-                }
+                if (typeof str !== 'string' || typeof pattern !== 'string')
+                    throw new Error('Runtime Error: REGEX_FIND() requires a string argument');
+                const match = compileRegex('REGEX_FIND', pattern).exec(str);
+                return match ? matchObject(match) : {};
+            },
+            // matchAll resumes where the last match ended (one further after an empty match), so
+            // matches never overlap — as the reference's repeated Matcher.find() (spec v0.29.0).
+            'REGEX_FIND_ALL': (str, pattern) => {
+                if (typeof str !== 'string' || typeof pattern !== 'string')
+                    throw new Error('Runtime Error: REGEX_FIND_ALL() requires a string argument');
+                return [...str.matchAll(compileRegex('REGEX_FIND_ALL', pattern, 'g'))].map(matchObject);
             },
             'REPLACE': (str, target, replacement) => {
                 if (typeof str !== 'string') throw new Error('Runtime Error: REPLACE() first argument must be a string');
@@ -6053,7 +6076,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
         const bKeys = Object.keys(b);
         if (aKeys.length !== bKeys.length) return false;
         for (const key of aKeys) {
-            if (!b.hasOwnProperty(key) || !this._deepEqual(a[key], b[key])) return false;
+            if (!hasOwnKey(b, key) || !this._deepEqual(a[key], b[key])) return false;
         }
         return true;
     }
@@ -6676,7 +6699,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
             const key = yield* this.visit(lvalueCtx.access());
 
             if (typeof targetObj !== 'object' || targetObj === null) {
-                throw this.createError(`Cannot set property '${key}' on non-object`, ctx);
+                throw this.createError(`Property '${key}' does not exist`, ctx);
             }
             if (Array.isArray(targetObj)) {
                 if (typeof key !== 'number') {
@@ -6728,16 +6751,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
         if (lvalueCtx.constructor.name === 'PropLValueContext') {
             const targetObj = yield* this._evaluateLValueForAssignment(lvalueCtx.lvalue());
             const key = yield* this.visit(lvalueCtx.access());
-            if (targetObj === null) throw new Error(`Runtime Error: Cannot access property '${key}' of null`);
-            // Array access: convert 1-based key to 0-based index
-            if (typeof key === 'number' && Array.isArray(targetObj)) {
-                return targetObj[key - 1];
-            }
-            // Object access: integer keys become string keys
-            if (typeof key === 'number' && typeof targetObj === 'object') {
-                return targetObj[String(key)];
-            }
-            return targetObj[key];
+            return this._readMember(targetObj, key, lvalueCtx);
         }
 
         throw new Error('Runtime Error: Unknown lvalue type in assignment');
@@ -6774,18 +6788,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
     *visitPropLValue(ctx) {
         const targetObj = yield* this.visit(ctx.lvalue());
         const key = yield* this.visit(ctx.access());
-
-        if (targetObj === null) throw new Error(`Runtime Error: Cannot access property '${key}' of null`);
-        if (Array.isArray(targetObj) && typeof key !== 'number') {
-            throw this.createError('Array index must be a number, got string. Use arr.1 not arr."1"', ctx);
-        }
-        if (typeof targetObj === 'string' && typeof key !== 'number') {
-            throw this.createError('String index must be a number, got string. Use str.1 not str."1"', ctx);
-        }
-        if (typeof targetObj === 'object' && !(key in targetObj)) {
-            throw new Error(`Runtime Error: Property '${key}' does not exist`);
-        }
-        return targetObj[key];
+        return this._readMember(targetObj, key, ctx);
     }
 
     *visitIfStmt(ctx) {
@@ -6906,7 +6909,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
         } else if (typeof iterable === 'object' && iterable !== null) {
             try {
                 for (const key in iterable) {
-                    if (iterable.hasOwnProperty(key)) {
+                    if (hasOwnKey(iterable, key)) {
                         if (++iterations > maxIterations) {
                             if (this.iterationLimitBehavior === 'warn') {
                                 this.stderr(`Warning: Loop exceeded maximum iterations (${maxIterations}), stopping loop`);
@@ -6991,7 +6994,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
         } else if (typeof iterable === 'object' && iterable !== null) {
             try {
                 for (const key in iterable) {
-                    if (iterable.hasOwnProperty(key)) {
+                    if (hasOwnKey(iterable, key)) {
                         if (++iterations > maxIterations) {
                             if (this.iterationLimitBehavior === 'warn') {
                                 this.stderr(`Warning: Loop exceeded maximum iterations (${maxIterations}), stopping loop`);
@@ -7460,7 +7463,12 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
     *visitMemberAccessExpr(ctx) {
         const targetObj = yield* this.visit(ctx.expression(0));
         const key = yield* this.visit(ctx.access());
+        return this._readMember(targetObj, key, ctx);
+    }
 
+    // obj.key, for an expression and for each link of an assignment chain, as the reference reads
+    // both. An object has only its own keys; a number or boolean has no properties at all.
+    _readMember(targetObj, key, ctx) {
         if (targetObj === null) {
             throw this.createError(`Cannot access property '${key}' of null`, ctx);
         }
@@ -7473,7 +7481,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
         // Object access: integer keys become string keys (no positional access)
         if (typeof key === 'number' && typeof targetObj === 'object' && !Array.isArray(targetObj)) {
             const strKey = String(key);
-            if (!(strKey in targetObj)) {
+            if (!hasOwnKey(targetObj, strKey)) {
                 throw this.createError(`Property '${key}' does not exist`, ctx);
             }
             return targetObj[strKey];
@@ -7503,7 +7511,7 @@ class ProperTeeCustomVisitor extends ProperTeeVisitor {
             return targetObj[idx];
         }
 
-        if (typeof targetObj === 'object' && !(key in targetObj)) {
+        if (typeof targetObj !== 'object' || !hasOwnKey(targetObj, key)) {
             throw this.createError(`Property '${key}' does not exist`, ctx);
         }
 
