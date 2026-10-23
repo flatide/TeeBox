@@ -416,7 +416,13 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("TRUNC documented in the panel", html.contains("name: 'TRUNC'"));
             Assert.assertTrue("FORMAT documented in the panel", html.contains("name: 'FORMAT'"));
             Assert.assertTrue("PRINTF documented in the panel", html.contains("name: 'PRINTF'"));
-            Assert.assertTrue("PRINTF sample output", html.contains("output: 'total | 1234.50|'"));
+            // Spec v0.31.0 (engine 0.40.0): number patterns, TEXT and ALIGN_*.
+            Assert.assertTrue("PRINTF sample output", html.contains("output: 'Total: 1,234.50 won (45.6%)'"));
+            Assert.assertTrue("TEXT documented in the panel", html.contains("sig: 'TEXT(n, pattern)'"));
+            Assert.assertTrue("ALIGN_LEFT documented in the panel", html.contains("sig: 'ALIGN_LEFT(value, width)'"));
+            Assert.assertTrue("ALIGN_RIGHT documented in the panel", html.contains("sig: 'ALIGN_RIGHT(value, width)'"));
+            Assert.assertTrue("ALIGN_CENTER documented in the panel", html.contains("sig: 'ALIGN_CENTER(value, width)'"));
+            Assert.assertTrue("ALIGN_LEFT counts Hangul as two columns", html.contains("output: '[ab   ] [사과  ]'"));
             // Each sample's output is shown under it as TeeBox prints it (the engine's own messages,
             // not the playground's), marked when it varies per run or depends on the server.
             Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));

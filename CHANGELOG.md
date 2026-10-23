@@ -2,6 +2,22 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.40.0** (spec v0.31.0). **Breaking:** the
+  Python-style `{:spec}` placeholders of `FORMAT` and `PRINTF` (1.39.0) are replaced by number
+  patterns drawn as in a spreadsheet — `{0.00}` for two decimals, `{#,##0}` for thousands
+  separators, `{000}` for zero padding, `{0.0%}` for a percentage — and a 1.39.0-style placeholder
+  such as `{:.2f}` now fails the run with `FORMAT() invalid format: {:.2f}` instead of printing
+  something else. The new `TEXT(n, pattern)` writes one number that way, and `ALIGN_LEFT`, `ALIGN_RIGHT` and
+  `ALIGN_CENTER(value, width)` pad text with spaces to a width counted in screen columns, a Hangul
+  syllable taking two. The editor's built-in panel documents the new functions with their sample
+  outputs, the highlighter knows them, and the inlined browser bundle is refreshed from
+  propertee-js, so the editor's pre-check does not report them as unknown functions. The server
+  test reads `PRINTF` lines with patterns and aligned Hangul back from a run's stdout. The run
+  output view's monospace fonts have no Hangul, so in the browser a Hangul column may still not
+  line up exactly; a terminal or a CJK monospace font shows it aligned.
+
 ## 1.39.0
 
 **309 TeeBox tests (plus 26 admin UI script tests) and 145 propertee-js tests green. Packaged

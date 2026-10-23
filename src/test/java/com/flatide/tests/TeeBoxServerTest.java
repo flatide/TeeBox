@@ -1193,17 +1193,20 @@ public class TeeBoxServerTest {
     @Test
     public void serverShouldKeepPrintfLinesAndRoundToDigits() throws Exception {
         // Spec v0.30.0 (engine 0.39.0): PRINTF writes one line to the run's stdout, as PRINT does;
-        // FORMAT returns that text; ROUND/TRUNC with digits round the digits PRINT shows.
+        // FORMAT returns that text; ROUND/TRUNC with digits round the digits PRINT shows. Spec
+        // v0.31.0 (engine 0.40.0): placeholders hold number patterns, TEXT writes one number, and
+        // ALIGN_* pad to screen columns, a Hangul syllable taking two.
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             client.registerScript(
                 "format",
                 "1",
-                "PRINTF(\"{:<6}|{:>8.2f}|\", \"total\", 1234.5)\n" +
+                "PRINTF(\"{}|{}|\", ALIGN_LEFT(\"합계\", 6), ALIGN_RIGHT(TEXT(1234.5, \"#,##0.00\"), 9))\n" +
+                "PRINTF(\"{0.0%} {000}\", 0.4567, 7)\n" +
                 "PRINT(\"after\")\n" +
                 "return {\n" +
-                "  \"text\": FORMAT(\"{:,.2f}\", 1234567.891),\n" +
+                "  \"text\": FORMAT(\"{#,##0.00}\", 1234567.891),\n" +
                 "  \"round\": ROUND(2.675, 2),\n" +
                 "  \"trunc\": TRUNC(-3.48, 1),\n" +
                 "  \"tie\": ROUND(-2.5)\n" +
@@ -1215,7 +1218,7 @@ public class TeeBoxServerTest {
             String runId = (String) client.submitRun("format", null, new LinkedHashMap<String, Object>()).get("runId");
             Assert.assertEquals("COMPLETED", client.waitForRunTerminal(runId, 8000L).get("status"));
             Map<String, Object> stdout = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId + "/stdout", 200);
-            Assert.assertEquals(Arrays.asList("total | 1234.50|", "after"), stdout.get("lines"));
+            Assert.assertEquals(Arrays.asList("합계  | 1,234.50|", "45.7% 007", "after"), stdout.get("lines"));
             @SuppressWarnings("unchecked")
             Map<String, Object> resultData = (Map<String, Object>) client.getRunResult(runId).get("resultData");
             Assert.assertEquals("1,234,567.89", resultData.get("text"));
