@@ -1191,6 +1191,43 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void serverShouldKeepPrintfLinesAndRoundToDigits() throws Exception {
+        // Spec v0.30.0 (engine 0.39.0): PRINTF writes one line to the run's stdout, as PRINT does;
+        // FORMAT returns that text; ROUND/TRUNC with digits round the digits PRINT shows.
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript(
+                "format",
+                "1",
+                "PRINTF(\"{:<6}|{:>8.2f}|\", \"total\", 1234.5)\n" +
+                "PRINT(\"after\")\n" +
+                "return {\n" +
+                "  \"text\": FORMAT(\"{:,.2f}\", 1234567.891),\n" +
+                "  \"round\": ROUND(2.675, 2),\n" +
+                "  \"trunc\": TRUNC(-3.48, 1),\n" +
+                "  \"tie\": ROUND(-2.5)\n" +
+                "}\n",
+                "format test",
+                Arrays.asList("test"),
+                true
+            );
+            String runId = (String) client.submitRun("format", null, new LinkedHashMap<String, Object>()).get("runId");
+            Assert.assertEquals("COMPLETED", client.waitForRunTerminal(runId, 8000L).get("status"));
+            Map<String, Object> stdout = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId + "/stdout", 200);
+            Assert.assertEquals(Arrays.asList("total | 1234.50|", "after"), stdout.get("lines"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resultData = (Map<String, Object>) client.getRunResult(runId).get("resultData");
+            Assert.assertEquals("1,234,567.89", resultData.get("text"));
+            Assert.assertEquals(2.68, ((Number) resultData.get("round")).doubleValue(), 0.0);
+            Assert.assertEquals(-3.4, ((Number) resultData.get("trunc")).doubleValue(), 0.0);
+            Assert.assertEquals(-3, ((Number) resultData.get("tie")).intValue());
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void serverShouldReadFileLinesArraysThroughRuns() throws Exception {
         // Spec v0.26.0 (engine 0.35.0): FILE_LINES(path) is an ordinary array the engine reads as it
         // is used — a loop streams the file, LEN counts it — and the host boundary (an explicit

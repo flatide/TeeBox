@@ -411,6 +411,12 @@ public class TeeBoxMultiUserUiTest {
                     html.contains("returns: 'A match object {match, position, groups, named}: "));
             Assert.assertTrue("REGEX_FIND_ALL documented in the panel", html.contains("name: 'REGEX_FIND_ALL'"));
             Assert.assertTrue("REGEX_FIND_ALL sample output", html.contains("output: '1 42\\n8 7'"));
+            // Spec v0.30.0 (engine 0.39.0): rounding to digits, TRUNC, FORMAT and PRINTF.
+            Assert.assertTrue("ROUND panel entry at spec v0.30.0", html.contains("sig: 'ROUND(n, [digits])'"));
+            Assert.assertTrue("TRUNC documented in the panel", html.contains("name: 'TRUNC'"));
+            Assert.assertTrue("FORMAT documented in the panel", html.contains("name: 'FORMAT'"));
+            Assert.assertTrue("PRINTF documented in the panel", html.contains("name: 'PRINTF'"));
+            Assert.assertTrue("PRINTF sample output", html.contains("output: 'total | 1234.50|'"));
             // Each sample's output is shown under it as TeeBox prints it (the engine's own messages,
             // not the playground's), marked when it varies per run or depends on the server.
             Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));

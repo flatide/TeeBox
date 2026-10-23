@@ -2,6 +2,20 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.39.0** (spec v0.30.0): `ROUND`, `FLOOR` and `CEIL`
+  take an optional number of decimal places — `ROUND(3.48, 1)` is `3.5`, where the second argument
+  used to be dropped — and the new `TRUNC(n, [digits])` rounds toward zero. They round the digits
+  `PRINT` shows, so `FLOOR(0.29, 2)` is `0.29`. The new `FORMAT(format, values...)` builds text from
+  `{}` and `{:spec}` placeholders (alignment, width, zero padding, thousands separators, `{:.2f}`),
+  and `PRINTF(format, values...)` prints it as one line of the run's stdout. **Breaking:** `ROUND`
+  sends a tie away from zero, so `ROUND(-2.5)` is `-3` where it was `-2`; positive values round as
+  before. The editor's built-in panel documents the four functions with their sample outputs, the
+  highlighter knows `TRUNC`, `FORMAT` and `PRINTF`, and the inlined browser bundle is refreshed
+  byte-for-byte from propertee-js `ba07e1c`, so the editor's pre-check does not report them as
+  unknown functions. A server test reads a `PRINTF` line back from a run's stdout.
+
 ## 1.38.0
 
 - **Embedded engine upgraded to propertee2 0.38.0** (spec v0.29.0): `REGEX_FIND` returns its first
