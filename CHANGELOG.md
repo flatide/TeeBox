@@ -2,7 +2,10 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.39.0
+
+**309 TeeBox tests (plus 26 admin UI script tests) and 145 propertee-js tests green. Packaged
+with propertee2 0.39.0 at `10648540d6b3`.**
 
 - **Embedded engine upgraded to propertee2 0.39.0** (spec v0.30.0): `ROUND`, `FLOOR` and `CEIL`
   take an optional number of decimal places — `ROUND(3.48, 1)` is `3.5`, where the second argument
