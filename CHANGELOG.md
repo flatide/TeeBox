@@ -2,7 +2,10 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.40.0
+
+**309 TeeBox tests (plus 26 admin UI script tests) and 148 propertee-js tests green. Packaged
+with propertee2 0.40.0 at `5bfc623bbee0`.**
 
 - **Embedded engine upgraded to propertee2 0.40.0** (spec v0.31.0). **Breaking:** the
   Python-style `{:spec}` placeholders of `FORMAT` and `PRINTF` (1.39.0) are replaced by number
