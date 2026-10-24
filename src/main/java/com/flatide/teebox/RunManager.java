@@ -5,6 +5,7 @@ import com.flatide.propertee2.scheduler.ThreadContext;
 import com.flatide.propertee2.task.Task;
 import com.flatide.propertee2.task.TaskInfo;
 import com.flatide.propertee2.task.TaskObservation;
+import com.flatide.propertee2.value.TeeFormat;
 import com.flatide.teebox.lifecycle.TaskLifecycle;
 import com.flatide.teebox.webhook.WebhookDispatcher;
 import com.flatide.teebox.webhook.WebhookHttpClient;
@@ -188,6 +189,13 @@ public class RunManager {
             throw new IllegalStateException("Server is shutting down; new runs are rejected");
         }
         final ResolvedRunTarget target = resolveRunTarget(request);
+        // An input number past the double range, such as 1e999, reads as Infinity, which JSON has
+        // no form for: the run could not be saved, so the request is refused before it exists.
+        TeeFormat.NonFinite outOfRange = TeeFormat.firstNonFinite(request.props, "props");
+        if (outOfRange != null) {
+            throw new IllegalArgumentException(outOfRange.path() + " is " + outOfRange.number()
+                + " (a number out of range), which JSON cannot represent");
+        }
         final RunInfo run = new RunInfo();
         run.runId = createRunId();
         run.scriptPath = target.displayPath;

@@ -40,7 +40,12 @@ public class RunRegistry {
 
     public void register(RunInfo run) {
         runs.put(run.runId, run);
-        persistRun(run);
+        try {
+            persistRun(run);
+        } catch (RuntimeException e) {
+            runs.remove(run.runId);   // a run that cannot be saved is not left behind, QUEUED forever
+            throw e;
+        }
     }
 
     /** Register a script-editor debug attempt in memory only. It participates in the normal run
@@ -394,6 +399,11 @@ public class RunRegistry {
             run.status = RunStatus.FAILED;
             run.endedAt = Long.valueOf(System.currentTimeMillis());
             run.errorMessage = message != null ? message : "Unknown error";
+            // A failed run has no result. Clearing it also lets this record persist when a
+            // markCompleted could not be saved: its result stays in memory, and saving it again
+            // would fail the same way, leaving the run file at RUNNING.
+            run.resultData = null;
+            run.resultSummary = null;
             persistRun(run);
         }
     }
@@ -403,6 +413,10 @@ public class RunRegistry {
             run.status = RunStatus.CANCELLED;
             run.endedAt = Long.valueOf(System.currentTimeMillis());
             run.errorMessage = message != null ? message : "Cancelled";
+            // As in markFailed: a cancel latched while a markCompleted could not be saved must not
+            // carry that result into its own save.
+            run.resultData = null;
+            run.resultSummary = null;
             persistRun(run);
         }
     }

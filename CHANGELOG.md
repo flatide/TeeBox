@@ -2,6 +2,39 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.41.0** (spec v0.32.0). `JSON_FORMAT`,
+  `WRITE_JSON_FILE` and an HTTP request body that is not a string now fail the run on Infinity,
+  -Infinity or NaN, with an error that names the first one and where it is —
+  `JSON_FORMAT() value.rows.2.rate is Infinity, which JSON cannot represent` — where 1.40.0 wrote
+  the tokens `Infinity` and `NaN`, which no JSON reader accepts (not even `READ_JSON_FILE`).
+  `WRITE_JSON_FILE` then writes nothing, and the request is not sent. The editor's reference panel
+  says so under `JSON_FORMAT`, `WRITE_JSON_FILE`, `HTTP_POST` and `HTTP`, and the inlined browser
+  bundle is refreshed from propertee-js.
+- **A run whose result holds Infinity or NaN now fails cleanly.** JSON has no form for these
+  numbers, which arithmetic past the double range produces — `return TO_NUMBER("1e308") * 10`, or
+  `CEIL(TO_NUMBER("1.7976931348623157e308"), -308)` since 1.39.0. Such a result used to fail
+  every save:
+  - the run read `FAILED` in memory with the number still attached;
+  - its file stayed `RUNNING`;
+  - `GET /api/client/runs/{id}/result` answered 400 with Gson's message.
+
+  `ScriptExecutor` now checks the result before it is kept, with the engine's
+  `TeeFormat.firstNonFinite`. The run ends `FAILED` with an error that names the number and where
+  it is — `The result contains NaN at result.list.2, which JSON cannot represent` — and the failure
+  is saved and served like any other.
+- **A failed or cancelled run keeps no result.** `markFailed` and `markCancelled` clear it, so a
+  failure or cancel recorded after a completion that could not be saved is itself saved instead of
+  failing the same way.
+- **Run inputs past the range of numbers are refused.** A submitted `props` value such as `1e999`
+  reads as Infinity, so the run could not be saved: the client got Gson's message
+  (`-Infinity is not a valid double value as per JSON specification…`) while the run stayed
+  `QUEUED` in memory and a partial `.json.tmp` stayed in the runs directory. The request now
+  answers 400 before a run exists — `props.x.2 is -Infinity (a number out of range), which JSON
+  cannot represent` — and as a backstop a run that cannot be saved is not registered, and a failed
+  save leaves no partial file.
+
 ## 1.40.0
 
 **309 TeeBox tests (plus 26 admin UI script tests) and 148 propertee-js tests green. Packaged

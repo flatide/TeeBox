@@ -1231,6 +1231,74 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void serverShouldFailRunWhoseResultJsonCannotRepresent() throws Exception {
+        // JSON has no Infinity or NaN, which arithmetic past the double range produces (CEIL with
+        // digits -308 included). Such a result fails the run with a message naming the number and
+        // where it is; the failure is saved (the run file used to stay RUNNING) and the result
+        // endpoint answers 200 with it (it used to answer 400). JSON_FORMAT in the script fails too.
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            String[][] cases = {
+                { "nonfinite_top", "return CEIL(TO_NUMBER(\"1.7976931348623157e308\"), -308)\n",
+                  "The result is Infinity, which JSON cannot represent" },
+                { "nonfinite_nested", "big = TO_NUMBER(\"1e308\") * 10\n"
+                      + "return {\"ok\": 1, \"list\": [1, big - big], \"later\": -big}\n",
+                  "The result contains NaN at result.list.2, which JSON cannot represent" },
+                { "nonfinite_variable", "big = TO_NUMBER(\"1e308\") * 10\nresult = {\"my key\": [-big]}\n",
+                  "The result contains -Infinity at result.\"my key\".1, which JSON cannot represent" },
+                // spec v0.32.0 (engine 0.41.0): the script's own JSON_FORMAT fails the same way
+                { "nonfinite_json_format", "big = TO_NUMBER(\"1e308\") * 10\n"
+                      + "PRINT(JSON_FORMAT({\"rows\": [{\"rate\": big}]}))\nreturn 1\n",
+                  "Runtime Error: JSON_FORMAT() value.rows.1.rate is Infinity, which JSON cannot represent" },
+            };
+            for (String[] c : cases) {
+                client.registerScript(c[0], "1", c[1], "non-finite result", Arrays.asList("test"), true);
+                String runId = (String) client.submitRun(c[0], null, new LinkedHashMap<String, Object>()).get("runId");
+                Assert.assertEquals(c[0], "FAILED", client.waitForRunTerminal(runId, 8000L).get("status"));
+                Map<String, Object> result = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId + "/result", 200);
+                Assert.assertEquals(c[0], c[2], result.get("errorMessage"));
+                Assert.assertNull(c[0] + " keeps no result", result.get("resultData"));
+                @SuppressWarnings("unchecked")
+                Map<String, Object> envelope = (Map<String, Object>) result.get("result");
+                Assert.assertEquals(c[0], Boolean.FALSE, envelope.get("ok"));
+                Assert.assertEquals(c[0], c[2], envelope.get("value"));
+                String runJson = new String(Files.readAllBytes(
+                    new File(new File(testServer.dataDir, "runs"), runId + ".json").toPath()), "UTF-8");
+                Assert.assertTrue(c[0] + " saved as FAILED, got: " + firstStatus(runJson),
+                    runJson.contains("\"status\": \"FAILED\""));
+            }
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
+    public void serverShouldRefuseRunPropsJsonCannotRepresent() throws Exception {
+        // An input number past the double range (1e999) reads as Infinity, which JSON has no form
+        // for. Such a run could not be saved: the client used to get Gson's message while the run
+        // stayed QUEUED in memory and a partial .json.tmp stayed on disk. Now the request is refused
+        // before a run exists.
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("echo_props", "1", "return x\n", "props echo", Arrays.asList("test"), true);
+            String url = testServer.baseUrl + "/api/client/scripts/echo_props/runs";
+            Map<String, Object> refused = postRawJson(url, "{\"props\": {\"x\": [1, -1e999]}}", 400);
+            Assert.assertEquals("props.x.2 is -Infinity (a number out of range), which JSON cannot represent",
+                refused.get("error"));
+            Assert.assertTrue("no run is listed", getJsonList(testServer.baseUrl + "/api/client/runs", 200).isEmpty());
+            String[] files = new File(testServer.dataDir, "runs").list();
+            Assert.assertTrue("no run file is left: " + Arrays.toString(files), files == null || files.length == 0);
+            // the largest double is a number like any other
+            Map<String, Object> accepted = postRawJson(url, "{\"props\": {\"x\": 1.7976931348623157e308}}", 202);
+            Assert.assertEquals("COMPLETED", client.waitForRunTerminal((String) accepted.get("runId"), 8000L).get("status"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void serverShouldReadFileLinesArraysThroughRuns() throws Exception {
         // Spec v0.26.0 (engine 0.35.0): FILE_LINES(path) is an ordinary array the engine reads as it
         // is used — a loop streams the file, LEN counts it — and the host boundary (an explicit
@@ -2302,6 +2370,29 @@ public class TeeBoxServerTest {
         int status = conn.getResponseCode();
         Assert.assertEquals(expectedStatus, status);
         return readJsonMap(conn);
+    }
+
+    /** POST a JSON body as written, for numbers Gson would not write (1e999). */
+    private Map<String, Object> postRawJson(String url, String json, int expectedStatus) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+        OutputStream out = conn.getOutputStream();
+        try {
+            out.write(json.getBytes("UTF-8"));
+        } finally {
+            out.close();
+        }
+        int status = conn.getResponseCode();
+        Assert.assertEquals(expectedStatus, status);
+        InputStream input = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
+        try {
+            return gson.fromJson(readAll(input), mapType);
+        } finally {
+            input.close();
+            conn.disconnect();
+        }
     }
 
     /** POST with an empty body, assert a 302, and return the Location header. */

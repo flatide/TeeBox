@@ -107,6 +107,19 @@ public class RunStore {
                 tmp.delete();
             }
             throw new RuntimeException("Failed to save run " + run.runId + ": " + e.getMessage(), e);
+        } catch (RuntimeException e) {
+            // Gson refusing a value (Infinity, NaN) fails mid-write; leave no partial file behind
+            if (writer != null) {
+                try {
+                    writer.close();
+                } catch (IOException ignore) {
+                }
+                writer = null;
+            }
+            if (tmp.exists()) {
+                tmp.delete();
+            }
+            throw e;
         } finally {
             if (writer != null) {
                 try {

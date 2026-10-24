@@ -10,6 +10,7 @@ import com.flatide.propertee2.scheduler.Scheduler;
 import com.flatide.propertee2.scheduler.SchedulerListener;
 import com.flatide.propertee2.scheduler.ThreadContext;
 import com.flatide.propertee2.task.TaskRunner;
+import com.flatide.propertee2.value.TeeFormat;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -224,6 +225,10 @@ public class ScriptExecutor {
             } else {
                 outputData = new LinkedHashMap<String, Object>();
             }
+            String unstorable = nonFiniteResultMessage(outputData);
+            if (unstorable != null) {
+                return ExecutionResult.failed(unstorable);
+            }
             return ExecutionResult.completed(mainStepper.hasExplicitReturn(), outputData);
         } catch (com.flatide.propertee2.runtime.ProperTeeAborted aborted) {
             // Host-initiated cancel — deliberately NOT a script error (the Throwable arm below
@@ -240,6 +245,24 @@ public class ScriptExecutor {
                 visitor.builtins.shutdown();
             }
         }
+    }
+
+    /**
+     * The run's error message when its result holds a number JSON has no form for — Infinity,
+     * -Infinity or NaN, which arithmetic past the double range produces (TO_NUMBER("1e308") * 10,
+     * CEIL(TO_NUMBER("1.7976931348623157e308"), -308), Infinity - Infinity) — or null. Such a result
+     * could be neither saved nor served, so the run fails with a message naming the first one, at a
+     * path written the way a script reaches it (result.list.2, 1-based), as the engine's JSON_FORMAT
+     * does since spec v0.32.0.
+     */
+    private static String nonFiniteResultMessage(Object result) {
+        TeeFormat.NonFinite found = TeeFormat.firstNonFinite(result, "result");
+        if (found == null) {
+            return null;
+        }
+        return found.path().equals("result")
+            ? "The result is " + found.number() + ", which JSON cannot represent"
+            : "The result contains " + found.number() + " at " + found.path() + ", which JSON cannot represent";
     }
 
     public interface Callbacks {

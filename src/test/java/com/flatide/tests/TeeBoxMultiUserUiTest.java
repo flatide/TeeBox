@@ -423,6 +423,11 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("ALIGN_RIGHT documented in the panel", html.contains("sig: 'ALIGN_RIGHT(value, width)'"));
             Assert.assertTrue("ALIGN_CENTER documented in the panel", html.contains("sig: 'ALIGN_CENTER(value, width)'"));
             Assert.assertTrue("ALIGN_LEFT counts Hangul as two columns", html.contains("output: '[ab   ] [사과  ]'"));
+            // Spec v0.32.0 (engine 0.41.0): JSON has no Infinity or NaN.
+            Assert.assertTrue("JSON_FORMAT panel entry at spec v0.32.0", html.contains(
+                    "fails: 'Runtime error if the value holds Infinity, -Infinity or NaN, which JSON cannot represent (spec v0.32.0)"));
+            Assert.assertTrue("WRITE_JSON_FILE panel entry at spec v0.32.0", html.contains(
+                    "Runtime error if value holds Infinity, -Infinity or NaN, and nothing is written (spec v0.32.0).'"));
             // Each sample's output is shown under it as TeeBox prints it (the engine's own messages,
             // not the playground's), marked when it varies per run or depends on the server.
             Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));
