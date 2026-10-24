@@ -1299,6 +1299,42 @@ public class TeeBoxServerTest {
     }
 
     @Test
+    public void serverShouldTreatNumbersPast32BitsAsIntegers() throws Exception {
+        // Spec v0.33.0 (engine 0.42.0): integers run to ±9,007,199,254,740,991, so sizes past
+        // 2 GiB add up from 0. Whole input numbers inside the range are integers, one past it the
+        // nearest decimal, and a result's integers are written as integers, where a Double past 32
+        // bits used to come out as 3.301534883328E12.
+        TestServer testServer = createServer();
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("sizes", "1",
+                "total = 0\n" +
+                "loop s in sizes do\n" +
+                "    total = total + s\n" +
+                "end\n" +
+                "return {\"total\": total, \"next\": total + 1, \"tb\": 1024 * 1024 * 1024 * 1024, \"big\": big + 1}\n",
+                "integers past 32 bits", Arrays.asList("test"), true);
+            Map<String, Object> accepted = postRawJson(testServer.baseUrl + "/api/client/scripts/sizes/runs",
+                "{\"props\": {\"sizes\": [1500000000, 1500000000, 3298534883328], \"big\": 9007199254740993}}", 202);
+            String runId = (String) accepted.get("runId");
+            Assert.assertEquals("COMPLETED", client.waitForRunTerminal(runId, 8000L).get("status"));
+            String json = getHtml(testServer.baseUrl + "/api/client/runs/" + runId + "/result", 200);
+            Assert.assertTrue(json, json.matches("(?s).*\"total\":\\s*3301534883328[,}\\s].*"));
+            Assert.assertTrue(json, json.matches("(?s).*\"next\":\\s*3301534883329[,}\\s].*"));
+            Assert.assertTrue(json, json.matches("(?s).*\"tb\":\\s*1099511627776[,}\\s].*"));
+            Map<String, Object> body = gson.fromJson(json, mapType);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> resultData = (Map<String, Object>) body.get("resultData");
+            Assert.assertEquals(9007199254740992.0, ((Number) resultData.get("big")).doubleValue(), 0.0);
+            String runJson = new String(Files.readAllBytes(
+                new File(new File(testServer.dataDir, "runs"), runId + ".json").toPath()), "UTF-8");
+            Assert.assertTrue(runJson, runJson.matches("(?s).*\"total\":\\s*3301534883328[,}\\s].*"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    @Test
     public void serverShouldReadFileLinesArraysThroughRuns() throws Exception {
         // Spec v0.26.0 (engine 0.35.0): FILE_LINES(path) is an ordinary array the engine reads as it
         // is used — a loop streams the file, LEN counts it — and the host boundary (an explicit

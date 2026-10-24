@@ -56,6 +56,20 @@ public class ThumbnailerTest {
     }
 
     @Test
+    public void aSizePast32BitsIsNotWrappedAround() throws Exception {
+        // Spec v0.33.0: a script's integer can be a Long past 32 bits; 4294967297 used to wrap to 1
+        File dir = Files.createTempDirectory("thumb").toFile();
+        File src = makePng(dir, "src.png", 100, 50);
+        File dest = new File(dir, "thumb.png");
+
+        Map<String, Object> r = Thumbnailer.create(
+            Arrays.asList(src.getPath(), dest.getPath(), 4294967297L, 3000000000L), policy(dir));
+
+        assertEquals(100, r.get("width"));     // bounded by nothing it can reach: the source size
+        assertEquals(50, r.get("height"));
+    }
+
+    @Test
     public void neverUpscalesASmallImage() throws Exception {
         File dir = Files.createTempDirectory("thumb").toFile();
         File src = makePng(dir, "src.png", 10, 10);

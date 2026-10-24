@@ -83,8 +83,12 @@ final class Thumbnailer {
         return result;
     }
 
+    /**
+     * A size argument as an int, saturated: since spec v0.33.0 an integer can be a Long past 32
+     * bits, whose intValue() would wrap around (4294967297 to 1, 3000000000 negative).
+     */
     private static int intArg(Object value, String name) {
-        if (value instanceof Number) return ((Number) value).intValue();
+        if (value instanceof Number) return (int) ((Number) value).doubleValue();   // a double's cast saturates
         throw new RuntimeException("THUMBNAIL() " + name + " must be a number");
     }
 }

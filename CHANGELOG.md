@@ -4,6 +4,26 @@ All notable changes to TeeBox are documented here.
 
 ## Unreleased
 
+- **Embedded engine upgraded to propertee2 0.42.0** (spec v0.33.0). Integers run to
+  ±9,007,199,254,740,991 instead of ±2,147,483,647, so a total of file sizes past 2 GiB can start
+  from `0` and `1024 * 1024 * 1024 * 1024` is just 1 TiB; an overflow names the limit
+  (`Integer overflow: the result is outside ±9,007,199,254,740,991`). `MILTIME()` and file sizes and
+  times are integers, `RANDOM` takes integer bounds past 32 bits (it returned 2147483647 for them)
+  and refuses a fractional bound (it cut it toward zero), and
+  `SUBSTRING`/`SLICE` positions past 32 bits clamp instead of returning nothing. The reference panel's
+  `RANDOM`, `MILTIME` and `FILE_INFO` entries say so, and the inlined browser bundle is refreshed from
+  propertee-js.
+- **Run inputs past 32 bits are integers.** A whole `props` number inside the new range — a size
+  such as `3298534883328` — reaches the script as an integer, as the engine boxes it (an `Integer`
+  within 32 bits, a `Long` beyond); one past the range stays a decimal, as `JSON_PARSE` reads it.
+  Before, a whole number past 32 bits was a decimal.
+- **`THUMBNAIL` sizes past 32 bits no longer wrap around.** A script's integer can now be a `Long`
+  past 32 bits, whose `intValue()` wrapped — `THUMBNAIL(src, dst, 4294967297)` made a 1-pixel
+  thumbnail and `3000000000` failed as below 1. The size now saturates, so such a bound leaves the
+  image at its own size.
+- **A result's integers past 32 bits are written as integers.** They were decimals, which the API
+  wrote in exponent form — a run returning `MILTIME()` gave `1.792834328647E12`; now it gives
+  `1792834328647`.
 - **Embedded engine upgraded to propertee2 0.41.0** (spec v0.32.0). `JSON_FORMAT`,
   `WRITE_JSON_FILE` and an HTTP request body that is not a string now fail the run on Infinity,
   -Infinity or NaN, with an error that names the first one and where it is —

@@ -428,6 +428,10 @@ public class TeeBoxMultiUserUiTest {
                     "fails: 'Runtime error if the value holds Infinity, -Infinity or NaN, which JSON cannot represent (spec v0.32.0)"));
             Assert.assertTrue("WRITE_JSON_FILE panel entry at spec v0.32.0", html.contains(
                     "Runtime error if value holds Infinity, -Infinity or NaN, and nothing is written (spec v0.32.0).'"));
+            // Spec v0.33.0 (engine 0.42.0): integers run to ±9,007,199,254,740,991.
+            Assert.assertTrue("RANDOM panel entry at spec v0.33.0", html.contains(
+                    "a bound is not an integer within ±9,007,199,254,740,991, or min > max.'"));
+            Assert.assertTrue("MILTIME is an integer", html.contains("returns: 'An integer (epoch milliseconds).'"));
             // Each sample's output is shown under it as TeeBox prints it (the engine's own messages,
             // not the playground's), marked when it varies per run or depends on the server.
             Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));

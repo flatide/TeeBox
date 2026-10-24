@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.flatide.propertee2.task.TaskInfo;
 import com.flatide.propertee2.task.TaskObservation;
+import com.flatide.propertee2.value.Values;
 import com.flatide.teebox.webhook.WebhookDispatcher;
 import com.flatide.teebox.webhook.WebhookTarget;
 import com.sun.net.httpserver.Headers;
@@ -2042,12 +2043,7 @@ public class TeeBoxServer {
         for (Map.Entry<String, Object> entry : source.entrySet()) {
             Object value = entry.getValue();
             if (value instanceof Double) {
-                double d = ((Double) value).doubleValue();
-                if (d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
-                    normalized.put(entry.getKey(), Integer.valueOf((int) d));
-                } else {
-                    normalized.put(entry.getKey(), value);
-                }
+                normalized.put(entry.getKey(), normalizeNumber((Double) value));
             } else if (value instanceof Map) {
                 normalized.put(entry.getKey(), normalizeNumbers((Map<String, Object>) value));
             } else if (value instanceof List) {
@@ -2059,17 +2055,26 @@ public class TeeBoxServer {
         return normalized;
     }
 
+    /**
+     * Gson reads every JSON number as a Double. A whole one inside the language's integer range
+     * (±9,007,199,254,740,991, spec v0.33.0) becomes an integer, boxed as the engine boxes it — an
+     * Integer within 32 bits, a Long beyond — so a script can add sizes past 2 GiB from 0; any other
+     * number stays a Double, as JSON_PARSE reads it.
+     */
+    private static Object normalizeNumber(Double value) {
+        double d = value.doubleValue();
+        if (d == Math.rint(d) && Math.abs(d) <= Values.MAX_INTEGER) {
+            return Values.integer((long) d);
+        }
+        return value;
+    }
+
     @SuppressWarnings("unchecked")
     private List<Object> normalizeList(List<Object> list) {
         List<Object> normalized = new ArrayList<Object>();
         for (Object value : list) {
             if (value instanceof Double) {
-                double d = ((Double) value).doubleValue();
-                if (d == Math.rint(d) && d >= Integer.MIN_VALUE && d <= Integer.MAX_VALUE) {
-                    normalized.add(Integer.valueOf((int) d));
-                } else {
-                    normalized.add(value);
-                }
+                normalized.add(normalizeNumber((Double) value));
             } else if (value instanceof Map) {
                 normalized.add(normalizeNumbers((Map<String, Object>) value));
             } else if (value instanceof List) {
