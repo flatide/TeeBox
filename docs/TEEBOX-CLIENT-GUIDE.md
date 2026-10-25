@@ -502,12 +502,13 @@ String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING
 }
 ```
 
-> **Numbers JSON cannot hold**: JSON has no Infinity or NaN. A run whose result contains one —
-> arithmetic past the range of numbers, such as `return TO_NUMBER("1e308") * 10` — ends `FAILED`,
-> and `errorMessage` names the number and where it is:
-> `The result contains NaN at result.list.2, which JSON cannot represent`. Check such values in the
-> script, or return them as text (`TO_STRING`). Inputs likewise: a `props` number past that range,
-> such as `1e999`, is refused with 400 —
+> **Numbers JSON cannot hold**: JSON has no Infinity or NaN, and since engine 0.45.0 (spec
+> v0.36.0) a script cannot make one: arithmetic past the range of numbers, such as
+> `return TO_NUMBER("1e308") * 10`, ends the run `FAILED` with `errorMessage`
+> `Runtime Error at line 1:7: Number overflow: the result is too large to represent`. (Before, the
+> result held Infinity and the run failed with
+> `The result is Infinity, which JSON cannot represent`.) Inputs likewise: a `props` number past
+> that range, such as `1e999`, is refused with 400 —
 > `props.x is Infinity (a number out of range), which JSON cannot represent` — and no run is made.
 
 > **Result retention (server-side)**: a terminal run's `resultData` stays fetchable until the run

@@ -504,13 +504,13 @@ String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING
 }
 ```
 
-> **JSON에 없는 수**: JSON에는 Infinity와 NaN이 없습니다. 결과에 이런 수가 들어 있는 run 은 —
-> `return TO_NUMBER("1e308") * 10`처럼 수의 범위를 넘는 계산 — `FAILED`로 끝나고, `errorMessage`가
-> 그 수와 위치를 알려 줍니다:
-> `The result contains NaN at result.list.2, which JSON cannot represent`. 스크립트에서 값을
-> 확인하거나 글자로 바꿔(`TO_STRING`) 반환하세요. 입력도 마찬가지입니다: `1e999`처럼 범위를 넘는
-> `props` 수는 400으로 거절되고 run 은 만들어지지 않습니다 —
-> `props.x is Infinity (a number out of range), which JSON cannot represent`.
+> **JSON에 없는 수**: JSON에는 Infinity와 NaN이 없고, 엔진 0.45.0(스펙 v0.36.0)부터는 스크립트가
+> 이런 수를 만들 수 없습니다: `return TO_NUMBER("1e308") * 10`처럼 수의 범위를 넘는 계산은 run 을
+> `FAILED`로 끝내고, `errorMessage`는
+> `Runtime Error at line 1:7: Number overflow: the result is too large to represent`입니다. (전에는
+> 결과에 Infinity가 들어가 `The result is Infinity, which JSON cannot represent`로 실패했습니다.)
+> 입력도 마찬가지입니다: `1e999`처럼 범위를 넘는 `props` 수는 400으로 거절되고 run 은 만들어지지
+> 않습니다 — `props.x is Infinity (a number out of range), which JSON cannot represent`.
 
 > **결과 보존 기간(서버 측)**: 종료된 run 의 `resultData` 는 run 이 **완전 삭제(purge)될 때까지**
 > 조회할 수 있습니다(서버 기본 7일, `runArchiveRetentionMs`). **1.15.1 미만 서버**에서는

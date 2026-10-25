@@ -423,11 +423,15 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("ALIGN_RIGHT documented in the panel", html.contains("sig: 'ALIGN_RIGHT(value, width)'"));
             Assert.assertTrue("ALIGN_CENTER documented in the panel", html.contains("sig: 'ALIGN_CENTER(value, width)'"));
             Assert.assertTrue("ALIGN_LEFT counts Hangul as two columns", html.contains("output: '[ab   ] [사과  ]'"));
-            // Spec v0.32.0 (engine 0.41.0): JSON has no Infinity or NaN.
-            Assert.assertTrue("JSON_FORMAT panel entry at spec v0.32.0", html.contains(
-                    "fails: 'Runtime error if the value holds Infinity, -Infinity or NaN, which JSON cannot represent (spec v0.32.0)"));
-            Assert.assertTrue("WRITE_JSON_FILE panel entry at spec v0.32.0", html.contains(
-                    "Runtime error if value holds Infinity, -Infinity or NaN, and nothing is written (spec v0.32.0).'"));
+            // Spec v0.36.0 (engine 0.45.0): numbers are finite, so JSON can write every value
+            // (spec v0.32.0's Infinity/NaN notes are gone), and SUM, MAX and MIN take arrays.
+            Assert.assertTrue("JSON_FORMAT panel entry at spec v0.36.0", html.contains(
+                    "fails: 'None: every value can be written, since numbers are finite (spec v0.36.0).'"));
+            Assert.assertFalse("no Infinity notes left in the panel", html.contains("holds Infinity, -Infinity or NaN"));
+            Assert.assertTrue("MIN panel entry at spec v0.36.0", html.contains(
+                    "so MIN(prices) is the lowest price (spec v0.36.0).'"));
+            Assert.assertTrue("SLEEP panel entry at spec v0.36.0", html.contains(
+                    "fails: 'Runtime error if ms is not a number or is negative (spec v0.36.0).'"));
             // Spec v0.33.0 (engine 0.42.0): integers run to ±9,007,199,254,740,991.
             Assert.assertTrue("RANDOM panel entry at spec v0.33.0", html.contains(
                     "a bound is not an integer within ±9,007,199,254,740,991, or min > max.'"));
@@ -445,7 +449,7 @@ public class TeeBoxMultiUserUiTest {
             // Each sample's output is shown under it as TeeBox prints it (the engine's own messages,
             // not the playground's), marked when it varies per run or depends on the server.
             Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));
-            Assert.assertTrue("SUM sample output", html.contains("sample: 'PRINT(SUM(1, 2, 3))', output: '6'"));
+            Assert.assertTrue("SUM sample output", html.contains("sample: 'PRINT(SUM(1, 2, 3), SUM([1, 2, 3]))', output: '6 6'"));
             Assert.assertTrue("FAIL sample output is the engine's message", html.contains(
                     "output: 'Runtime Error at line 3:4: config parse failed: Invalid JSON: expected object key at position 1'"));
             Assert.assertTrue("outputs that vary per run are marked", html.contains("outputNote: 'varies'"));

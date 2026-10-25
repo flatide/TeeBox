@@ -1232,25 +1232,21 @@ public class TeeBoxServerTest {
 
     @Test
     public void serverShouldFailRunWhoseResultJsonCannotRepresent() throws Exception {
-        // JSON has no Infinity or NaN, which arithmetic past the double range produces (CEIL with
-        // digits -308 included). Such a result fails the run with a message naming the number and
-        // where it is; the failure is saved (the run file used to stay RUNNING) and the result
-        // endpoint answers 200 with it (it used to answer 400). JSON_FORMAT in the script fails too.
+        // JSON has no Infinity or NaN, which arithmetic past the double range produced (CEIL with
+        // digits -308 included); such a result failed the run with a message naming the number and
+        // where it was (ScriptExecutor still checks). Since spec v0.36.0 (engine 0.45.0) a script
+        // cannot make one: the arithmetic fails the run. Either way the failure is saved (the run
+        // file used to stay RUNNING) and the result endpoint answers 200 with it (it used to answer
+        // 400).
         TestServer testServer = createServer();
         try {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             String[][] cases = {
                 { "nonfinite_top", "return CEIL(TO_NUMBER(\"1.7976931348623157e308\"), -308)\n",
-                  "The result is Infinity, which JSON cannot represent" },
+                  "Runtime Error: Number overflow: the result is too large to represent" },
                 { "nonfinite_nested", "big = TO_NUMBER(\"1e308\") * 10\n"
                       + "return {\"ok\": 1, \"list\": [1, big - big], \"later\": -big}\n",
-                  "The result contains NaN at result.list.2, which JSON cannot represent" },
-                { "nonfinite_variable", "big = TO_NUMBER(\"1e308\") * 10\nresult = {\"my key\": [-big]}\n",
-                  "The result contains -Infinity at result.\"my key\".1, which JSON cannot represent" },
-                // spec v0.32.0 (engine 0.41.0): the script's own JSON_FORMAT fails the same way
-                { "nonfinite_json_format", "big = TO_NUMBER(\"1e308\") * 10\n"
-                      + "PRINT(JSON_FORMAT({\"rows\": [{\"rate\": big}]}))\nreturn 1\n",
-                  "Runtime Error: JSON_FORMAT() value.rows.1.rate is Infinity, which JSON cannot represent" },
+                  "Runtime Error at line 1:6: Number overflow: the result is too large to represent" },
             };
             for (String[] c : cases) {
                 client.registerScript(c[0], "1", c[1], "non-finite result", Arrays.asList("test"), true);

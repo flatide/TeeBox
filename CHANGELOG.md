@@ -4,6 +4,16 @@ All notable changes to TeeBox are documented here.
 
 ## Unreleased
 
+- **Embedded engine upgraded to propertee2 0.45.0** (spec v0.36.0, breaking). Numbers are finite:
+  decimal arithmetic past about 1.8 × 10³⁰⁸ fails the run with
+  `Number overflow: the result is too large to represent` where it made `Infinity` — and
+  `Infinity - Infinity` `NaN` — which the run then could not save as JSON. A host value holding
+  Infinity or NaN is refused where it comes in. `SUM`, `MAX` and `MIN` take arrays (`MIN(prices)`),
+  `MAX()`/`MIN([])` say `requires at least one number`, and a negative `SLEEP` is an error. The
+  reference panel's `SUM`, `MAX`, `MIN` and `SLEEP` entries give the rules, the Infinity notes on
+  `JSON_FORMAT`, `WRITE_JSON_FILE`, `HTTP_POST` and `HTTP` are gone, and the inlined browser bundle
+  is refreshed from propertee-js. `ScriptExecutor`'s check of a result for Infinity or NaN stays as
+  a guard.
 - **Embedded engine upgraded to propertee2 0.44.0** (spec v0.35.0, mildly breaking). `JSON_PARSE`
   and `READ_JSON_FILE` give an error Result for a numeral too large to represent, naming where it
   is (`JSON_PARSE() value.rows.2.size is a number too large to represent`), where `1e999` came
