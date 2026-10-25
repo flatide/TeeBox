@@ -4,6 +4,15 @@ All notable changes to TeeBox are documented here.
 
 ## Unreleased
 
+- **Embedded engine upgraded to propertee2 0.43.0** (spec v0.34.0, breaking). `SUBSTRING` and
+  `SLICE` refuse a start below 1, a negative length or count, and a fraction — a run stops at that
+  line with `SUBSTRING() start must be an integer of 1 or more` (or `length`/`count … of 0 or
+  more`) where `SUBSTRING("hello", 0, 3)` silently gave `"hel"`. An array or string index must be
+  an integer too (`Array index must be an integer`), where `1.5` was cut to `1`, and a string index
+  error says `String index …`. A position past the end still gives less. `RANDOM(min, max)` now
+  gives every integer over a span past 2⁵³, where the whole range gave only odd numbers. The
+  reference panel's `SUBSTRING` and `SLICE` entries give the new rules, and the inlined browser
+  bundle is refreshed from propertee-js.
 - **Embedded engine upgraded to propertee2 0.42.0** (spec v0.33.0). Integers run to
   ±9,007,199,254,740,991 instead of ±2,147,483,647, so a total of file sizes past 2 GiB can start
   from `0` and `1024 * 1024 * 1024 * 1024` is just 1 TiB; an overflow names the limit

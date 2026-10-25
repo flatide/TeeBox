@@ -432,6 +432,11 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("RANDOM panel entry at spec v0.33.0", html.contains(
                     "a bound is not an integer within ±9,007,199,254,740,991, or min > max.'"));
             Assert.assertTrue("MILTIME is an integer", html.contains("returns: 'An integer (epoch milliseconds).'"));
+            // Spec v0.34.0 (engine 0.43.0): positions must be integers in range.
+            Assert.assertTrue("SUBSTRING panel entry at spec v0.34.0", html.contains(
+                    "start is not an integer of 1 or more, or length is not an integer of 0 or more (spec v0.34.0).'"));
+            Assert.assertTrue("SLICE panel entry at spec v0.34.0", html.contains(
+                    "start is not an integer of 1 or more, or count is not an integer of 0 or more (spec v0.34.0).'"));
             // Each sample's output is shown under it as TeeBox prints it (the engine's own messages,
             // not the playground's), marked when it varies per run or depends on the server.
             Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));
