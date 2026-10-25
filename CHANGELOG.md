@@ -2,7 +2,10 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.41.0
+
+**315 TeeBox tests (plus 26 admin UI script tests) and 156 propertee-js tests green. Packaged
+with propertee2 0.45.0 at `b9e71b2bbf2e`.**
 
 - **Embedded engine upgraded to propertee2 0.45.0** (spec v0.36.0, breaking). Numbers are finite:
   decimal arithmetic past about 1.8 × 10³⁰⁸ fails the run with
