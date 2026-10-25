@@ -4,6 +4,17 @@ All notable changes to TeeBox are documented here.
 
 ## Unreleased
 
+- **Embedded engine upgraded to propertee2 0.44.0** (spec v0.35.0, mildly breaking). `JSON_PARSE`
+  and `READ_JSON_FILE` give an error Result for a numeral too large to represent, naming where it
+  is (`JSON_PARSE() value.rows.2.size is a number too large to represent`), where `1e999` came
+  through as `Infinity` and failed only when the run wrote it back as JSON. JSON text is read as
+  RFC 8259 writes it: a malformed number such as `1e` or `[1, 2e]`, a bad `\u` escape, or very deep
+  nesting ended the run with a Java exception, and `01`, `.5`, Unicode spaces and raw control
+  characters in a string were accepted; all are `Invalid JSON: …` error Results now, and nesting is
+  at most 1000 levels. A loop that passes the iteration limit suggests `loop ... infinite do`, where
+  it suggested `loop condition infinite do`. The reference panel's
+  `JSON_PARSE` and `READ_JSON_FILE` entries give the rules, and the inlined browser bundle is
+  refreshed from propertee-js.
 - **Embedded engine upgraded to propertee2 0.43.0** (spec v0.34.0, breaking). `SUBSTRING` and
   `SLICE` refuse a start below 1, a negative length or count, and a fraction — a run stops at that
   line with `SUBSTRING() start must be an integer of 1 or more` (or `length`/`count … of 0 or

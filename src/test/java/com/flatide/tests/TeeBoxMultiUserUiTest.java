@@ -437,6 +437,11 @@ public class TeeBoxMultiUserUiTest {
                     "start is not an integer of 1 or more, or length is not an integer of 0 or more (spec v0.34.0).'"));
             Assert.assertTrue("SLICE panel entry at spec v0.34.0", html.contains(
                     "start is not an integer of 1 or more, or count is not an integer of 0 or more (spec v0.34.0).'"));
+            // Spec v0.35.0 (engine 0.44.0): JSON_PARSE refuses numbers too large to represent.
+            Assert.assertTrue("JSON_PARSE panel entry at spec v0.35.0", html.contains(
+                    "or holds a number too large to represent such as 1e999 (spec v0.35.0). Does NOT stop the script.'"));
+            Assert.assertTrue("READ_JSON_FILE panel entry at spec v0.35.0", html.contains(
+                    "or it holds a number too large to represent such as 1e999 (spec v0.35.0). Does NOT stop the script.'"));
             // Each sample's output is shown under it as TeeBox prints it (the engine's own messages,
             // not the playground's), marked when it varies per run or depends on the server.
             Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));
