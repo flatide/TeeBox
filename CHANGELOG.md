@@ -2,7 +2,10 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.42.0
+
+**319 TeeBox tests (plus 26 admin UI script tests) and 172 propertee-js tests green. Packaged
+with propertee2 0.46.0 at `8a64574c8da2`.**
 
 - **Embedded engine upgraded to propertee2 0.46.0** (spec v0.37.0, mildly breaking). Scripts get
   `on error do ... end`, one place to log, notify and report when a run stops, and `otherwise`,
