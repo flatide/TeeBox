@@ -395,15 +395,31 @@ public class RunRegistry {
     }
 
     public void markFailed(RunInfo run, String message) {
+        markFailed(run, message, null);
+    }
+
+    /**
+     * A failed run. {@code handlerResult} is the value the script's {@code on error} handler
+     * returned (spec v0.37.0), kept as the run's result data beside {@code status: FAILED} and
+     * {@code errorMessage}; null when no handler ran.
+     */
+    public void markFailed(RunInfo run, String message, Object handlerResult) {
         synchronized (run) {
             run.status = RunStatus.FAILED;
             run.endedAt = Long.valueOf(System.currentTimeMillis());
             run.errorMessage = message != null ? message : "Unknown error";
-            // A failed run has no result. Clearing it also lets this record persist when a
-            // markCompleted could not be saved: its result stays in memory, and saving it again
-            // would fail the same way, leaving the run file at RUNNING.
-            run.resultData = null;
-            run.resultSummary = null;
+            if (handlerResult != null) {
+                run.resultData = TypeChecker.deepCopy(handlerResult);
+                run.resultSummary = StreamResultSupport.isStreamDescriptor(handlerResult)
+                    ? StreamResultSupport.summaryFor(handlerResult)
+                    : safeSummary(handlerResult);
+            } else {
+                // A failed run without a handler has no result. Clearing it also lets this record
+                // persist when a markCompleted could not be saved: its result stays in memory, and
+                // saving it again would fail the same way, leaving the run file at RUNNING.
+                run.resultData = null;
+                run.resultSummary = null;
+            }
             persistRun(run);
         }
     }

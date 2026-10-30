@@ -1375,7 +1375,9 @@ components:
         hasExplicitReturn:
           type: boolean
         resultData:
-          description: Script return value (any JSON type)
+          description: >
+            Script return value (any JSON type). For a FAILED run, the value its `on error`
+            handler returned (spec v0.37.0), or null when it has no handler.
           nullable: true
         errorMessage:
           type: string

@@ -2,6 +2,30 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.46.0** (spec v0.37.0, mildly breaking). Scripts get
+  `on error do ... end`, one place to log, notify and report when a run stops, and `otherwise`,
+  which says at the end of a statement what to use or do when a call's Result failed. `on` and
+  `otherwise` are reserved words; a `return` whose value starts on a later line, and a `break` or
+  `continue` without a loop in the same function body, are refused at load. Every runtime error
+  has a position — a built-in's at its call — and the column counts from 1, in `errorMessage` too.
+  A TeeBox builtin's error — `STREAM_FILE`'s, for a path that is not a string or not allowed — is a
+  runtime error at its call too, so the handler runs; it ended the run past the handler before.
+- **A failed run keeps its handler's value.** When the script's `on error` handler ran, the value
+  it returned is the run's `resultData` (and `resultSummary`) beside `status: FAILED` and
+  `errorMessage` (`RunRegistry.markFailed`, `ScriptExecutor.ExecutionResult.scriptFailed`). The
+  error line is logged on the run's stderr before the handler's output.
+- **The engine settles failed or cancelled.** A cancel or timeout asked for before the error makes
+  the run `CANCELLED` and skips the handler, as the engine reports it; one asked for after the
+  error ends the handler and the run stays `FAILED`, and its `SHELL` processes are killed as after
+  a cancel. Before, a latched cancel turned any failure into `CANCELLED`.
+- **Editor**: the pre-check — the inlined propertee-js bundle and `/admin/scripts/validate` —
+  reports the load-time rules and counts columns from 1; the code editor highlights `on` and
+  `otherwise`; the `FAIL` panel sample shows the new position.
+- **Release artifacts**: `teeBoxZip` no longer copies the bundle zip into `./dist`; it stays in
+  `build/distributions/`. A release commits the server and client jars only.
+
 ## 1.41.0
 
 **315 TeeBox tests (plus 26 admin UI script tests) and 156 propertee-js tests green. Packaged

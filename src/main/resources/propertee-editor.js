@@ -29,7 +29,7 @@
         // TeeBox host builtins (registered by ScriptExecutor) — NOT part of the playground list above;
         // keep them on this separate line so the verbatim line stays diffable against the playground.
         builtins += '|STREAM_FILE|THUMBNAIL';
-        var keywords = 'if|then|elseif|else|end|loop|in|do|infinite|limit|break|continue|return|debug|function|thread|multi|monitor|and|or|not';
+        var keywords = 'if|then|elseif|else|end|loop|in|do|infinite|limit|break|continue|return|debug|function|thread|multi|monitor|on|otherwise|and|or|not';
         var pattern = new RegExp(
             '(\\/\\*[\\s\\S]*?\\*\\/)'                         // block comments
             + '|(\\/\\/[^\\n]*)'                               // line comments
@@ -140,7 +140,7 @@
             { name: 'JSON_FORMAT', sig: 'JSON_FORMAT(v)', desc: 'Serialize any value to JSON.', returns: 'A JSON string.', fails: 'None: every value can be written, since numbers are finite (spec v0.36.0).', sample: 'PRINT(JSON_FORMAT({"a": [1, 2]}))', output: '{"a":[1,2]}' },
         ]},
         { cat: 'Results', fns: [
-            { name: 'FAIL', sig: 'FAIL(message)', desc: 'Raise a runtime error at the call site — the explicit escalation for errors a script decides are fatal (spec v0.10.0).', returns: 'Never returns.', fails: 'Always — that is its purpose. The script stops exactly as with any runtime error; inside a multi thread, only that thread fails.', sample: 'res = JSON_PARSE("{bad")\nif not res.ok then\n    FAIL("config parse failed: " + res.value)\nend', output: 'Runtime Error at line 3:4: config parse failed: Invalid JSON: expected object key at position 1' },
+            { name: 'FAIL', sig: 'FAIL(message)', desc: 'Raise a runtime error at the call site — the explicit escalation for errors a script decides are fatal (spec v0.10.0).', returns: 'Never returns.', fails: 'Always — that is its purpose. The script stops exactly as with any runtime error; inside a multi thread, only that thread fails.', sample: 'res = JSON_PARSE("{bad")\nif not res.ok then\n    FAIL("config parse failed: " + res.value)\nend', output: 'Runtime Error at line 3:5: config parse failed: Invalid JSON: expected object key at position 1' },
             { name: 'UNWRAP', sig: 'UNWRAP(res, [message])', desc: 'The value of an ok genuine Result; an error Result escalates like FAIL with TO_STRING(res.value), prefixed "message: " when given.', returns: 'res.value when res.ok is true.', fails: 'Runtime error when res.ok is false, or when res is not a genuine Result (script literals are not — build them with OK/ERR).', sample: 'cfg = UNWRAP(JSON_PARSE("{\\"a\\": 1}"), "config")\nPRINT(cfg.a)', output: '1' },
             { name: 'OK', sig: 'OK([value])', desc: 'Construct a genuine Result {status: "done", ok: true, value}.', returns: 'A genuine Result. Missing value → {}.', fails: 'Does not fail.', sample: 'r = OK(42)\nPRINT(r.ok, UNWRAP(r))', output: 'true 42' },
             { name: 'ERR', sig: 'ERR([value])', desc: 'Construct a genuine error Result {status: "error", ok: false, value}. value may be any type (structured errors allowed).', returns: 'A genuine Result. Missing value → {}.', fails: 'Does not fail (UNWRAP on it does).', sample: 'r = ERR("boom")\nPRINT(r.ok, r.value)', output: 'false boom' },

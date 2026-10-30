@@ -1,6 +1,7 @@
 package com.flatide.teebox;
 
 import com.flatide.propertee2.core.ScriptParser;
+import com.flatide.propertee2.interp.LoadChecks;
 import com.flatide.propertee2.parser.ProperTeeParser;
 
 import org.antlr.v4.runtime.Token;
@@ -38,6 +39,12 @@ final class ScriptLint {
         if (tree == null) {
             return errors;   // syntax errors already collected by the parser
         }
+        // The language's load-time rules (spec v0.37.0): the engine refuses such a script before
+        // its first statement, so the editor reports the first one, as the engine would.
+        com.flatide.propertee2.value.TeeError refused = LoadChecks.firstViolation(tree);
+        if (refused != null) {
+            errors.add("Line " + refused.line() + ":" + refused.column() + " - " + refused.getMessage());
+        }
         collectUnknownCalls(tree, knownFunctionNames, errors);
         return errors;
     }
@@ -48,7 +55,7 @@ final class ScriptLint {
             String text = name.getText();
             if (ALL_CAPS.matcher(text).matches() && !known.contains(text)) {
                 StringBuilder sb = new StringBuilder();
-                sb.append("Line ").append(name.getLine()).append(":").append(name.getCharPositionInLine())
+                sb.append("Line ").append(name.getLine()).append(":").append(name.getCharPositionInLine() + 1)   // from 1 (spec v0.37.0)
                   .append(" - unknown function '").append(text).append("'");
                 String suggestion = nearest(text, known);
                 if (suggestion != null) {

@@ -595,7 +595,7 @@ public class TeeBoxServerTest {
                     "content=" + java.net.URLEncoder.encode("if false then\n    PRIN(\"x\")\nend\n", "UTF-8"));
             Assert.assertEquals(Boolean.FALSE, typo.get("ok"));
             String typoErrors = String.valueOf(typo.get("errors"));
-            Assert.assertTrue(typoErrors, typoErrors.contains("Line 2:4 - unknown function 'PRIN'"));
+            Assert.assertTrue(typoErrors, typoErrors.contains("Line 2:5 - unknown function 'PRIN'"));   // from 1 (engine 0.46.0)
             Assert.assertTrue(typoErrors, typoErrors.contains("did you mean 'PRINT'?"));
 
             // No false positives: catalog + interpreter-dispatched + TeeBox host builtins are all
@@ -1243,10 +1243,10 @@ public class TeeBoxServerTest {
             TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
             String[][] cases = {
                 { "nonfinite_top", "return CEIL(TO_NUMBER(\"1.7976931348623157e308\"), -308)\n",
-                  "Runtime Error: Number overflow: the result is too large to represent" },
+                  "Runtime Error at line 1:8: Number overflow: the result is too large to represent" },   // at the call (engine 0.46.0)
                 { "nonfinite_nested", "big = TO_NUMBER(\"1e308\") * 10\n"
                       + "return {\"ok\": 1, \"list\": [1, big - big], \"later\": -big}\n",
-                  "Runtime Error at line 1:6: Number overflow: the result is too large to represent" },
+                  "Runtime Error at line 1:7: Number overflow: the result is too large to represent" },
             };
             for (String[] c : cases) {
                 client.registerScript(c[0], "1", c[1], "non-finite result", Arrays.asList("test"), true);

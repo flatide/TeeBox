@@ -238,6 +238,12 @@ public class ScriptExecutor {
             // Operator ended the run from the debugger (DebugFrame.quit()) — like an abort, an
             // operator decision, never a script failure; the Throwable arm would mark it FAILED.
             return ExecutionResult.cancelled();
+        } catch (com.flatide.propertee2.runtime.ProperTeeError error) {
+            // A script failure, settled by the engine when the error happened (spec v0.37.0): a stop
+            // asked for before it would have made this ProperTeeAborted. When the script's
+            // `on error` handler ran, the run keeps the value the handler returned.
+            return ExecutionResult.scriptFailed(error.getMessage(),
+                error.handled() ? TypeChecker.deepCopy(error.handlerResult()) : null);
         } catch (Throwable error) {
             return ExecutionResult.failed(error != null ? error.getMessage() : "Unknown error");
         } finally {
@@ -294,28 +300,40 @@ public class ScriptExecutor {
         /** True when the run ended because the host cancelled it (never a script failure). */
         public final boolean cancelled;
         public final boolean hasExplicitReturn;
+        /** The run's result, or, after a failure, what the script's {@code on error} handler returned (or null). */
         public final Object resultData;
         public final String errorMessage;
+        /**
+         * True when the script itself failed, as the engine decided (spec v0.37.0): a stop asked for
+         * after the error does not make such a run cancelled.
+         */
+        public final boolean scriptFailure;
 
         private ExecutionResult(boolean success, boolean cancelled, boolean hasExplicitReturn,
-                                Object resultData, String errorMessage) {
+                                Object resultData, String errorMessage, boolean scriptFailure) {
             this.success = success;
             this.cancelled = cancelled;
             this.hasExplicitReturn = hasExplicitReturn;
             this.resultData = resultData;
             this.errorMessage = errorMessage;
+            this.scriptFailure = scriptFailure;
         }
 
         public static ExecutionResult completed(boolean hasExplicitReturn, Object resultData) {
-            return new ExecutionResult(true, false, hasExplicitReturn, resultData, null);
+            return new ExecutionResult(true, false, hasExplicitReturn, resultData, null, false);
         }
 
         public static ExecutionResult failed(String errorMessage) {
-            return new ExecutionResult(false, false, false, null, errorMessage);
+            return new ExecutionResult(false, false, false, null, errorMessage, false);
+        }
+
+        /** The script failed; {@code handlerResult} is what its {@code on error} handler returned, or null. */
+        public static ExecutionResult scriptFailed(String errorMessage, Object handlerResult) {
+            return new ExecutionResult(false, false, false, handlerResult, errorMessage, true);
         }
 
         public static ExecutionResult cancelled() {
-            return new ExecutionResult(false, true, false, null, "Run aborted");
+            return new ExecutionResult(false, true, false, null, "Run aborted", false);
         }
     }
 

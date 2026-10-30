@@ -1433,7 +1433,7 @@ public class DebugSessionTest {
         props.put("who", "ops");
         String runId = (String) client.submitRun(scriptId, null, props).get("runId");
         Map<String, Object> failed = waitForRunStatus(client, runId, "FAILED", 10000L);
-        Assert.assertTrue(String.valueOf(failed.get("errorMessage")).contains("at line 2:0"));
+        Assert.assertTrue(String.valueOf(failed.get("errorMessage")).contains("at line 2:1"));   // the column from 1 (engine 0.46.0)
         return runId;
     }
 

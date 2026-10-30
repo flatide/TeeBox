@@ -333,13 +333,6 @@ task teeBoxZip(type: Zip) {
     from("${buildDir}/teebox-dist")
     description = 'Build a deployable ProperTee TeeBox zip archive'
     group = 'distribution'
-
-    doLast {
-        copy {
-            from archiveFile
-            into "${rootDir}/dist"
-        }
-    }
 }
 
 task teeBoxZipWithRuntime(type: Zip) {
@@ -352,8 +345,8 @@ task teeBoxZipWithRuntime(type: Zip) {
     group = 'distribution'
 }
 
-// Publish the standalone jars into ./dist (alongside the dist zip) so each can be downloaded on its
-// own: the embeddable client jar (Java 7 bytecode) and the runnable TeeBox server fat jar (versioned).
+// Publish the standalone jars into ./dist so each can be downloaded on its own (the dist zip stays
+// in build/distributions and is not committed): the embeddable client jar (Java 7 bytecode) and the runnable TeeBox server fat jar (versioned).
 // Declared after teeBoxJar/clientJar so both tasks already exist when referenced.
 task clientJarToDist(type: Copy) {
     dependsOn clientJar

@@ -251,6 +251,139 @@ public class RunCancelTest {
         }
     }
 
+    // ===================== on error (spec v0.37.0) =====================
+
+    /** A failed run keeps what its `on error` handler returned; the error was logged before the handler's output. */
+    @Test
+    public void aFailedRunKeepsItsHandlersValue() throws Exception {
+        TestServer testServer = createServer(2, null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("handled", "1",
+                "on error do\n" +
+                "    PRINT(\"handler:\", _ERROR.message)\n" +
+                "    return {\"failed\": true, \"line\": _ERROR.line}\n" +
+                "end\n" +
+                "FAIL(\"boom\")\n",
+                "handled", Arrays.asList("test"), true);
+
+            String runId = (String) client.submitRun("handled", null, new LinkedHashMap<String, Object>()).get("runId");
+            Map<String, Object> terminal = waitForStatus(client, runId, "FAILED", 10000L);
+            Assert.assertEquals("Runtime Error at line 5:1: boom", terminal.get("errorMessage"));
+
+            Map<String, Object> result = client.getRunResult(runId);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> data = (Map<String, Object>) result.get("resultData");
+            Assert.assertEquals(Boolean.TRUE, data.get("failed"));
+            Assert.assertEquals(5.0, ((Number) data.get("line")).doubleValue(), 0.0);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> envelope = (Map<String, Object>) result.get("result");
+            Assert.assertEquals("error", envelope.get("status"));      // the run failed all the same
+
+            Map<String, Object> out = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId + "/stdout", 200);
+            Assert.assertEquals(Arrays.asList("handler: boom"), out.get("lines"));
+            Map<String, Object> err = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId + "/stderr", 200);
+            Assert.assertEquals(Arrays.asList("Runtime error: Runtime Error at line 5:1: boom"), err.get("lines"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    /** A host builtin's error — STREAM_FILE's here — is a runtime error at its call, so the handler runs. */
+    @Test
+    public void aHostBuiltinsErrorRunsTheHandler() throws Exception {
+        TestServer testServer = createServer(2, null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("stream_bad", "1",
+                "on error do\n" +
+                "    return {\"message\": _ERROR.message}\n" +
+                "end\n" +
+                "return STREAM_FILE(123)\n",
+                "stream bad", Arrays.asList("test"), true);
+
+            String runId = (String) client.submitRun("stream_bad", null, new LinkedHashMap<String, Object>()).get("runId");
+            Map<String, Object> terminal = waitForStatus(client, runId, "FAILED", 10000L);
+            Assert.assertEquals("Runtime Error at line 4:8: STREAM_FILE() requires (path, [contentType])",
+                terminal.get("errorMessage"));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> data = (Map<String, Object>) client.getRunResult(runId).get("resultData");
+            Assert.assertEquals("STREAM_FILE() requires (path, [contentType])", data.get("message"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    /** A stop asked for while the handler runs ends it; the run stays FAILED with the original error. */
+    @Test
+    public void aStopDuringTheHandlerLeavesTheRunFailed() throws Exception {
+        TestServer testServer = createServer(2, null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("slow_handler", "1",
+                "on error do\n" +
+                "    PRINT(\"handler\")\n" +
+                "    SLEEP(60000)\n" +
+                "    PRINT(\"never\")\n" +
+                "end\n" +
+                "FAIL(\"boom\")\n",
+                "slow handler", Arrays.asList("test"), true);
+
+            String runId = (String) client.submitRun("slow_handler", null, new LinkedHashMap<String, Object>()).get("runId");
+            waitForStdoutLine(testServer.baseUrl, runId, "handler", 8000L);
+            client.cancelRun(runId);
+
+            Map<String, Object> terminal = waitForStatus(client, runId, "FAILED", 10000L);
+            Assert.assertEquals("Runtime Error at line 6:1: boom", terminal.get("errorMessage"));
+            Map<String, Object> out = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId + "/stdout", 200);
+            Assert.assertEquals(Arrays.asList("handler"), out.get("lines"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    /**
+     * A stop asked for before the error makes the run CANCELLED and skips the handler — here the
+     * stop's own task kill makes SHELL fail, and UNWRAP turns that into the error.
+     */
+    @Test
+    public void aStopBeforeTheErrorIsACancelWithoutTheHandler() throws Exception {
+        TestServer testServer = createServer(2, null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("shell_unwrap", "1",
+                "on error do\n" +
+                "    PRINT(\"the handler does not run\")\n" +
+                "end\n" +
+                "out = UNWRAP(SHELL(\"" + testServer.script("sleep30") + "\"))\n",
+                "cancel before error", Arrays.asList("test"), true);
+
+            String runId = (String) client.submitRun("shell_unwrap", null, new LinkedHashMap<String, Object>()).get("runId");
+            waitForTaskCount(testServer.baseUrl, runId, 1, 8000L);
+            client.cancelRun(runId);
+
+            waitForStatus(client, runId, "CANCELLED", 15000L);
+            Map<String, Object> out = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId + "/stdout", 200);
+            Assert.assertEquals(Arrays.asList(), out.get("lines"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    private void waitForStdoutLine(String baseUrl, String runId, String line, long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        Object seen = null;
+        while (System.currentTimeMillis() < deadline) {
+            Map<String, Object> out = getJsonMap(baseUrl + "/api/client/runs/" + runId + "/stdout", 200);
+            seen = out.get("lines");
+            if (seen instanceof List && ((List<?>) seen).contains(line)) {
+                return;
+            }
+            Thread.sleep(50L);
+        }
+        Assert.fail("run " + runId + " did not print " + line + " within " + timeoutMs + "ms; saw " + seen);
+    }
+
     // ===================== helpers =====================
 
     private static RunRequest request(String scriptId) {

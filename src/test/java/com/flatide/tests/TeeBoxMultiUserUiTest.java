@@ -451,7 +451,7 @@ public class TeeBoxMultiUserUiTest {
             Assert.assertTrue("sample outputs rendered in the panel", html.contains("pt-fn-output"));
             Assert.assertTrue("SUM sample output", html.contains("sample: 'PRINT(SUM(1, 2, 3), SUM([1, 2, 3]))', output: '6 6'"));
             Assert.assertTrue("FAIL sample output is the engine's message", html.contains(
-                    "output: 'Runtime Error at line 3:4: config parse failed: Invalid JSON: expected object key at position 1'"));
+                    "output: 'Runtime Error at line 3:5: config parse failed: Invalid JSON: expected object key at position 1'"));
             Assert.assertTrue("outputs that vary per run are marked", html.contains("outputNote: 'varies'"));
 
             // The builtin panel is hidden by default and toggled by the ƒ button pinned to the

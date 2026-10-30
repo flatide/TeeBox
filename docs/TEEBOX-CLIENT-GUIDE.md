@@ -559,8 +559,15 @@ The `result` value per case (live-verified with the demos `demo/teebox/06_run_en
 
 ```jsonc
 { "status": "error", "ok": false,
-  "value": "Runtime Error at line 37:4: upstream unreachable: giving up" }   // 1.9.1+: with line:col
+  "value": "Runtime Error at line 37:5: upstream unreachable: giving up" }   // 1.9.1+: with line:col (the column counts from 1 since engine 0.46.0)
 ```
+
+> A script with an `on error do ... end` handler (spec v0.37.0) still ends `FAILED`, but the value
+> its handler returned is the run's `resultData` (`{}` when it has no `return`), beside
+> `errorMessage` — say `return {"failed": true, "step": done}`. The error line is in the run's
+> stderr log, before the handler's output. A cancel asked for before the error ends the run
+> `CANCELLED` without the handler; one asked for while the handler runs ends it, and the run stays
+> `FAILED`.
 
 **4) Not yet terminal (`QUEUED`/`PENDING`/`RUNNING`)**
 

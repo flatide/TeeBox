@@ -556,9 +556,16 @@ if (Boolean.TRUE.equals(env.get("ok"))) {
 
 **3) `FAILED` — `FAIL(...)` 또는 런타임 에러**
 
+> `on error do ... end` 핸들러(스펙 v0.37.0)가 있는 스크립트도 `FAILED`로 끝나지만, 핸들러가
+> 돌려준 값이 run의 `resultData`가 됩니다(`return`이 없으면 `{}`) — `errorMessage`와 함께. 예:
+> `return {"failed": true, "step": done}`. 에러 줄은 핸들러 출력보다 먼저 run의 stderr 로그에
+> 남습니다. 에러 전에 요청된 취소는 핸들러 없이 run을 `CANCELLED`로 끝내고, 핸들러 실행 중에
+> 요청된 취소는 핸들러를 끝내되 run은 `FAILED`로 남습니다. 에러 위치의 열은 엔진 0.46.0부터
+> 1부터 셉니다.
+
 ```jsonc
 { "status": "error", "ok": false,
-  "value": "Runtime Error at line 37:4: upstream unreachable: giving up" }   // 1.9.1+: line:col 포함
+  "value": "Runtime Error at line 37:5: upstream unreachable: giving up" }   // 1.9.1+: line:col 포함 (열은 엔진 0.46.0부터 1부터)
 ```
 
 **4) 아직 종료 전 (`QUEUED`/`PENDING`/`RUNNING`)**

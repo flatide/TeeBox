@@ -1272,10 +1272,12 @@ public class RunManager {
             // Flush watchers for this run before marking complete
             flushWatchersForRun(run.runId);
             runRegistry.flushDirty();
-            if (result.cancelled || (!result.success && cancelReasons.containsKey(run.runId))) {
-                // Cancelled — either the engine unwound with ProperTeeAborted, or the cancel raced
-                // a failure it caused (e.g. the task kill made SHELL error out first). A successful
-                // completion always wins over a late cancel.
+            if (result.cancelled || (!result.success && !result.scriptFailure && cancelReasons.containsKey(run.runId))) {
+                // Cancelled — the engine unwound with ProperTeeAborted, or a failure outside the
+                // script raced the cancel. The engine settles a script failure itself, when the
+                // error happens (spec v0.37.0): a stop asked for before it makes the run stopped,
+                // so a failure the stop caused (the task kill made SHELL error out) is not one. A
+                // successful completion always wins over a late cancel.
                 runRegistry.markCancelled(run, cancelReasons.get(run.runId));
                 // Final sweep: a SHELL statement that had already passed its abort checkpoint may
                 // have spawned a process after cancelRun's kill — close the orphan window.
@@ -1283,7 +1285,13 @@ public class RunManager {
             } else if (result.success) {
                 runRegistry.markCompleted(run, result.hasExplicitReturn, result.resultData);
             } else {
-                runRegistry.markFailed(run, result.errorMessage);
+                // A failed run keeps what its `on error` handler returned (spec v0.37.0).
+                runRegistry.markFailed(run, result.errorMessage, result.resultData);
+                if (cancelReasons.containsKey(run.runId)) {
+                    // A stop asked for after the error ended the handler; the run stays failed,
+                    // and its processes are killed as after a cancel.
+                    killRunTasksInBackground(run.runId);
+                }
             }
         } catch (Throwable error) {
             flushWatchersForRun(run.runId);
