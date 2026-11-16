@@ -2,6 +2,54 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.46.1** (no language change). One cancel ends a run
+  inside `multi ... limit K`: a worker waiting for its turn no longer runs its first statement —
+  a `SLEEP`, a `SHELL` — after the cancel. Before, the run stayed `RUNNING` until every waiting
+  worker had done that, or until a second cancel.
+- **A cancel right after a submit cannot leave the run running.** `RunManager.cancelRun` took
+  `Future.cancel(false)` returning true to mean the run had not started, but it is true for a task
+  a worker has already begun as well: the cancel was accepted, the run went on, and it kept its
+  pool slot (48 of 1,200 submit-then-cancel pairs in a test). The run's monitor now decides
+  between the two — `RunRegistry.markCancelledIfQueued` and `markStarted` — so a queued run goes to
+  the canceller or to the worker, never to both.
+- **Ids are unique.** A run id was the submit time to the millisecond plus the low 16 bits of the
+  nanosecond clock, which repeat: 8 threads drawing 200,000 ids got 32,658 duplicates, and a
+  second run with a taken id replaced the first in the registry and in its file. The id is now
+  the time, kept for reading, plus 48 random bits (`run-20261116-215350-155-fe81824c37a4`, 36
+  characters; it was at most 28), and `RunRegistry` refuses an id that is taken while
+  `RunManager` draws another. Debug session ids (64 random bits), the host instance id and the
+  task id prefix are made the same way (`UniqueIds`). Ids of existing runs do not change;
+  clients should treat a run id as an opaque string.
+- **An archived run keeps its input.** Archiving erased a run's input `properties`, so an archived
+  run could no longer be read with what it had been given. It now moves them from memory into the
+  run's file (`runs/<runId>.json`), where they stay until purge: the run detail — the admin UI's
+  run page and `GET /api/admin/runs/{runId}` — reads them from the file
+  (`RunManager.getRunDetail`), while lists and status answer from memory with the input empty, so
+  the heap an archived run holds is unchanged. `resultData` is kept in memory and on disk until
+  purge, as before. Runs archived by an older version have no input to show, and a debug re-run
+  of an archived run is still refused.
+- **Text files are decoded whole.** Four readers decoded a file 4 KB at a time and broke every
+  multi-byte character — Korean, for one — lying across a chunk boundary into U+FFFD:
+  - `ScriptRegistry`: a script's source as the editor, `GET /api/publisher/scripts/{id}/content`,
+    a debug session and a script duplicate see it, and as an importing run executes it (an
+    entry script was read correctly); and `script.json`, where each registration or activation
+    wrote the damaged version descriptions back.
+  - `RunStore`: a run's file, read at startup.
+  - `WebhookStore`: a delivery is read from its file before every attempt, so the payload was
+    sent that way.
+  - `UserStore`: `credentials.json`. Usernames made in the UI are ASCII; a hand-edited Korean
+    username could lose its credential across a restart, and the next first login would then
+    have set a new password for it.
+
+  Data an older version already damaged is not repaired; searching `script-registry/` for U+FFFD
+  finds it.
+- **A bounded output tail does not start inside a character.** `readFileTail` (`UnixTaskRunner`,
+  `ManagedTaskEngine`) starts where the byte budget puts it; what is left of a character cut
+  there is skipped, as the engine's own task runner does, where it used to become U+FFFD at the
+  head of the tail.
+
 ## 1.42.0
 
 **319 TeeBox tests (plus 26 admin UI script tests) and 172 propertee-js tests green. Packaged

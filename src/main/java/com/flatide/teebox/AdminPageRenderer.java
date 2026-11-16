@@ -708,7 +708,7 @@ public class AdminPageRenderer {
     }
 
     public String renderRunDetailFragment(String runId) {
-        RunInfo run = runManager.getRun(runId);
+        RunInfo run = runManager.getRunDetail(runId);   // with an archived run's input, from its file
         if (run == null) return "<p class='empty'>Run not found</p>";
         List<RunThreadInfo> threads = runManager.listThreads(runId);
         List<TaskInfo> tasks = runManager.listTasksForRun(runId);

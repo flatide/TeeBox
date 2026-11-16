@@ -600,8 +600,8 @@ restart (`SERVER_RESTARTED`).
 Active (0~24h) → Archived (24h~7d) → Purged (7d~)
 ```
 - Active: Full logs (up to 200 lines of stdout/stderr), thread info, input properties, result retained
-- Archived: Thread list and input properties removed, stdout trimmed to 50 lines and stderr to 20 lines. **The run's result (`resultData`) is kept until purge** (1.15.1+ — older versions dropped it at archival, leaving only the 300-char `resultSummary`)
-- Purged: Deleted from disk
+- Archived: Thread list removed, stdout trimmed to 50 lines and stderr to 20 lines. **The run's result (`resultData`) is kept until purge** (1.15.1+ — older versions dropped it at archival, leaving only the 300-char `resultSummary`). **The input properties move from memory to the run's file** (`runs/<runId>.json`) and stay there until purge (1.43.0+): the run detail page and `GET /api/admin/runs/{runId}` read them from the file, while run lists show them empty. (Older versions erased the input at archival; runs archived by them have none to show.)
+- Purged: Deleted from disk, input and result included
 
 These are the default ages **since completion**, not time since archival; running/queued runs
 are not archived. Set `propertee.teebox.runRetentionMs` / `runArchiveRetentionMs` in the config
@@ -609,7 +609,7 @@ file or via `-D` (see §1). For example, `14d` / `60d` archives after 14 days an
 60 days from completion, not 74 days. If `endedAt` is absent, a run's `createdAt` is used.
 Runs/tasks are swept once at startup and then every `maintenanceIntervalMs`; a newly archived
 item is eligible for purge on a later sweep. Raising retention does not unarchive existing
-records or recover input properties/logs already discarded.
+records or recover logs already trimmed (or input properties an older version erased).
 
 **Task:**
 - Same retention model (`propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`),
@@ -664,7 +664,7 @@ Information available on the run detail page:
 - **Script Output**: ProperTee `PRINT()` output
 - **Script Errors**: `PRINT_ERR()` output
 - **Task Output**: stdout/stderr of each task (external process)
-- **Input Properties**: Input values passed to the run
+- **Input Properties**: Input values passed to the run (also for an archived run, read from its file)
 - For runs in progress, output is tracked in real time via auto-refresh.
 
 ### Run Status Lifecycle

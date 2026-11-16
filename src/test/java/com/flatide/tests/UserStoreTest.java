@@ -224,4 +224,36 @@ public class UserStoreTest {
         } catch (IllegalArgumentException expected) {
         }
     }
+
+    /**
+     * credentials.json used to be decoded 4 KB at a time, which broke a multi-byte character
+     * lying across a chunk boundary. A username is the key of its credential, so such a user
+     * came back from a restart with no password on record — and the next "first login" with any
+     * password would have claimed the account. (UI-created usernames are ASCII; a hand-edited
+     * users.json may hold any name.)
+     */
+    @Test
+    public void aKoreanUsernameKeepsItsCredentialAcrossARestart() throws Exception {
+        File dataDir = newDataDir();
+        String credential = ":{\"algo\":\"PBKDF2WithHmacSHA256\",\"iterations\":1,"
+            + "\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"hash\":\"AAAAAAAAAAAAAAAAAAAAAA==\"}";
+        StringBuilder json = new StringBuilder("{");
+        for (int i = 0; json.length() < 3900; i++) {
+            json.append("\"filler").append(i).append("\"").append(credential).append(",");
+        }
+        // Pad so that the name's first character lies across the 4,096-byte mark.
+        while (json.length() < 4093) {
+            json.append(' ');
+        }
+        json.append("\"홍길동\"").append(credential).append("}");
+        File usersDir = new File(dataDir, "users");
+        usersDir.mkdirs();
+        Files.write(new File(usersDir, "credentials.json").toPath(), json.toString().getBytes("UTF-8"));
+
+        UserStore store = new UserStore(dataDir);
+        Assert.assertFalse(store.isCredentialsCorrupt());
+        Assert.assertTrue("the user's credential must still be on record", store.hasPassword("홍길동"));
+        Assert.assertFalse("nobody may provision a password over it",
+            store.provisionPasswordIfAbsent("홍길동", "attacker-pw"));
+    }
 }

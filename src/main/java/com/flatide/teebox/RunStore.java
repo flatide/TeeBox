@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -148,6 +149,51 @@ public class RunStore {
                 }
             }
         }
+    }
+
+    /**
+     * The input properties in a run's file; empty when the file, or the input, is not there. An
+     * archived run keeps its input in the file only — the registry's in-memory record lets it go —
+     * so this is how a detail view, or a later save of that run, gets it back. The values are
+     * engine-shaped by literal, as {@link #parseRun} does for the result: an input that was the
+     * integer 5 reads back as 5, not as Gson's 5.0.
+     */
+    @SuppressWarnings("unchecked")
+    public synchronized Map<String, Object> loadProperties(String runId) {
+        File file = fileFor(runId);
+        if (!file.exists()) {
+            return new LinkedHashMap<String, Object>();
+        }
+        String json;
+        FileInputStream fis = null;
+        try {
+            fis = new FileInputStream(file);
+            json = readAll(fis);
+        } catch (IOException e) {
+            return new LinkedHashMap<String, Object>();
+        } finally {
+            if (fis != null) {
+                try {
+                    fis.close();
+                } catch (IOException ignore) {
+                }
+            }
+        }
+        try {
+            com.google.gson.JsonElement tree = com.google.gson.JsonParser.parseString(json);
+            com.google.gson.JsonElement properties = tree.isJsonObject()
+                    ? tree.getAsJsonObject().get("properties") : null;
+            if (properties != null && properties.isJsonObject()) {
+                Object parsed = com.flatide.propertee2.value.JsonParser.parse(properties.toString());
+                if (parsed instanceof Map) {
+                    return (Map<String, Object>) parsed;
+                }
+            }
+        } catch (RuntimeException e) {
+            // not engine-readable (or not JSON at all): fall back to the shape a restart loads
+        }
+        RunInfo run = parseRun(json);
+        return run != null && run.properties != null ? run.properties : new LinkedHashMap<String, Object>();
     }
 
     /**
@@ -307,13 +353,15 @@ public class RunStore {
         }
     }
 
+    // Decoded once, from all the bytes: decoding each 4 KB chunk on its own broke every
+    // multi-byte character (Korean, for one) that straddled a chunk boundary into U+FFFD.
     private String readAll(InputStream input) throws IOException {
-        StringBuilder sb = new StringBuilder();
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
         byte[] buffer = new byte[4096];
         int len;
         while ((len = input.read(buffer)) != -1) {
-            sb.append(new String(buffer, 0, len, "UTF-8"));
+            bytes.write(buffer, 0, len);
         }
-        return sb.toString();
+        return bytes.toString("UTF-8");
     }
 }

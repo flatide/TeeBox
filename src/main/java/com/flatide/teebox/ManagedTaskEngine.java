@@ -1567,7 +1567,14 @@ public class ManagedTaskEngine implements TaskRunner {
                 if (n <= 0) break;
                 total += n;
             }
-            return new String(buf, 0, total, "UTF-8");
+            // A tail that does not start at the file's first byte may start inside a multi-byte
+            // character. Skip what is left of it (UTF-8 continuation bytes), as the engine's own
+            // runner does, so the tail never opens with U+FFFD only because of where it was cut.
+            int from = 0;
+            if (start > 0) {
+                while (from < total && (buf[from] & 0xC0) == 0x80) from++;
+            }
+            return new String(buf, from, total - from, "UTF-8");
         } catch (IOException e) {
             return "";
         } finally {

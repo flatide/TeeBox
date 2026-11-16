@@ -2087,7 +2087,7 @@ public class TeeBoxServer {
     }
 
     private Map<String, Object> buildRunDetailMap(String runId) {
-        RunInfo run = runManager.getRun(runId);
+        RunInfo run = runManager.getRunDetail(runId);   // with an archived run's input, from its file
         if (run == null) {
             return null;
         }

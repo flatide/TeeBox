@@ -87,6 +87,33 @@ public class RunStoreTest {
                 "[coupon, n, pi, whole, ok, name, empty, a, list]", r.keySet().toString());
     }
 
+    /**
+     * A run file is read in 4 KB chunks; each chunk used to be decoded on its own, which turned
+     * every multi-byte character on a chunk boundary into U+FFFD. Korean text of several chunks
+     * must read back exactly, in the result, the output lines and the input.
+     */
+    @Test
+    public void multiByteTextSurvivesTheDiskRoundTrip() throws Exception {
+        File dataDir = tempDir();
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 2000; i++) {
+            text.append("\uD55C\uAE00");   // "한글", 3 bytes per character in UTF-8
+            if (i % 7 == 0) text.append('a');    // shift the phase so boundaries fall everywhere
+        }
+        RunInfo run = terminalRun("korean", text.toString());
+        run.stdoutLines.add(text.toString());
+        run.properties.put("memo", text.toString());
+        new RunStore(dataDir).save(run);
+
+        RunStore reloaded = new RunStore(dataDir);
+        RunInfo loaded = reloaded.load("korean");
+        Assert.assertEquals(text.toString(), loaded.resultData);
+        Assert.assertEquals(text.toString(), loaded.stdoutLines.get(0));
+        Assert.assertEquals(text.toString(), loaded.properties.get("memo"));
+        Assert.assertEquals(text.toString(), reloaded.loadProperties("korean").get("memo"));
+        Assert.assertTrue(reloaded.loadProperties("missing").isEmpty());
+    }
+
     @Test
     public void topLevelNullResultSurvivesAndValuelessRunStaysNull() throws Exception {
         File dataDir = tempDir();

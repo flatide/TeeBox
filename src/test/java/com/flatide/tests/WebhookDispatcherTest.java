@@ -204,6 +204,30 @@ public class WebhookDispatcherTest {
         assertTrue(client.lastBody.contains("\"runId\""));
     }
 
+    /**
+     * A delivery is read back from its outbox file before every attempt. The file used to be
+     * decoded 4 KB at a time, which broke each multi-byte character lying across a chunk
+     * boundary, so a long Korean summary reached the receiver with U+FFFD in it.
+     */
+    @Test
+    public void multiByteTextInAPayloadIsDeliveredUnbroken() throws Exception {
+        StringBuilder summary = new StringBuilder();
+        for (int i = 1; i <= 1500; i++) {
+            summary.append(i).append("번 배치 처리 완료, ");
+        }
+        RunInfo run = terminalRun("r-ko", "https://host.internal/cb");
+        run.resultSummary = summary.toString();
+
+        dispatcher.onRunTerminal(run);
+        assertEquals(summary.toString(), store.load("r-ko").payload.get("resultSummary"));
+
+        client.status = 200;
+        dispatcher.start(50);
+        awaitState("r-ko", WebhookDelivery.State.DELIVERED, 5000);
+        java.util.Map<?, ?> sent = new com.google.gson.Gson().fromJson(client.lastBody, java.util.Map.class);
+        assertEquals(summary.toString(), sent.get("resultSummary"));
+    }
+
     @Test
     public void retriesOnFailureWithoutDelivering() throws Exception {
         client.status = 500;

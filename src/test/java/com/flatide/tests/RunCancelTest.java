@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.flatide.teebox.RunInfo;
 import com.flatide.teebox.RunManager;
+import com.flatide.teebox.RunRegistry;
 import com.flatide.teebox.RunRequest;
 import com.flatide.teebox.RunStatus;
 import com.flatide.teebox.TeeBoxClient;
@@ -214,6 +215,110 @@ public class RunCancelTest {
         }
     }
 
+    /**
+     * One cancel ends a run inside {@code multi ... limit K} (engine 0.46.1). A worker waiting for
+     * its turn used to be admitted by the cancelled one and run its first statement in full — here
+     * a 4-second SLEEP each — so the run stayed RUNNING until a second cancel.
+     */
+    @Test
+    public void oneCancelEndsARunInsideALimitedMulti() throws Exception {
+        TestServer testServer = createServer(1, null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("queue_of_three", "1",
+                "function first() do\n" +
+                "    PRINT(\"started\")\n" +
+                "    SLEEP(4000)\n" +
+                "    return 1\n" +
+                "end\n" +
+                "function later(n) do\n" +
+                "    SLEEP(4000)\n" +
+                "    PRINT(\"ran \" + n)\n" +
+                "    return n\n" +
+                "end\n" +
+                "multi r limit 1 do\n" +
+                "    thread a: first()\n" +
+                "    thread b: later(2)\n" +
+                "    thread c: later(3)\n" +
+                "end\n", "limit", Arrays.asList("test"), true);
+
+            String runId = (String) client.submitRun("queue_of_three", null, new LinkedHashMap<String, Object>()).get("runId");
+            waitForStdoutLine(testServer.baseUrl, runId, "started", 8000L);
+
+            Assert.assertEquals(Boolean.TRUE, client.cancelRun(runId).get("cancelRequested"));
+            // Well inside one SLEEP: the run ends without either waiting worker sleeping first.
+            waitForStatus(client, runId, "CANCELLED", 2500L);
+
+            Map<String, Object> out = getJsonMap(testServer.baseUrl + "/api/client/runs/" + runId + "/stdout", 200);
+            Assert.assertEquals(Arrays.asList("started"), out.get("lines"));
+        } finally {
+            testServer.close();
+        }
+    }
+
+    /** A queued run goes to the canceller or to the worker that picks it up, never to both. */
+    @Test
+    public void aQueuedRunGoesToExactlyOneOfCancelAndStart() throws Exception {
+        File dataDir = Files.createTempDirectory("propertee-teebox-cancel-claim").toFile();
+        RunRegistry registry = new RunRegistry(dataDir, 200, 50, 20, 24L * 3600_000L, 7L * 24 * 3600_000L);
+
+        RunInfo cancelled = queuedRun("r-cancelled");
+        registry.register(cancelled);
+        Assert.assertTrue(registry.markCancelledIfQueued(cancelled, "Cancelled by test"));
+        Assert.assertFalse("a worker must not start a run that was cancelled in the queue",
+            registry.markStarted(cancelled));
+        RunInfo afterCancel = registry.getRun("r-cancelled");
+        Assert.assertEquals(RunStatus.CANCELLED, afterCancel.status);
+        Assert.assertNotNull("the refused start must not clear the end time", afterCancel.endedAt);
+        Assert.assertNull(afterCancel.startedAt);
+
+        RunInfo started = queuedRun("r-started");
+        registry.register(started);
+        Assert.assertTrue(registry.markStarted(started));
+        Assert.assertFalse("a started run is no longer cancelled as a queued one",
+            registry.markCancelledIfQueued(started, "too late"));
+        Assert.assertEquals(RunStatus.RUNNING, registry.getRun("r-started").status);
+    }
+
+    /**
+     * A cancel sent right after the submit can reach the run in the instant a worker picks it up.
+     * It used to be answered as a cancelled queued run while the worker went on to run the script,
+     * un-abortable: the run read RUNNING again and held its pool thread to the script's end. The
+     * delay between submit and cancel sweeps across that instant.
+     */
+    @Test
+    public void cancelRightAfterSubmitNeverLeavesTheRunRunning() throws Exception {
+        File dataDir = Files.createTempDirectory("propertee-teebox-cancel-race").toFile();
+        RunManager runManager = new RunManager(dataDir, 64);
+        List<String> runIds = new java.util.ArrayList<String>();
+        try {
+            runManager.registerScriptVersion("sleeper", "1", "SLEEP(600000)\n", "sleeper", Arrays.asList("test"), true);
+            for (int i = 0; i < 600; i++) {
+                RunInfo run = runManager.submit(request("sleeper"));
+                runIds.add(run.runId);
+                long resumeAt = System.nanoTime() + (i % 60) * 25_000L;   // 0 .. 1.5 ms
+                while (System.nanoTime() < resumeAt) {
+                    Thread.onSpinWait();
+                }
+                Assert.assertTrue(runManager.cancelRun(run.runId, "Cancelled by test"));
+            }
+            for (String runId : runIds) {
+                waitForManagerStatus(runManager, runId, RunStatus.CANCELLED, 10000L);
+            }
+            // No worker may still be inside a script whose cancel was accepted.
+            long deadline = System.currentTimeMillis() + 10000L;
+            while (runManager.getActiveCount() > 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20L);
+            }
+            Assert.assertEquals("workers still running cancelled runs", 0, runManager.getActiveCount());
+        } finally {
+            for (String runId : runIds) {
+                runManager.cancelRun(runId, "cleanup");   // frees the workers if the checks above failed
+            }
+            runManager.shutdown();
+        }
+    }
+
     @Test
     public void outputCapIsConfigurableAndTruncationIsSignalled() throws Exception {
         TeeBoxConfig overrides = new TeeBoxConfig();
@@ -390,6 +495,15 @@ public class RunCancelTest {
         RunRequest request = new RunRequest();
         request.scriptId = scriptId;
         return request;
+    }
+
+    private static RunInfo queuedRun(String runId) {
+        RunInfo run = new RunInfo();
+        run.runId = runId;
+        run.scriptId = "s";
+        run.status = RunStatus.QUEUED;
+        run.createdAt = 1;
+        return run;
     }
 
     private Map<String, Object> waitForStatus(TeeBoxClient client, String runId, String expected, long timeoutMs)

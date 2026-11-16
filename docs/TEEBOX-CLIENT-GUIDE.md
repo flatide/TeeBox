@@ -369,7 +369,7 @@ teebox.runAndStream("export_pdf", null, props, out, 60000L, "batch-svc");
 
 ```jsonc
 {
-  "runId": "run-20260617-133304-465-cf31",  // the key used for subsequent tracking
+  "runId": "run-20260617-133304-465-cf31a07b92e4",  // the key used for subsequent tracking
   "scriptId": "calc_sum",
   "version": "1",                // the version actually selected (the active version)
   "status": "QUEUED",            // or PENDING when the concurrent-run limit is hit — not yet running
@@ -380,6 +380,9 @@ teebox.runAndStream("export_pdf", null, props, out, 60000L, "batch-svc");
 ```
 
 > At submit time there is not yet a `startedAt`/`endedAt`/`resultSummary` (before execution).
+>
+> `runId` is an opaque string: store it and send it back as it is, without parsing it or assuming
+> a length. Servers from 1.43.0 give it a longer random part (36 characters; it was at most 28).
 
 ### 7.3 Status/result lookup
 
@@ -435,7 +438,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // external SHE
 
 ```jsonc
 {
-  "runId": "run-20260617-133304-465-cf31",
+  "runId": "run-20260617-133304-465-cf31a07b92e4",
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",            // QUEUED/PENDING/RUNNING/COMPLETED/FAILED/SERVER_RESTARTED/CANCELLED
@@ -457,7 +460,7 @@ Almost the same as `getRun` but **without `resultSummary`** (status/timestamps f
 ```jsonc
 // Running (RUNNING) — no endedAt
 {
-  "runId": "run-20260617-220708-141-f339",
+  "runId": "run-20260617-220708-141-f3391c5d08ab",
   "scriptId": "slow",
   "version": "1",
   "status": "RUNNING",
@@ -469,7 +472,7 @@ Almost the same as `getRun` but **without `resultSummary`** (status/timestamps f
 
 // After termination (COMPLETED)
 {
-  "runId": "run-20260617-134906-277-7149",
+  "runId": "run-20260617-134906-277-71494be2d6f0",
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",
@@ -489,7 +492,7 @@ String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING
 
 ```jsonc
 {
-  "runId": "run-20260617-133304-465-cf31",
+  "runId": "run-20260617-133304-465-cf31a07b92e4",
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",
@@ -632,7 +635,7 @@ Aggregates that run's tasks by status.
 
 ```jsonc
 {
-  "runId": "run-20260617-222351-196-9c86",
+  "runId": "run-20260617-222351-196-9c86e15a3d72",
   "total": 1,
   "running": 0,
   "completed": 1,
@@ -649,7 +652,7 @@ Returns that script's runs as an **array** (each item has the same shape as the 
 ```jsonc
 [
   {
-    "runId": "run-20260617-222351-196-9c86",
+    "runId": "run-20260617-222351-196-9c86e15a3d72",
     "scriptId": "task_job",
     "version": "1",
     "status": "COMPLETED",

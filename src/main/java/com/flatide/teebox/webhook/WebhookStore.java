@@ -119,13 +119,15 @@ public class WebhookStore {
         }
     }
 
+    // Decoded once, from all the bytes: decoding each 4 KB chunk on its own broke every
+    // multi-byte character that straddled a chunk boundary, and the payload was sent that way.
     private String readAll(InputStream input) throws IOException {
-        StringBuilder sb = new StringBuilder();
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
         byte[] buffer = new byte[4096];
         int len;
         while ((len = input.read(buffer)) != -1) {
-            sb.append(new String(buffer, 0, len, "UTF-8"));
+            bytes.write(buffer, 0, len);
         }
-        return sb.toString();
+        return bytes.toString("UTF-8");
     }
 }

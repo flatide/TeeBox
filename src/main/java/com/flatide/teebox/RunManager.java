@@ -13,12 +13,9 @@ import com.flatide.teebox.webhook.WebhookStore;
 
 import java.io.File;
 import java.io.IOException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -197,7 +194,6 @@ public class RunManager {
                 + " (a number out of range), which JSON cannot represent");
         }
         final RunInfo run = new RunInfo();
-        run.runId = createRunId();
         run.scriptPath = target.displayPath;
         run.scriptId = target.scriptId;
         run.version = target.version;
@@ -219,7 +215,7 @@ public class RunManager {
         boolean isImmediate = scriptInfo != null && scriptInfo.immediate;
         int maxPerScript = scriptInfo != null ? scriptInfo.maxConcurrentRuns : 0;
         run.immediate = isImmediate;
-        runRegistry.register(run);
+        registerUnderNewId(run, false);
 
         // The park/submit decision runs under the lifecycle lock with an authoritative re-check:
         // shutdown() flips the flag and closes the executors under the same lock, so a submit
@@ -538,6 +534,14 @@ public class RunManager {
         return runRegistry.getRun(runId);
     }
 
+    /**
+     * The run for a detail view: as {@link #getRun}, plus the input properties of an archived run,
+     * read from its file (archiving keeps them on disk only). Not for polling or listings.
+     */
+    public RunInfo getRunDetail(String runId) {
+        return runRegistry.getRunWithInput(runId);
+    }
+
     public List<RunThreadInfo> listThreads(String runId) {
         return runRegistry.listThreads(runId);
     }
@@ -617,6 +621,7 @@ public class RunManager {
         // when the engine returns, so a cancel that races either point still lands.
         cancelReasons.putIfAbsent(runId, cancelReason);
         long deadline = System.currentTimeMillis() + 5000L;
+        boolean sawActive = false;   // an earlier look found the run PENDING or QUEUED
         while (true) {
             RunStatus status;
             synchronized (run) {
@@ -635,11 +640,17 @@ public class RunManager {
                 // promoted to QUEUED concurrently — re-judge
             } else if (status == RunStatus.QUEUED) {
                 Future<?> future = activeRuns.get(runId);
-                if (future != null && future.cancel(false)) {
-                    runRegistry.markCancelled(run, cancelReason);
+                // Whether the run is still queued is decided under its monitor, against the
+                // worker's own claim (markStarted): exactly one of the two wins. Future.cancel
+                // cannot decide it — it also answers true for a task a worker has already
+                // started, and that run then executed to its end with the cancel latch gone.
+                if (future != null && runRegistry.markCancelledIfQueued(run, cancelReason)) {
+                    // Not started: the executor drops it. Started in this instant: executeRun
+                    // finds the run CANCELLED and returns without running or cleaning up.
+                    future.cancel(false);
                     cancelReasons.remove(runId);
                     activeRuns.remove(runId);
-                    // The run took a per-script slot at submit but executeRun will never release it.
+                    // The run took a per-script slot at submit and executeRun will not release it.
                     dequeueNextRun(run.scriptId);
                     if (webhookDispatcher != null) {
                         webhookDispatcher.onRunTerminal(run);
@@ -647,7 +658,7 @@ public class RunManager {
                     TeeBoxLog.info("RunManager", "Cancelled queued run " + runId);
                     return true;
                 }
-                // future not yet published, or already picked up by the executor — re-judge
+                // future not yet published, or a worker has just started the run — re-judge
             } else if (status == RunStatus.RUNNING) {
                 Runnable handle = abortHandles.get(runId);
                 if (handle != null) {
@@ -660,10 +671,14 @@ public class RunManager {
                 return true;
             } else {
                 // Terminal (or the run completed while we were latching): drop the latch so it
-                // doesn't leak into a later state, and report "nothing to cancel".
+                // doesn't leak into a later state, and report "nothing to cancel" — unless this
+                // call found the run alive and it then ended CANCELLED: a worker started it
+                // between two looks and executeRun applied the latch before the next one, so
+                // the request was carried out, not refused.
                 cancelReasons.remove(runId);
-                return false;
+                return sawActive && status == RunStatus.CANCELLED;
             }
+            sawActive = true;
             if (System.currentTimeMillis() >= deadline) {
                 // States normally settle in milliseconds; if we are still losing races after 5s,
                 // fall back on the latch (the run WILL be cancelled at handle registration or at
@@ -1000,8 +1015,9 @@ public class RunManager {
      * executor.
      *
      * @throws IllegalArgumentException unknown run
-     * @throws IllegalStateException    non-terminal or archived source (archiving drops the input
-     *                                  properties, so a faithful re-run is no longer possible)
+     * @throws IllegalStateException    non-terminal or archived source (a debug re-run is offered
+     *                                  only until a run is archived; its input is in its file by
+     *                                  then, not in memory)
      */
     public DebugTarget prepareDebugRun(String sourceRunId, String requestedBy) {
         return prepareDebugRun(sourceRunId, requestedBy, null);
@@ -1027,12 +1043,12 @@ public class RunManager {
                     + " — debug re-run needs a finished run");
             }
             if (source.archived) {
-                throw new IllegalStateException("Run " + sourceRunId + " is archived — its input "
-                    + "properties were dropped, so a faithful debug re-run is no longer possible");
+                throw new IllegalStateException("Run " + sourceRunId + " is archived — a debug "
+                    + "re-run is only available until a run is archived");
             }
             // Copy the replay inputs under the SAME monitor as the archive check: the maintenance
-            // archiver clears properties under this monitor (RunRegistry.archiveRunLocked), so a
-            // check-then-copy without it could pass and still replay empty inputs.
+            // archiver moves the properties out of memory under this monitor (RunRegistry.
+            // maintainRuns), so a check-then-copy without it could pass and still replay empty inputs.
             sourceProperties = sanitizeProperties(source.properties);
             sourceMaxIterations = source.maxIterations;
             sourceIterationLimitBehavior = source.iterationLimitBehavior;
@@ -1050,7 +1066,7 @@ public class RunManager {
         validateDebugSource(sourceCode);
         RunInfo previous = runRegistry.findDebugRun(sourceRunId);
         RunInfo run = new RunInfo();
-        run.runId = previous != null ? previous.runId : createRunId();
+        run.runId = previous != null ? previous.runId : null;   // a first debug run gets its id on registration
         run.scriptPath = resolved.displayPath;
         run.scriptId = resolved.scriptId;
         run.version = resolved.version;
@@ -1080,7 +1096,7 @@ public class RunManager {
             TeeBoxLog.info("RunManager", "Reset debug run " + run.runId
                 + " for source Run " + sourceRunId);
         } else {
-            runRegistry.register(run);
+            registerUnderNewId(run, false);
         }
         return new DebugTarget(run, resolved.file, sourceCode);
     }
@@ -1117,7 +1133,6 @@ public class RunManager {
         }
         validateDebugSource(sourceCode);
         RunInfo run = new RunInfo();
-        run.runId = createRunId();
         run.scriptPath = resolved.displayPath;
         run.scriptId = resolved.scriptId;
         run.version = resolved.version;
@@ -1132,7 +1147,7 @@ public class RunManager {
         run.origin = "debug";
         run.debug = true;
         run.debugOf = null;
-        runRegistry.registerTransientDebug(run);
+        registerUnderNewId(run, true);
         return new DebugTarget(run, resolved.file, sourceCode);
     }
 
@@ -1168,8 +1183,14 @@ public class RunManager {
     private void executeRun(final RunInfo run, File scriptFile, final DebugAttach debugAttach,
                             String sourceSnapshot) {
         final List<OutputPublishRule> outputRules = getOutputRulesForScript(run.scriptId, run.version);
+        // True when a cancel made the run terminal while it was still queued: cancelRun has done
+        // everything that ends a queued run (slot, webhook, activeRuns), so nothing is left here.
+        boolean cancelledWhileQueued = false;
         try {
-            runRegistry.markStarted(run);
+            if (!runRegistry.markStarted(run)) {
+                cancelledWhileQueued = true;
+                return;
+            }
             if (debugAttach == null) {
                 scheduleRunTimeout(run);
             }
@@ -1303,26 +1324,33 @@ public class RunManager {
                 runRegistry.markFailed(run, error != null ? error.getMessage() : "Unknown error");
             }
         } finally {
-            java.util.concurrent.ScheduledFuture<?> timeout = timeoutTasks.remove(run.runId);
-            if (timeout != null) {
-                timeout.cancel(false);
+            if (!cancelledWhileQueued) {
+                finishRun(run);
             }
-            abortHandles.remove(run.runId);
-            cancelReasons.remove(run.runId);
-            if (webhookDispatcher != null) {
-                webhookDispatcher.onRunTerminal(run);
-            }
-            // Same lock as submitToExecutor's put: guarantees the put happened before this
-            // remove, so a fast run can never re-insert its own completed Future.
-            synchronized (run) {
-                activeRuns.remove(run.runId);
-            }
-            // A debug run never took a per-script slot (prepareDebugRun bypasses the limit), so
-            // releasing one here would over-admit: it would decrement a counter it never
-            // incremented, or promote a pending run beyond the script's max.
-            if (!run.debug) {
-                dequeueNextRun(run.scriptId);
-            }
+        }
+    }
+
+    /** What ends every run that executeRun started, however it ended. */
+    private void finishRun(RunInfo run) {
+        java.util.concurrent.ScheduledFuture<?> timeout = timeoutTasks.remove(run.runId);
+        if (timeout != null) {
+            timeout.cancel(false);
+        }
+        abortHandles.remove(run.runId);
+        cancelReasons.remove(run.runId);
+        if (webhookDispatcher != null) {
+            webhookDispatcher.onRunTerminal(run);
+        }
+        // Same lock as submitToExecutor's put: guarantees the put happened before this
+        // remove, so a fast run can never re-insert its own completed Future.
+        synchronized (run) {
+            activeRuns.remove(run.runId);
+        }
+        // A debug run never took a per-script slot (prepareDebugRun bypasses the limit), so
+        // releasing one here would over-admit: it would decrement a counter it never
+        // incremented, or promote a pending run beyond the script's max.
+        if (!run.debug) {
+            dequeueNextRun(run.scriptId);
         }
     }
 
@@ -1416,14 +1444,31 @@ public class RunManager {
         return (Map<String, Object>) TypeChecker.deepCopy(props);
     }
 
+    /**
+     * Gives the run an id and registers it under that id. The id's random part makes a clash a
+     * once-in-ages event, and the registry's refusal makes one harmless: the id is drawn again
+     * instead of the new run replacing the one already there. (The id used to be the time plus 16
+     * bits of the nanosecond clock, and two submits in one millisecond could share it.)
+     */
+    private void registerUnderNewId(RunInfo run, boolean transientDebug) {
+        for (int attempt = 0; attempt < 8; attempt++) {
+            run.runId = createRunId();
+            boolean registered = transientDebug
+                ? runRegistry.registerTransientDebug(run)
+                : runRegistry.registerIfAbsent(run);
+            if (registered) {
+                return;
+            }
+        }
+        throw new IllegalStateException("Could not allocate a unique run id");
+    }
+
     private static String createRunId() {
-        return "run-" + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.ENGLISH).format(new Date()) +
-            "-" + Integer.toHexString((int) (System.nanoTime() & 0xffff));
+        return UniqueIds.timestamped("run-", "yyyyMMdd-HHmmss-SSS", "-", 6);
     }
 
     private static String createHostInstanceId() {
-        return "teebox-" + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.ENGLISH).format(new Date()) +
-            "-" + Integer.toHexString((int) (System.nanoTime() & 0xffff));
+        return UniqueIds.timestamped("teebox-", "yyyyMMdd-HHmmss-SSS", "-", 6);
     }
 
     private String trimToNull(String value) {

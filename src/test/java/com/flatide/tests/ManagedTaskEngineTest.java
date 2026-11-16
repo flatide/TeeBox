@@ -450,6 +450,57 @@ public class ManagedTaskEngineTest {
         }
     }
 
+    /**
+     * A bounded tail starts wherever the byte budget puts it, which can be inside a multi-byte
+     * character. What is left of that character is not text: decoding it put U+FFFD at the head
+     * of the tail. The engine's own task runner skips those bytes; so do TeeBox's readers.
+     */
+    @Test
+    public void aBoundedOutputTailNeverStartsInsideACharacter() throws Exception {
+        Assume.assumeFalse("Skipped on Windows: requires Unix process control", IS_WINDOWS);
+        File baseDir = Files.createTempDirectory("managed-task-tail-utf8").toFile();
+        File script = writeScript(baseDir, "korean.sh",
+            "i=0; while [ $i -lt 200 ]; do printf '가나다라마바사아자차카타파하\\n'; i=$((i+1)); done");
+        ManagedTaskEngine engine = new ManagedTaskEngine(baseDir.getAbsolutePath(), "host-tail-utf8");
+        com.flatide.teebox.UnixTaskRunner runner =
+            new com.flatide.teebox.UnixTaskRunner(new File(baseDir, "direct").getAbsolutePath());
+        try {
+            TaskRequest request = new TaskRequest();
+            request.command = script.getAbsolutePath();
+            request.runId = "run-tail-utf8";
+            Task task = engine.execute(request);
+            engine.waitForCompletion(task.taskId, 10_000L);
+            Task direct = runner.execute(request);
+            runner.waitForCompletion(direct.taskId, 10_000L);
+
+            String full = engine.getCombinedOutput(task.taskId);
+            Assert.assertEquals(200 * 15, full.length());   // 14 characters and a newline per line
+            Assert.assertEquals(full, runner.getCombinedOutput(direct.taskId));
+
+            // Thirteen consecutive budgets: whatever the layout, most of them start mid-character.
+            for (int maxBytes = 100; maxBytes <= 112; maxBytes++) {
+                assertCleanTail(full, engine.getStdoutTail(task.taskId, maxBytes), maxBytes, maxBytes);
+                int stdoutBudget = (int) (maxBytes * 3L / 4L);   // stderr is empty; stdout gets 3/4
+                assertCleanTail(full, engine.getCombinedOutput(task.taskId, maxBytes), stdoutBudget, maxBytes);
+                assertCleanTail(full, runner.getCombinedOutput(direct.taskId, maxBytes), stdoutBudget, maxBytes);
+            }
+            // A budget that covers the whole file starts at its first byte and drops nothing.
+            Assert.assertEquals(full, engine.getStdoutTail(task.taskId, 1024 * 1024));
+        } finally {
+            engine.shutdown();
+            runner.shutdown();
+        }
+    }
+
+    private static void assertCleanTail(String full, String tail, int budget, int maxBytes) throws Exception {
+        String what = "tail for maxBytes=" + maxBytes + ": ";
+        Assert.assertTrue(what + "starts with a broken character", tail.indexOf('\uFFFD') < 0);
+        Assert.assertTrue(what + "is not the end of the output", full.endsWith(tail));
+        int bytes = tail.getBytes("UTF-8").length;
+        Assert.assertTrue(what + bytes + " bytes for a budget of " + budget,
+            bytes <= budget && bytes > budget - 3);
+    }
+
     private static void waitForFile(File file, long timeoutMs) throws InterruptedException {
         long start = System.currentTimeMillis();
         while (!file.exists() && (System.currentTimeMillis() - start) < timeoutMs) {

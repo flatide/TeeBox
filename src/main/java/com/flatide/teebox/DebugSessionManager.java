@@ -8,12 +8,9 @@ import com.flatide.propertee2.interp.DebugReturn;
 import com.flatide.propertee2.parser.ProperTeeParser;
 import com.flatide.propertee2.runtime.TypeChecker;
 
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
@@ -183,7 +180,11 @@ public class DebugSessionManager {
     private Session submitSession(final RunManager.DebugTarget target, String sourceRunId,
                                   String capturedSource, Integer errorLine,
                                   List<Integer> breakpoints, boolean transientDebug) {
-        final Session session = new Session(createSessionId(), target.run.runId, sourceRunId,
+        String sessionId = createSessionId();
+        while (sessions.containsKey(sessionId)) {   // never replace a live session; openLock makes this atomic
+            sessionId = createSessionId();
+        }
+        final Session session = new Session(sessionId, target.run.runId, sourceRunId,
             target.run.scriptId, target.run.version, capturedSource,
             firstEntryLine(capturedSource), errorLine, transientDebug, target.run.properties,
             target.run.maxIterations, "warn".equals(target.run.iterationLimitBehavior));
@@ -1116,7 +1117,7 @@ public class DebugSessionManager {
     }
 
     private static String createSessionId() {
-        return "dbg-" + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.ENGLISH).format(new Date())
-            + "-" + Integer.toHexString((int) (System.nanoTime() & 0xffff));
+        // 64 random bits: the id is also what a console presents to reach its session.
+        return UniqueIds.timestamped("dbg-", "yyyyMMdd-HHmmss-SSS", "-", 8);
     }
 }

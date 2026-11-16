@@ -38,24 +38,40 @@ public class RunRegistry {
         loadPersistedRuns();
     }
 
+    /** Registers and saves a new run; an id that is already registered is an error, never a replacement. */
     public void register(RunInfo run) {
-        runs.put(run.runId, run);
-        try {
-            persistRun(run);
-        } catch (RuntimeException e) {
-            runs.remove(run.runId);   // a run that cannot be saved is not left behind, QUEUED forever
-            throw e;
+        if (!registerIfAbsent(run)) {
+            throw new IllegalStateException("Run id is already registered: " + run.runId);
         }
     }
 
+    /**
+     * Registers and saves a new run unless its id is taken; false then, with the registered run
+     * untouched. The caller draws another id — an id clash must not let one run replace another
+     * in the registry and in its file.
+     */
+    public boolean registerIfAbsent(RunInfo run) {
+        if (runs.putIfAbsent(run.runId, run) != null) {
+            return false;
+        }
+        try {
+            persistRun(run);
+        } catch (RuntimeException e) {
+            runs.remove(run.runId, run);   // a run that cannot be saved is not left behind, QUEUED forever
+            throw e;
+        }
+        return true;
+    }
+
     /** Register a script-editor debug attempt in memory only. It participates in the normal run
-     *  lifecycle while the session is executing, but is never written or exposed by list/count. */
-    public void registerTransientDebug(RunInfo run) {
+     *  lifecycle while the session is executing, but is never written or exposed by list/count.
+     *  False when the id is taken, as in {@link #registerIfAbsent}. */
+    public boolean registerTransientDebug(RunInfo run) {
         if (run == null || run.runId == null || !run.debug || run.debugOf != null) {
             throw new IllegalArgumentException("Transient debug run requires debug=true and no source Run");
         }
         run.transientDebug = true;
-        runs.put(run.runId, run);
+        return runs.putIfAbsent(run.runId, run) == null;
     }
 
     /** Remove a finished script-editor debug attempt after its session captured the result. */
@@ -81,6 +97,19 @@ public class RunRegistry {
     public RunInfo getRun(String runId) {
         RunInfo run = runs.get(runId);
         return run != null ? copyRun(run) : null;
+    }
+
+    /**
+     * As {@link #getRun}, with the input properties also when the run is archived. Archiving takes
+     * the input out of memory and leaves it in the run's file, so this reads that file: meant for
+     * a detail view of one run, not for status polling or listings.
+     */
+    public RunInfo getRunWithInput(String runId) {
+        RunInfo run = getRun(runId);
+        if (run != null && run.archived && run.properties.isEmpty()) {
+            run.properties = runStore.loadProperties(runId);
+        }
+        return run;
     }
 
     public RunInfo requireRun(String runId) {
@@ -368,14 +397,24 @@ public class RunRegistry {
         }
     }
 
-    public void markStarted(RunInfo run) {
+    /**
+     * The worker's claim on a run: RUNNING, unless the run is already terminal — then nothing
+     * changes and the answer is false. A cancel can reach a queued run in the instant a worker
+     * picks it up ({@link #markCancelledIfQueued}); the run's monitor lets exactly one of the two
+     * win, and a worker that lost must not bring the cancelled run back to RUNNING.
+     */
+    public boolean markStarted(RunInfo run) {
         synchronized (run) {
+            if (isTerminal(run.status)) {
+                return false;
+            }
             run.status = RunStatus.RUNNING;
             run.startedAt = Long.valueOf(System.currentTimeMillis());
             if (run.endedAt != null) {
                 run.endedAt = null;
             }
             persistRun(run);
+            return true;
         }
     }
 
@@ -437,6 +476,21 @@ public class RunRegistry {
         }
     }
 
+    /**
+     * The canceller's claim on a queued run: CANCELLED if it is still QUEUED, in one step under
+     * the run's monitor; false when a worker has started it (or it has left the queue any other
+     * way) — the caller then cancels it as whatever it has become. See {@link #markStarted}.
+     */
+    public boolean markCancelledIfQueued(RunInfo run, String message) {
+        synchronized (run) {
+            if (run.status != RunStatus.QUEUED) {
+                return false;
+            }
+            markCancelled(run, message);
+            return true;
+        }
+    }
+
     public void appendLog(RunInfo run, boolean stdout, String line) {
         synchronized (run) {
             List<String> target = stdout ? run.stdoutLines : run.stderrLines;
@@ -483,7 +537,7 @@ public class RunRegistry {
             if (run != null) {
                 synchronized (run) {
                     if (!run.transientDebug) {
-                        runStore.save(run.copy());
+                        runStore.save(storedForm(run));
                     }
                 }
             }
@@ -504,7 +558,10 @@ public class RunRegistry {
                 if (!run.archived) {
                     if (runRetentionMs >= 0 && ageMs >= runRetentionMs) {
                         archiveRunLocked(run);
-                        persistRun(run);
+                        // Saved with the input still in the record: the file keeps it until
+                        // purge. Only then does memory let it go — a save that fails leaves it.
+                        saveAsIs(run);
+                        run.properties = new LinkedHashMap<String, Object>();
                     }
                     continue;
                 }
@@ -547,6 +604,11 @@ public class RunRegistry {
                 }
                 runStore.save(run);
             }
+            if (run.archived) {
+                // An archived run's input stays in its file (see archiveRunLocked); memory does
+                // not take it back on a restart.
+                run.properties = new LinkedHashMap<String, Object>();
+            }
             runs.put(run.runId, run);
         }
     }
@@ -563,9 +625,12 @@ public class RunRegistry {
         // and callers must be able to fetch it any time before purge (it used to be dropped here,
         // leaving only the 300-char resultSummary). The heap cost of archived results staying
         // resident for the archive window is accepted — scripts with large payloads should return
-        // STREAM_FILE (tiny descriptor; bytes stream from disk). Input properties can be equally
-        // large but are diagnostics, not the product; published stays (small captured key-values).
-        run.properties = new LinkedHashMap<String, Object>();
+        // STREAM_FILE (tiny descriptor; bytes stream from disk). published stays (small captured
+        // key-values). The input properties can be as large as a result and nothing reads them
+        // but a detail view, so they move out of memory — not away: the caller saves this record
+        // with them, then clears them from the in-memory record, and from then on the run's file
+        // is where they live (getRunWithInput reads them back; storedForm carries them through
+        // a later save).
     }
 
     private List<String> trimTail(List<String> lines, int maxLines) {
@@ -628,7 +693,27 @@ public class RunRegistry {
         if (run.transientDebug) {
             return;
         }
+        runStore.save(storedForm(run));
+    }
+
+    /** Saves the record exactly as it is in memory (the archive step: the input is still there). */
+    private void saveAsIs(RunInfo run) {
+        synchronized (dirtyLock) {
+            dirtyRunIds.remove(run.runId);
+        }
         runStore.save(run.copy());
+    }
+
+    /**
+     * The record to write for a run. An archived run's input is in its file only, so a save from
+     * the in-memory record would erase it: the stored input is carried over instead.
+     */
+    private RunInfo storedForm(RunInfo run) {
+        RunInfo copy = run.copy();
+        if (copy.archived && copy.properties.isEmpty()) {
+            copy.properties = runStore.loadProperties(run.runId);
+        }
+        return copy;
     }
 
     private boolean isTerminal(RunStatus status) {

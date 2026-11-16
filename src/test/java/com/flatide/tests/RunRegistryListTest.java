@@ -153,6 +153,91 @@ public class RunRegistryListTest {
                 Integer.valueOf(1), ((java.util.Map<?, ?>) reloaded.resultData).get("n"));
     }
 
+    /**
+     * Archival takes the input properties out of memory but leaves them in the run's file until
+     * purge, so a detail view can still show them ({@code getRunWithInput}). They used to be
+     * erased from both at archive time. The input is long and Korean on purpose: the file is
+     * read back across several 4 KB chunks, which used to break characters on the boundaries.
+     */
+    @Test
+    public void archivedRunKeepsItsInputInItsFileUntilPurge() throws Exception {
+        File dataDir = tempDir();
+        RunRegistry registry = new RunRegistry(dataDir, 200, 50, 20, 0L, 7L * 24 * 3600_000L);
+        RunInfo run = run("r1", "s", RunStatus.COMPLETED, 1, false);
+        run.endedAt = Long.valueOf(1L);
+        StringBuilder memo = new StringBuilder();
+        for (int i = 0; i < 700; i++) {
+            memo.append("\uC785\uB825\uAC12 ").append(i).append(' ');   // "입력값 <i> "
+        }
+        java.util.Map<String, Object> nested = new java.util.LinkedHashMap<String, Object>();
+        nested.put("ids", new ArrayList<Object>(java.util.Arrays.asList(1, 2, 3)));
+        java.util.Map<String, Object> input = new java.util.LinkedHashMap<String, Object>();
+        input.put("count", 5);
+        input.put("ratio", 0.5);
+        input.put("memo", memo.toString());
+        input.put("nested", nested);
+        run.properties.putAll(input);
+        registry.register(run);
+
+        registry.maintainRuns();
+
+        Assert.assertTrue(registry.getRun("r1").archived);
+        Assert.assertTrue("memory lets the input go", registry.getRawRun("r1").properties.isEmpty());
+        Assert.assertTrue("polling and listings read no file", registry.getRun("r1").properties.isEmpty());
+        Assert.assertEquals("a detail view reads the input back, shapes intact",
+                input, registry.getRunWithInput("r1").properties);
+
+        // A later save of the archived record must not erase the input its file holds.
+        registry.markDirty(registry.getRawRun("r1"));
+        registry.flushDirty();
+        Assert.assertEquals(input, registry.getRunWithInput("r1").properties);
+
+        RunRegistry restarted = new RunRegistry(dataDir, 200, 50, 20, 0L, 7L * 24 * 3600_000L);
+        Assert.assertTrue("a restart does not take the input back into memory",
+                restarted.getRawRun("r1").properties.isEmpty());
+        Assert.assertEquals(input, restarted.getRunWithInput("r1").properties);
+
+        // Purge is where the input goes, with the rest of the run.
+        RunRegistry purging = new RunRegistry(dataDir, 200, 50, 20, 0L, 0L);
+        purging.maintainRuns();
+        Assert.assertNull(purging.getRunWithInput("r1"));
+        Assert.assertFalse(new File(new File(dataDir, "runs"), "r1.json").exists());
+    }
+
+    /** A run that is not archived answers a detail view from memory, as before. */
+    @Test
+    public void detailOfAnUnarchivedRunComesFromMemory() throws Exception {
+        RunRegistry registry = registry(tempDir());
+        RunInfo run = run("r1", "s", RunStatus.COMPLETED, 1, false);
+        run.properties.put("count", 5);
+        registry.register(run);
+
+        RunInfo detail = registry.getRunWithInput("r1");
+        Assert.assertFalse(detail.archived);
+        Assert.assertEquals(Integer.valueOf(5), detail.properties.get("count"));
+        Assert.assertNull(registry.getRunWithInput("nope"));
+    }
+
+    /** An id that is taken is refused: a clash must never let one run replace another. */
+    @Test
+    public void aRegisteredRunIdIsNeverReplaced() throws Exception {
+        File dataDir = tempDir();
+        RunRegistry registry = registry(dataDir);
+        RunInfo first = run("same-id", "alpha", RunStatus.QUEUED, 1, false);
+        registry.register(first);
+
+        RunInfo second = run("same-id", "beta", RunStatus.QUEUED, 2, false);
+        Assert.assertFalse(registry.registerIfAbsent(second));
+        try {
+            registry.register(second);
+            Assert.fail("a second run under a registered id must be refused");
+        } catch (IllegalStateException expected) {
+            Assert.assertTrue(expected.getMessage().contains("same-id"));
+        }
+        Assert.assertSame(first, registry.getRawRun("same-id"));
+        Assert.assertEquals("alpha", registry(dataDir).getRun("same-id").scriptId);   // the file too
+    }
+
     @Test
     public void runsSurviveARestartWithoutAnOnDiskIndex() throws Exception {
         File dataDir = tempDir();

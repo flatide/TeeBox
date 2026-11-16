@@ -371,7 +371,7 @@ teebox.runAndStream("export_pdf", null, props, out, 60000L, "batch-svc");
 
 ```jsonc
 {
-  "runId": "run-20260617-133304-465-cf31",  // 이후 추적에 쓰는 키
+  "runId": "run-20260617-133304-465-cf31a07b92e4",  // 이후 추적에 쓰는 키
   "scriptId": "calc_sum",
   "version": "1",                // 실제로 선택된 버전(활성 버전)
   "status": "QUEUED",            // 또는 동시 실행 제한 시 PENDING — 아직 실행 전
@@ -382,6 +382,9 @@ teebox.runAndStream("export_pdf", null, props, out, 60000L, "batch-svc");
 ```
 
 > 제출 시점에는 `startedAt`/`endedAt`/`resultSummary` 가 아직 없습니다(실행 전).
+>
+> `runId` 는 불투명한(opaque) 문자열입니다: 파싱하거나 길이를 가정하지 말고 받은 그대로 저장·전달하세요.
+> 1.43.0 서버부터 난수 부분이 길어졌습니다(36자, 이전에는 최대 28자).
 
 ### 7.3 상태/결과 조회
 
@@ -437,7 +440,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // 외부 SHELL
 
 ```jsonc
 {
-  "runId": "run-20260617-133304-465-cf31",
+  "runId": "run-20260617-133304-465-cf31a07b92e4",
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",            // QUEUED/PENDING/RUNNING/COMPLETED/FAILED/SERVER_RESTARTED/CANCELLED
@@ -459,7 +462,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // 외부 SHELL
 ```jsonc
 // 실행 중(RUNNING) — endedAt 없음
 {
-  "runId": "run-20260617-220708-141-f339",
+  "runId": "run-20260617-220708-141-f3391c5d08ab",
   "scriptId": "slow",
   "version": "1",
   "status": "RUNNING",
@@ -471,7 +474,7 @@ List<String> terr = teebox.getRunTaskStderrLines(runId);         // 외부 SHELL
 
 // 종료 후(COMPLETED)
 {
-  "runId": "run-20260617-134906-277-7149",
+  "runId": "run-20260617-134906-277-71494be2d6f0",
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",
@@ -491,7 +494,7 @@ String s = String.valueOf(teebox.getRunStatus(runId).get("status")); // "RUNNING
 
 ```jsonc
 {
-  "runId": "run-20260617-133304-465-cf31",
+  "runId": "run-20260617-133304-465-cf31a07b92e4",
   "scriptId": "calc_sum",
   "version": "1",
   "status": "COMPLETED",
@@ -633,7 +636,7 @@ if (Boolean.TRUE.equals(env.get("ok"))) {
 
 ```jsonc
 {
-  "runId": "run-20260617-222351-196-9c86",
+  "runId": "run-20260617-222351-196-9c86e15a3d72",
   "total": 1,
   "running": 0,
   "completed": 1,
@@ -650,7 +653,7 @@ if (Boolean.TRUE.equals(env.get("ok"))) {
 ```jsonc
 [
   {
-    "runId": "run-20260617-222351-196-9c86",
+    "runId": "run-20260617-222351-196-9c86e15a3d72",
     "scriptId": "task_job",
     "version": "1",
     "status": "COMPLETED",

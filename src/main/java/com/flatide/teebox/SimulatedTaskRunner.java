@@ -13,8 +13,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -57,8 +55,7 @@ public class SimulatedTaskRunner implements TaskRunner {
         if (!tasksDir.exists()) {
             tasksDir.mkdirs();
         }
-        this.taskIdPrefix = "sim" + new SimpleDateFormat("yyyyMMddHHmmssSSS", Locale.ENGLISH).format(new Date())
-                + Integer.toHexString((int) (System.nanoTime() & 0xffff));
+        this.taskIdPrefix = UniqueIds.timestamped("sim", "yyyyMMddHHmmssSSS", "", 4);
     }
 
     @Override

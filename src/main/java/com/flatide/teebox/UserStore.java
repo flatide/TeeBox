@@ -494,13 +494,15 @@ public class UserStore {
         InputStream input = null;
         try {
             input = new FileInputStream(file);
-            StringBuilder sb = new StringBuilder();
+            // Decoded once, from all the bytes: decoding each 4 KB chunk on its own broke a
+            // multi-byte character that straddled a chunk boundary — and a username is a key here.
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
             byte[] buffer = new byte[4096];
             int len;
             while ((len = input.read(buffer)) != -1) {
-                sb.append(new String(buffer, 0, len, "UTF-8"));
+                bytes.write(buffer, 0, len);
             }
-            return sb.toString();
+            return bytes.toString("UTF-8");
         } finally {
             if (input != null) {
                 try {

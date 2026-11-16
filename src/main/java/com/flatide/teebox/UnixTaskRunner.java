@@ -16,9 +16,7 @@ import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.RandomAccessFile;
 import java.io.Writer;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,8 +47,7 @@ public class UnixTaskRunner implements TaskRunner {
         if (!tasksDir.exists()) {
             tasksDir.mkdirs();
         }
-        this.taskIdPrefix = "t" + new SimpleDateFormat("yyyyMMddHHmmssSSS", Locale.ENGLISH).format(new Date())
-                + Integer.toHexString((int) (System.nanoTime() & 0xffff));
+        this.taskIdPrefix = UniqueIds.timestamped("t", "yyyyMMddHHmmssSSS", "", 4);
         this.setsidAvailable = checkSetsidAvailable();
     }
 
@@ -233,7 +230,14 @@ public class UnixTaskRunner implements TaskRunner {
                 if (n <= 0) break;
                 total += n;
             }
-            return new String(buf, 0, total, "UTF-8");
+            // A tail that does not start at the file's first byte may start inside a multi-byte
+            // character. Skip what is left of it (UTF-8 continuation bytes), as the engine's own
+            // runner does, so the tail never opens with U+FFFD only because of where it was cut.
+            int from = 0;
+            if (start > 0) {
+                while (from < total && (buf[from] & 0xC0) == 0x80) from++;
+            }
+            return new String(buf, from, total - from, "UTF-8");
         } catch (IOException e) {
             return "";
         } finally {

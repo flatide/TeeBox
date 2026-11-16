@@ -584,16 +584,16 @@ sleep 중인 fiber 만 그 자리에서 중단되고, 해당 run 의 다른 `mul
 Active (0~24h) -> Archived (24h~7d) -> Purged (7d~)
 ```
 - Active: 전체 로그 (stdout/stderr 최대 200줄), 스레드 정보, 입력 properties, 결과 유지
-- Archived: 스레드 목록·입력 properties 제거, stdout 50줄/stderr 20줄로 축소. **run 결과(`resultData`)는 purge 까지 유지** (1.15.1+ — 이전 버전은 아카이브 시 삭제되어 300자 `resultSummary` 만 남았음)
-- Purged: 디스크에서 삭제
+- Archived: 스레드 목록 제거, stdout 50줄/stderr 20줄로 축소. **run 결과(`resultData`)는 purge 까지 유지** (1.15.1+ — 이전 버전은 아카이브 시 삭제되어 300자 `resultSummary` 만 남았음). **입력 properties 는 메모리에서 run 파일(`runs/<runId>.json`)로 옮겨져 purge 까지 유지** (1.43.0+): run detail 페이지와 `GET /api/admin/runs/{runId}` 는 파일에서 읽어 보여주고, run 목록에서는 빈 값으로 나옴. (이전 버전은 아카이브 시 입력값을 삭제했으므로, 그 버전이 아카이브한 run 에는 보여줄 입력값이 없음)
+- Purged: 디스크에서 삭제 (입력값·결과 포함)
 
 위 기간은 **종료 시각 기준** 기본값이며 archive 후 경과 시간이 아닙니다. 실행/대기 중인 run은
 archive하지 않습니다. `propertee.teebox.runRetentionMs` / `runArchiveRetentionMs`를 파일
 또는 `-D`로 지정합니다(§1 참고). 예를 들어 `14d` / `60d`는 종료 14일 후 archive, 종료 60일
 후 purge이며 74일 후가 아닙니다. `endedAt`이 없으면 `createdAt`을 기준으로 합니다.
 Run/task는 기동 시 한 번, 이후 `maintenanceIntervalMs`마다 스윕하며 새로 archive된 항목의
-purge는 후속 스윕에서 수행합니다. 보존 기간을 늘려도 기존 archive를 되돌리거나 이미 제거된
-입력값·로그를 복구하지는 않습니다.
+purge는 후속 스윕에서 수행합니다. 보존 기간을 늘려도 기존 archive를 되돌리거나 이미 축소된
+로그(또는 이전 버전이 삭제한 입력값)를 복구하지는 않습니다.
 
 **Task:**
 - 동일한 retention 구조 (`propertee.task.retentionMs`, `propertee.task.archiveRetentionMs`),
@@ -647,7 +647,7 @@ run detail 페이지에서 확인 가능한 정보:
 - **Script Output**: ProperTee `PRINT()` 출력
 - **Script Errors**: `PRINT_ERR()` 출력
 - **Task Output**: 각 task(외부 프로세스)의 stdout/stderr
-- **Input Properties**: run에 전달된 입력값
+- **Input Properties**: run에 전달된 입력값 (archive된 run도 파일에서 읽어 표시)
 - 실행 중인 run은 auto-refresh로 출력이 실시간 추적됨
 
 ### 로깅
