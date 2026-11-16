@@ -2,7 +2,10 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.43.0
+
+**333 TeeBox tests (plus 26 admin UI script tests) green. Packaged with propertee2 0.46.1 at
+`a31dd82dd9bf`.**
 
 - **Embedded engine upgraded to propertee2 0.46.1** (no language change). One cancel ends a run
   inside `multi ... limit K`: a worker waiting for its turn no longer runs its first statement —
