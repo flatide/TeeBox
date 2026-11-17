@@ -2,7 +2,10 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.44.0
+
+**339 TeeBox tests (plus 26 admin UI script tests) green. Packaged with propertee2 0.47.0 at
+`53b0c2cf19f6`.**
 
 - **Embedded engine upgraded to propertee2 0.47.0** (no language change).
   - **Function calls nest 64 deep.** The call that would be the 65th is a runtime error at that
