@@ -92,6 +92,20 @@ Environment variables:
 - `JAVA_HOME` — Java installation path
 - `JAVA_OPTS` — JVM options (`-Xmx`, `-D`, etc.). System properties take precedence over the configuration file.
 
+Two JVM settings TeeBox depends on:
+
+- **Headless drawing** (1.44.0+). `THUMBNAIL` draws without a screen: TeeBox sets
+  `java.awt.headless=true` itself unless `JAVA_OPTS` gives the property. Older versions left the
+  decision to the JDK, which takes it from the `DISPLAY` variable of the shell that started the
+  server — started with a `DISPLAY` that cannot be reached (a terminal with X forwarding), every
+  `THUMBNAIL` fails with `Could not initialize class java.awt.GraphicsEnvironment$LocalGE` until a
+  restart. On such a version start the server without `DISPLAY`, or with
+  `JAVA_OPTS="-Djava.awt.headless=true"`.
+- **Thread stack size.** Leave `-Xss` at the JVM default (1 MB on Linux x64) or larger. A script
+  may nest function calls 64 deep (engine 0.47.0, TeeBox 1.44.0+); with a smaller stack, a call
+  written deep inside blocks can overflow the Java stack before that limit, and the run fails
+  with `Unknown error` instead of the limit's message.
+
 ### Admin UI login (multi-user)
 
 The `/admin` HTML UI has its own cookie/session login, **independent of the API Bearer tokens**:

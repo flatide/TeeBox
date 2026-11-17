@@ -2,6 +2,33 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+- **Embedded engine upgraded to propertee2 0.47.0** (no language change).
+  - **Function calls nest 64 deep.** The call that would be the 65th is a runtime error at that
+    call — `Function calls exceeded maximum depth (64). Check for a function that calls itself
+    without end.` — which fails the run, or the thread inside `multi`. The engine had no limit: a
+    function calling itself without end ran until the Java stack overflowed, and the run then
+    failed with `Unknown error`; where each call lets another thread of the script run first, it
+    went on growing on the server's heap instead, up to an `OutOfMemoryError`. A script that
+    nests calls deeper than 64 on purpose now fails and has to be written as a loop.
+  - **A Java Error in a `multi` thread is that thread's error.** `THUMBNAIL` inside `multi` on a
+    server whose AWT could not start (below) left the run `COMPLETED` with the entry still
+    `{"status": "running"}` and the stack trace on the server's stderr only. The entry is now
+    `{"status": "error"}` with `Runtime Error: NoClassDefFoundError: Could not initialize class …`,
+    the run's stderr has the `[THREAD ERROR]` line, and the run's thread list shows the thread as
+    `ERROR`.
+- **`THUMBNAIL` no longer depends on the `DISPLAY` of the shell that started the server.** TeeBox
+  never set `java.awt.headless`, so the JDK decided it from `DISPLAY`: on a server started from a
+  terminal with X forwarding whose display was gone, the first `THUMBNAIL` tried to open it and
+  failed, and every later one failed with
+  `Could not initialize class java.awt.GraphicsEnvironment$LocalGE` until the server was
+  restarted without `DISPLAY`. `Thumbnailer` now sets `java.awt.headless=true` ahead of its first
+  drawing call unless the property is given (`JAVA_OPTS`), which is left as it is.
+- **A failed thread in a run's thread list always says why.** An error without a message (a Java
+  `StackOverflowError`) is shown by its type (`RunManager.threadErrorMessage`); the reason was
+  empty.
+
 ## 1.43.0
 
 **333 TeeBox tests (plus 26 admin UI script tests) green. Packaged with propertee2 0.46.1 at

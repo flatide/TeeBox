@@ -21,6 +21,17 @@ import javax.imageio.ImageIO;
  */
 final class Thumbnailer {
 
+    // A server draws without a screen. Left unset, the JDK decides that from the DISPLAY variable of
+    // whichever shell started the process: with one set (a terminal with X forwarding), the first
+    // drawing call tries to open that X display, and once that fails every later call in the JVM
+    // fails with "Could not initialize class java.awt.GraphicsEnvironment$LocalGE" until a restart.
+    // Set here, ahead of the first use of any java.awt class; an operator's explicit setting stays.
+    static {
+        if (System.getProperty("java.awt.headless") == null) {
+            System.setProperty("java.awt.headless", "true");
+        }
+    }
+
     private Thumbnailer() {}
 
     static Map<String, Object> create(List<Object> args, StreamResultSupport policy) {

@@ -92,6 +92,19 @@ Purge는 **archived인 run/task만 대상**입니다. 예를 들어 `runRetentio
 - `JAVA_HOME` - Java 설치 경로
 - `JAVA_OPTS` - JVM 옵션 (`-Xmx`, `-D` 등). 시스템 프로퍼티는 설정 파일보다 우선
 
+TeeBox 동작에 영향을 주는 JVM 설정 두 가지:
+
+- **화면 없는 그리기(headless)** (1.44.0+). `THUMBNAIL`은 화면 없이 그립니다. `JAVA_OPTS`로
+  `java.awt.headless`를 주지 않으면 TeeBox가 직접 `true`로 설정합니다. 이전 버전은 JDK의 판단에
+  맡겼고, JDK는 서버를 시작한 셸의 `DISPLAY` 변수로 판단합니다 — 접속할 수 없는 `DISPLAY`가 설정된
+  채로(X 포워딩 터미널 등) 시작하면 재시작할 때까지 모든 `THUMBNAIL`이
+  `Could not initialize class java.awt.GraphicsEnvironment$LocalGE`로 실패합니다. 그런 버전에서는
+  `DISPLAY` 없이 시작하거나 `JAVA_OPTS="-Djava.awt.headless=true"`를 주십시오.
+- **스레드 스택 크기.** `-Xss`는 JVM 기본값(Linux x64에서 1 MB) 이상으로 두십시오. 스크립트는 함수
+  호출을 64단계까지 겹칠 수 있는데(엔진 0.47.0, TeeBox 1.44.0+), 스택이 더 작으면 블록 안쪽 깊이
+  쓰인 호출이 그 한계보다 먼저 Java 스택을 넘겨, run이 한계 메시지 대신 `Unknown error`로
+  실패합니다.
+
 ### 관리 UI 로그인 (멀티유저)
 
 `/admin` HTML UI 는 **API Bearer 토큰과 독립된** 쿠키/세션 로그인을 갖습니다:

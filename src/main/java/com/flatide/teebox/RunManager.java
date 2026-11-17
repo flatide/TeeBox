@@ -1405,9 +1405,18 @@ public class RunManager {
             info.resultSummary = summarizeValue(thread.result);
         }
         if (thread.error != null) {
-            info.errorMessage = thread.error.getMessage();
+            info.errorMessage = threadErrorMessage(thread.error);
         }
         return info;
+    }
+
+    /**
+     * What a failed thread shows as its reason. A Java Error may carry no message
+     * (StackOverflowError): its type is shown then, so a failed thread always says why.
+     */
+    static String threadErrorMessage(Throwable error) {
+        String message = error.getMessage();
+        return message != null ? message : error.getClass().getSimpleName();
     }
 
     private String summarizeValue(Object value) {
