@@ -151,6 +151,18 @@ The `/admin` HTML UI has its own cookie/session login, **independent of the API 
 ./bin/run-teebox.sh
 ```
 
+A start that fails ends the process with **exit code 1** and gives the reason as one
+`Start failed: …` line in `teebox.log` and on stderr (1.45.0+; before, the reason went to stderr
+only, and in some cases a process stayed behind that listened nowhere and kept doing its
+background work). A service manager can take that exit code as the failure. Typical refusals:
+
+- The port is taken (`BindException`) — checked before the data directory is touched, so nothing
+  has changed. For two servers started on the same port at the same moment, see §6 "Known
+  limitations".
+- A sub-directory of dataDir that the server's user cannot list or search — see §6 "dataDir
+  Structure".
+- A legacy `index.json` that cannot be deleted — see §6 "dataDir Structure".
+
 ### Dependencies
 
 - Linux x86_64 Java 25 runtime (`runtime/bin/java`) or system Java 25+
@@ -494,11 +506,19 @@ TeeBox spawns an external process (task) for every `SHELL()` call in a ProperTee
 
 ```
 TeeBox (Java)
-  └── [setsid] /bin/sh <generated command file>
-        └── user command
+  └── [setsid] /bin/sh -c …  (teebox-task)   ← the task's PID, process group leader
+        └── /bin/sh command.sh               ← the shell the command runs in ($$)
+              └── user command
 ```
 
 - On Linux/macOS, `UnixTaskRunner` executes tasks through `/bin/sh`.
+- The task's process (`teebox-task`) runs the command in **a shell of its own** and records that
+  shell's exit status as the task's exit code (1.45.0+). An `exit`, an `exec`, a failure under
+  `set -e` or a line that cannot be parsed ends the command's shell only, so an exit code is
+  left. A command killed by a signal exits with 128 plus the signal. The task directory's
+  `command.sh` holds the command as given and nothing else.
+- The task's process ignores TERM/INT/HUP and waits for the command's shell. When the process is
+  gone without an exit code, the task is recorded as `lost`, with its output.
 - When `setsid` is available, a separate process group is used for isolation.
 - On Windows, a simulated task runner is used instead of real external execution.
 - One task engine is shared by **all concurrent runs** and its lifecycle belongs to the server: a
@@ -518,6 +538,8 @@ TeeBox first attempts a process group kill, and falls back to collecting and kil
 ### Killing Directly from the Shell (Not Recommended)
 
 Process termination must go through the TeeBox UI or Admin API. Terminating only a single process with `kill <PID>` from a shell may leave child processes orphaned and will cause inconsistencies with TeeBox's lifecycle management.
+
+Since 1.45.0 a TERM, INT or HUP sent to the task's PID (`teebox-task`) is ignored and does nothing. `kill -9 <task PID>` makes the task `lost` while the command keeps running.
 
 ### Graceful Shutdown
 
@@ -590,6 +612,16 @@ do_something_else
 wait $WORKER_PID
 ```
 
+### A Command's Exit Code and `$$` (1.45.0+)
+
+- `exit N` ends the command, and `N` is the task's exit code (in the `SHELL()` result and the task
+  detail). In earlier versions `exit` also skipped the line that records the exit code, so even
+  `exit 0` left a task without one.
+- `$$` in a command is the PID of the shell the command runs in — neither the task's PID nor its
+  process group id. `kill -- -$$` therefore does not reach the task's process group. End the
+  background processes you started by the PIDs you kept from `$!`.
+- Ending the task's own process from the command, as `kill -9 $PPID` does, makes the task `lost`.
+
 ### `SLEEP()` Behavior (ProperTee v2 runtime)
 
 On the ProperTee v2 runtime (TeeBox 1.0.0+), **`SLEEP(ms)` is fully cooperative wherever it
@@ -614,7 +646,7 @@ restart (`SERVER_RESTARTED`).
 Active (0~24h) → Archived (24h~7d) → Purged (7d~)
 ```
 - Active: Full logs (up to 200 lines of stdout/stderr), thread info, input properties, result retained
-- Archived: Thread list removed, stdout trimmed to 50 lines and stderr to 20 lines. **The run's result (`resultData`) is kept until purge** (1.15.1+ — older versions dropped it at archival, leaving only the 300-char `resultSummary`). **The input properties move from memory to the run's file** (`runs/<runId>.json`) and stay there until purge (1.43.0+): the run detail page and `GET /api/admin/runs/{runId}` read them from the file, while run lists show them empty. (Older versions erased the input at archival; runs archived by them have none to show.)
+- Archived: Thread list removed, stdout trimmed to 50 lines and stderr to 20 lines. **The run's result (`resultData`) is kept until purge** (1.15.1+ — older versions dropped it at archival, leaving only the 300-char `resultSummary`). **The input properties move from memory to the run's file** (`runs/<runId>.json`) and stay there until purge (1.43.0+): the run detail page and `GET /api/admin/runs/{runId}` read them from the file, while run lists show them empty. When the file cannot give the input, the detail says so instead of showing it empty (the API's `inputError` field, 1.45.0+). (Older versions erased the input at archival; runs archived by them have none to show.)
 - Purged: Deleted from disk, input and result included
 
 These are the default ages **since completion**, not time since archival; running/queued runs
@@ -652,7 +684,12 @@ Operational notes:
   files when the file is missing.
 - Do not place stray files in `runs/` — every `*.json` there is scanned at startup. A corrupt or
   foreign file is skipped with a warning (a run file's `runId` must match its filename), never
-  blocking startup.
+  blocking startup. The server does not write over a file it skipped.
+- The server's user must be able to list and search `runs/`, `tasks/`, `script-registry/`,
+  `webhooks/` and `users/` (`r-x` on POSIX, and write access to save anything). Otherwise **the
+  start is refused** with a message naming the directory and the permission it needs (1.45.0+;
+  before, such a directory read as empty and the server ran as if the runs, tasks or scripts in
+  it did not exist). Something other than a directory in its place refuses the start too.
 
 ### Known limitations and operating cautions
 

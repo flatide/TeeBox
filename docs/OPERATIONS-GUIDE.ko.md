@@ -148,6 +148,16 @@ TeeBox 동작에 영향을 주는 JVM 설정 두 가지:
 ./bin/run-teebox.sh
 ```
 
+기동이 실패하면 프로세스는 **종료 코드 1** 로 끝나고, 이유를 `teebox.log` 와 stderr 에
+`Start failed: …` 한 줄로 남깁니다(1.45.0+; 이전에는 이유가 stderr 에만 남고, 경우에 따라
+리스너 없이 백그라운드 작업만 하는 프로세스가 남았습니다). 서비스 관리자에서는 이 종료 코드로
+실패를 판단하면 됩니다. 기동을 거절하는 대표적인 경우:
+
+- 포트가 이미 사용 중(`BindException`) — 데이터 디렉터리를 건드리기 전에 확인하므로 아무것도
+  바뀌지 않습니다. 같은 포트로 두 서버를 동시에 기동하는 경우는 §6 "알려진 제약" 참고.
+- dataDir 의 하위 디렉터리를 서버 사용자가 나열하거나 탐색할 수 없음 — §6 "dataDir 구조" 참고.
+- 삭제할 수 없는 레거시 `index.json` — §6 "dataDir 구조" 참고.
+
 ### 의존성
 
 - Linux x86_64 Java 25 runtime (`runtime/bin/java`) 또는 시스템 Java 25+
@@ -504,11 +514,18 @@ TeeBox는 ProperTee 스크립트의 `SHELL()` 호출마다 외부 프로세스(t
 
 ```
 TeeBox (Java)
-  └── [setsid] /bin/sh <generated command file>
-        └── user command
+  └── [setsid] /bin/sh -c …  (teebox-task)   ← task 의 PID, process group 리더
+        └── /bin/sh command.sh               ← 명령을 실행하는 shell ($$)
+              └── user command
 ```
 
 - Linux/macOS에서는 `UnixTaskRunner`가 `/bin/sh` 기반으로 task를 실행
+- task 의 프로세스(`teebox-task`)는 명령을 **별도의 shell** 로 실행하고, 그 shell 의 종료 상태를
+  task 의 종료 코드로 기록합니다(1.45.0+). 명령 안의 `exit`, `exec`, `set -e` 에 의한 종료,
+  파싱할 수 없는 줄은 명령의 shell 만 끝내므로 종료 코드가 남습니다. 시그널로 끝나면 128+시그널
+  번호입니다. task 디렉터리의 `command.sh` 에는 주어진 명령만 들어 있습니다.
+- task 의 프로세스는 TERM/INT/HUP 를 무시하고 명령의 shell 이 끝날 때까지 기다립니다. 종료 코드
+  없이 프로세스가 사라지면 task 는 `lost` 로 기록되며, 출력은 그대로 남습니다.
 - `setsid`가 있으면 별도 process group 격리를 시도
 - Windows는 실제 외부 실행 대신 simulated task runner 사용
 - task 엔진 하나를 **모든 동시 run이 공유**하며 수명은 서버가 소유합니다: run이 끝나도 엔진을
@@ -528,6 +545,8 @@ TeeBox는 process group kill을 우선 시도하고, 필요 시 하위 프로세
 ### Shell에서 직접 kill (비권장)
 
 프로세스 중단은 반드시 TeeBox UI 또는 Admin API를 사용해야 합니다. Shell에서 `kill <PID>`로 단일 프로세스만 종료하면 자식 프로세스가 orphan으로 남을 수 있으며, TeeBox의 lifecycle 관리와 불일치가 발생합니다.
+
+1.45.0 부터 task 의 PID(`teebox-task`)에 보낸 TERM/INT/HUP 는 무시되어 아무 일도 일어나지 않습니다. `kill -9 <task PID>` 는 task 를 `lost` 로 만들지만 명령은 계속 실행됩니다.
 
 ---
 
@@ -573,6 +592,16 @@ do_something_else
 wait $WORKER_PID
 ```
 
+### 명령의 종료 코드와 `$$` (1.45.0+)
+
+- `exit N` 은 명령을 끝내고 `N` 이 task 의 종료 코드가 됩니다(`SHELL()` 결과와 task 상세에서
+  확인). 이전 버전에서는 `exit` 가 종료 코드를 기록하는 줄까지 건너뛰어, `exit 0` 도 종료 코드
+  없는 task 로 남았습니다.
+- 명령 안의 `$$` 는 명령을 실행하는 shell 의 PID 이며, task 의 PID 도 process group 번호도
+  아닙니다. 따라서 `kill -- -$$` 로는 task 의 process group 에 신호가 가지 않습니다. 자신이
+  띄운 background 프로세스는 `$!` 로 받아 둔 PID 로 직접 종료하세요.
+- `kill -9 $PPID` 처럼 task 의 프로세스를 직접 끝내면 task 는 `lost` 가 됩니다.
+
 ### `SLEEP()` 동작 (ProperTee v2 런타임)
 
 ProperTee v2 런타임(TeeBox 1.0.0+)에서 **`SLEEP(ms)` 는 위치와 무관하게 완전 협력적**입니다 —
@@ -597,7 +626,7 @@ sleep 중인 fiber 만 그 자리에서 중단되고, 해당 run 의 다른 `mul
 Active (0~24h) -> Archived (24h~7d) -> Purged (7d~)
 ```
 - Active: 전체 로그 (stdout/stderr 최대 200줄), 스레드 정보, 입력 properties, 결과 유지
-- Archived: 스레드 목록 제거, stdout 50줄/stderr 20줄로 축소. **run 결과(`resultData`)는 purge 까지 유지** (1.15.1+ — 이전 버전은 아카이브 시 삭제되어 300자 `resultSummary` 만 남았음). **입력 properties 는 메모리에서 run 파일(`runs/<runId>.json`)로 옮겨져 purge 까지 유지** (1.43.0+): run detail 페이지와 `GET /api/admin/runs/{runId}` 는 파일에서 읽어 보여주고, run 목록에서는 빈 값으로 나옴. (이전 버전은 아카이브 시 입력값을 삭제했으므로, 그 버전이 아카이브한 run 에는 보여줄 입력값이 없음)
+- Archived: 스레드 목록 제거, stdout 50줄/stderr 20줄로 축소. **run 결과(`resultData`)는 purge 까지 유지** (1.15.1+ — 이전 버전은 아카이브 시 삭제되어 300자 `resultSummary` 만 남았음). **입력 properties 는 메모리에서 run 파일(`runs/<runId>.json`)로 옮겨져 purge 까지 유지** (1.43.0+): run detail 페이지와 `GET /api/admin/runs/{runId}` 는 파일에서 읽어 보여주고, run 목록에서는 빈 값으로 나옴. 파일에서 입력값을 읽을 수 없으면 detail 은 입력값을 비워 두는 대신 그 사실을 표시함(API 는 `inputError` 필드, 1.45.0+). (이전 버전은 아카이브 시 입력값을 삭제했으므로, 그 버전이 아카이브한 run 에는 보여줄 입력값이 없음)
 - Purged: 디스크에서 삭제 (입력값·결과 포함)
 
 위 기간은 **종료 시각 기준** 기본값이며 archive 후 경과 시간이 아닙니다. 실행/대기 중인 run은
@@ -634,7 +663,12 @@ dataDir/
   재구축합니다.
 - `runs/` 에 임의 파일을 두지 마세요 — 기동 시 모든 `*.json` 을 스캔합니다. 손상되었거나
   무관한 파일은 경고 후 건너뛰며(run 파일의 `runId` 는 파일명과 일치해야 함) 기동을 막지는
-  않습니다.
+  않습니다. 건너뛴 파일은 서버가 덮어쓰지 않습니다.
+- 서버 사용자는 `runs/`, `tasks/`, `script-registry/`, `webhooks/`, `users/` 를 나열하고
+  탐색할 수 있어야 합니다(POSIX 에서 `r-x`, 저장하려면 쓰기 권한도). 그렇지 않으면 **기동을
+  거부**하며, 메시지에 해당 디렉터리와 필요한 권한이 나옵니다(1.45.0+; 이전에는 빈 디렉터리로
+  보고 기동해, 그 안의 run·task·스크립트가 없는 것처럼 동작했습니다). 디렉터리 자리에 파일이
+  있어도 기동을 거부합니다.
 
 ### 알려진 제약과 운영 시 주의
 

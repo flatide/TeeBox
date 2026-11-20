@@ -2,6 +2,85 @@
 
 All notable changes to TeeBox are documented here.
 
+## Unreleased
+
+Fixes from reviews of 1.43.0 and 1.44.0. The embedded engine is unchanged (propertee2 0.47.0).
+What the reviews found and was left to operating rules rather than code is listed in the
+operations guide, §6 "Known limitations and operating cautions".
+
+- **A SHELL command runs in a shell of its own.** The task's process is a small recording shell
+  (`teebox-task`) that runs the command file in another `/bin/sh` and writes that shell's exit
+  status as the task's exit code. Before, the command and the line that wrote the exit code were
+  one script: a command's `exit` — `exit 0` included — `exec`, a failure under `set -e` or a line
+  that could not be parsed ended the script first, and the task was recorded as `lost` without an
+  exit code. A command killed by a signal now has 128 plus the signal. `command.sh` holds the
+  command as given. For script authors: `$$` is the command's shell, neither the task's PID nor
+  its process group, so `kill -- -$$` does not reach the group; and a TERM, INT or HUP sent to the
+  task's PID alone is ignored (the task's process waits for the command).
+- **A task whose process is gone at the first look without an exit code is recorded.** Starting
+  such a task failed with "Detached task did not reach a controllable running state" and nothing
+  was kept. It is now a `lost` task, with the reason and its output — and so it also counts in the
+  order of a run's `SHELL()` calls that an output rule's `taskIndex` refers to.
+- **Killing a task restored after a restart waits for its process group.** TERM goes to the group,
+  and KILL follows when a process of the group is still there after up to a second. The wait and
+  the verdict went by the group's first process: a child that ignored TERM kept running under a
+  task recorded as killed, and a child that needed a moment to finish was killed at once.
+- **A simulated task (Windows) is never signalled.** Its PID is a made-up number; the kill of a
+  restored task, and a debug Restart's clean-up of one, signalled whatever process had it.
+- **Deletes do not follow symbolic links.** The task purge, deleting a whole script and a debug
+  Restart's task clean-up remove a link and leave what it points to; they went through a link to
+  a directory and deleted what was there. A task directory that is itself a link is not archived
+  through it (so never purged), and only the link is removed when an archived one is purged.
+  Single-file operations still follow links (see the guide).
+- **A run file the server cannot read is not replaced.** A file that cannot be read, is not JSON,
+  holds another run's record, has something other than an object as its input, or has a number
+  out of range is skipped at start and never written over; for an archived run the input is then
+  *unknown*, not empty — the run page says so, and `GET /api/admin/runs/{runId}` adds
+  `inputError`. Such a file used to be read as a run without input and saved that way by the next
+  save — at a start, for every run the server had stopped on. A `null` where a list belongs in a
+  run file (`threads`, `imports`, the output lines) is read as an empty list instead of failing
+  the start.
+- **A save that fails is taken again.** A status, an archive or a purge whose file could not be
+  written or deleted stays waiting for the next flush or sweep, and is reported once rather than
+  at every flush. Before, an archive was marked in memory first (a failed save left it archived
+  in memory only, and no sweep looked at it again); a purge dropped the run from memory first (its
+  file came back at the next start); and a failing save in a cancel or a hand-over could leave a
+  place under a script's concurrency limit that was never given back, so later runs of that
+  script waited for good. A start holds one archived input at a time, where it held all of them
+  at once and could run out of heap.
+- **A run's input keeps its shape.** A `null` in the input stays the language's `null` (it reached
+  the script as a value of no type and was left out of the file), and an integer stays an integer
+  after a restart (`5` read back as `5.0`, and the next save wrote that down).
+- **A debug Restart saves first.** The record of the next attempt is written, then the ended
+  attempt's tasks are cleared, then the run in memory changes; a Restart refused at any step leaves
+  the run as its last attempt ended and puts its file back. It used to reset the run in memory
+  first: a save that failed left a QUEUED run without a result that nothing would execute.
+- **A cancel is for one execution of a run.** A debug session's Stop is asked of its own attempt:
+  a Stop still on its way when a Restart started the next attempt under the same run id ended
+  that one. A cancel that a worker carried out between two looks is answered as a cancel, not as
+  "already finished" (409).
+- **A run's values nest at most 1000 levels** (the depth `JSON_PARSE` reads). A deeper result fails
+  the run with `The result is nested more than 1000 levels deep`, a deeper input is refused with
+  400 (`props is nested more than 1000 levels deep`), and a run file holding a deeper value is
+  skipped at start. Values some thousand levels deep overflowed the stack of the code that copies
+  and writes them, and the run ended without a reason.
+- **A start asks for its port first, and a failed start ends the process.** A port that is taken
+  is found before anything is done to the data directory; a second start by mistake used to save
+  the running server's runs as `SERVER_RESTARTED`, purge and seed before it failed. A data
+  sub-directory the server cannot list or search refuses the start, with the directory and the
+  permission it needs; it read as empty. Whatever refuses a start is logged as `Start failed: …`
+  in `teebox.log` and on stderr, and the process ends with exit code 1 — it could stay behind,
+  listening nowhere and still sweeping the data directory.
+- **The admin UI stays behind its login when the roster cannot be told.** It is open without a
+  login only when `users/` is there and holds no `users.json`. A `users/` closed to the server or
+  gone (data directory moved, unmounted) read as "no roster" and opened the UI to everyone; it now
+  keeps the login, and nobody can log in until it is back. A `users.json` that cannot be read,
+  leads nowhere or does not parse is not replaced by the configured `adminUser` at start; a roster
+  that reads as empty (`[]`, an empty file) is seeded as before.
+- **The run page's refresh keeps the input card.** The page refreshes every five seconds; it now
+  leaves the input it shows in place instead of reading and parsing an archived run's file each
+  time.
+
 ## 1.44.0
 
 **339 TeeBox tests (plus 26 admin UI script tests) green. Packaged with propertee2 0.47.0 at
