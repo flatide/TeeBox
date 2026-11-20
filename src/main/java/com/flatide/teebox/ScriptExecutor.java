@@ -218,10 +218,14 @@ public class ScriptExecutor {
             // {} here, exactly like `return` / `return {}`. (An explicit `return null` still produces the
             // first-class null value; that is a deliberate value, not absence.)
             Object outputData;
-            if (mainStepper.hasExplicitReturn()) {
-                outputData = TypeChecker.deepCopy(result);
-            } else if (visitor.variables.containsKey("result")) {
-                outputData = TypeChecker.deepCopy(visitor.variables.get("result"));
+            if (mainStepper.hasExplicitReturn() || visitor.variables.containsKey("result")) {
+                Object value = mainStepper.hasExplicitReturn() ? result : visitor.variables.get("result");
+                // A result nested deeper than a run's values may be fails the run (see ValueDepth),
+                // before anything walks it.
+                if (ValueDepth.exceeds(value)) {
+                    return ExecutionResult.failed("The result is " + ValueDepth.tooDeep());
+                }
+                outputData = TypeChecker.deepCopy(value);
             } else {
                 outputData = new LinkedHashMap<String, Object>();
             }
@@ -242,6 +246,11 @@ public class ScriptExecutor {
             // A script failure, settled by the engine when the error happened (spec v0.37.0): a stop
             // asked for before it would have made this ProperTeeAborted. When the script's
             // `on error` handler ran, the run keeps the value the handler returned.
+            if (error.handled() && ValueDepth.exceeds(error.handlerResult())) {
+                // The value the handler returned is deeper than a run's values may be: not kept.
+                return ExecutionResult.scriptFailed(error.getMessage() + " (the value the 'on error' handler"
+                    + " returned is " + ValueDepth.tooDeep() + ", and was not kept)", null);
+            }
             return ExecutionResult.scriptFailed(error.getMessage(),
                 error.handled() ? TypeChecker.deepCopy(error.handlerResult()) : null);
         } catch (Throwable error) {

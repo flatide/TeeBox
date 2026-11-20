@@ -184,7 +184,7 @@ public class DebugSessionManager {
         while (sessions.containsKey(sessionId)) {   // never replace a live session; openLock makes this atomic
             sessionId = createSessionId();
         }
-        final Session session = new Session(sessionId, target.run.runId, sourceRunId,
+        final Session session = new Session(sessionId, target.run.runId, target.attempt, sourceRunId,
             target.run.scriptId, target.run.version, capturedSource,
             firstEntryLine(capturedSource), errorLine, transientDebug, target.run.properties,
             target.run.maxIterations, "warn".equals(target.run.iterationLimitBehavior));
@@ -511,15 +511,19 @@ public class DebugSessionManager {
 
     /**
      * End a session's run: cancel latch + engine abort + paused-handler wake, via
-     * {@link RunManager#cancelRun} (which also kills the run's SHELL tasks). The run unwinds to
-     * CANCELLED with {@code reason}; the session becomes ENDED when it does.
+     * {@link RunManager#cancelRunAttempt} (which also kills the run's SHELL tasks). The run
+     * unwinds to CANCELLED with {@code reason}; the session becomes ENDED when it does.
+     *
+     * <p>The cancel is asked of the attempt this session runs, not of the run id: a Restart puts
+     * the next session's attempt under the same id, and a kill of this session that is still on
+     * its way then must find nothing to end. (It went by the run id, and ended the new session.)
      */
     public boolean kill(String sessionId, String reason) {
         Session session = find(sessionId);
         if (session == null || Session.ENDED.equals(session.state)) {
             return false;
         }
-        return runManager.cancelRun(session.runId, reason);
+        return runManager.cancelRunAttempt(session.runId, session.attempt, reason);
     }
 
     /** Sessions whose run has not ended yet (the capacity the executor is holding). */
@@ -573,6 +577,10 @@ public class DebugSessionManager {
 
         public final String sessionId;
         public final String runId;
+        /** Which execution of {@link #runId} this session runs ({@link RunInfo#attempt}). The run
+         *  id outlives the session — the next session for the same source Run executes under it
+         *  again — so what the session asks of its run, a cancel, is asked of this attempt. */
+        public final long attempt;
         public final String sourceRunId;
         /** True when launched from a script page: no parent Run and no retained Run history. */
         public final boolean transientDebug;
@@ -627,11 +635,13 @@ public class DebugSessionManager {
             });
 
         @SuppressWarnings("unchecked")
-        Session(String sessionId, String runId, String sourceRunId, String scriptId, String version,
-                String sourceCode, Integer entryLine, Integer errorLine, boolean transientDebug,
-                Map<String, Object> inputProperties, int maxIterations, boolean warnLoops) {
+        Session(String sessionId, String runId, long attempt, String sourceRunId, String scriptId,
+                String version, String sourceCode, Integer entryLine, Integer errorLine,
+                boolean transientDebug, Map<String, Object> inputProperties, int maxIterations,
+                boolean warnLoops) {
             this.sessionId = sessionId;
             this.runId = runId;
+            this.attempt = attempt;
             this.sourceRunId = sourceRunId;
             this.transientDebug = transientDebug;
             this.scriptId = scriptId;

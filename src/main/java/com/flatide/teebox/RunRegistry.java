@@ -22,6 +22,10 @@ public class RunRegistry {
     private final ConcurrentHashMap<String, RunInfo> runs = new ConcurrentHashMap<String, RunInfo>();
     private final Set<String> dirtyRunIds = new HashSet<String>();
     private final Object dirtyLock = new Object();
+    /** Runs whose last save failed and has been reported; each is reported once, not at every flush. */
+    private final Set<String> unsavedRunIds = ConcurrentHashMap.newKeySet();
+    /** Archived runs whose input could not be read and has been reported; once each, not at every look. */
+    private final Set<String> unreadableInputRunIds = ConcurrentHashMap.newKeySet();
 
     public RunRegistry(File dataDir,
                        int maxLogLines,
@@ -55,7 +59,7 @@ public class RunRegistry {
             return false;
         }
         try {
-            persistRun(run);
+            writeRun(run);
         } catch (RuntimeException e) {
             runs.remove(run.runId, run);   // a run that cannot be saved is not left behind, QUEUED forever
             throw e;
@@ -103,11 +107,32 @@ public class RunRegistry {
      * As {@link #getRun}, with the input properties also when the run is archived. Archiving takes
      * the input out of memory and leaves it in the run's file, so this reads that file: meant for
      * a detail view of one run, not for status polling or listings.
+     *
+     * @throws RunStore.RunFileUnreadableException when that file does not give the input — it is
+     *         gone, cannot be read, or does not hold this run's record: the input is then
+     *         unknown, not empty; {@link #getRun} still answers with the rest of the run
      */
     public RunInfo getRunWithInput(String runId) {
         RunInfo run = getRun(runId);
         if (run != null && run.archived && run.properties.isEmpty()) {
-            run.properties = runStore.loadProperties(runId);
+            try {
+                run.properties = runStore.loadProperties(runId);
+            } catch (RunStore.RunFileUnreadableException e) {
+                // Reported here, once for as long as it lasts: a run page left open asks again at
+                // every refresh, and so may a client that polls the detail.
+                if (unreadableInputRunIds.add(runId)) {
+                    if (runs.containsKey(runId)) {
+                        TeeBoxLog.warn("RunRegistry", "The input of run " + runId
+                                + " cannot be shown: " + e.getMessage());
+                    } else {
+                        unreadableInputRunIds.remove(runId);   // purged meanwhile: its file is gone with it
+                    }
+                }
+                throw e;
+            }
+            if (unreadableInputRunIds.remove(runId)) {
+                TeeBoxLog.info("RunRegistry", "The input of run " + runId + " can be read again");
+            }
         }
         return run;
     }
@@ -148,58 +173,149 @@ public class RunRegistry {
         return found;
     }
 
+    // ---- re-using a debug Run for another execution ----
+    //
+    // A terminal debug Run is executed again under the id it has. That is a full reset of the
+    // attempt: no result, output, thread, archive, callback or execution timestamp of the earlier
+    // attempt may bleed into the new one (createdAt stays — it is the same Run identity, and the
+    // run list sorts by it). It is done in two steps, with the caller's own work between them
+    // (RunManager.prepareDebugRun clears the ended attempt's tasks there):
+    //
+    //   saveDebugReset      the record of the next attempt goes to the run's file; memory is as it was
+    //   completeDebugReset  the run in memory becomes that record, and its next attempt begins
+    //   abandonDebugReset   instead of completing: the file goes back to what memory still holds
+    //
+    // Whatever refuses the new attempt — the save, or the caller's work — the run is then what
+    // its last attempt left. (The record used to be reset in memory before it was saved. A save
+    // that failed left a QUEUED run without a result that nothing would ever execute, so every
+    // later reset was refused as "still QUEUED", and the next flush wrote that over the result the
+    // file still held.)
+
     /**
-     * Re-initialize a terminal debug Run for another execution while preserving its runId. This
-     * is a full attempt reset: no result, output, thread, archive, callback, or execution timestamp
-     * from the previous attempt is allowed to bleed into the new one. {@code createdAt} remains
-     * stable because this is the same Run identity (and run-list sorting relies on its immutability).
+     * First step of re-using a debug Run: writes the record of its next attempt to the run's
+     * file. Nothing in memory changes, and the caller follows with {@link #completeDebugReset} or
+     * {@link #abandonDebugReset}.
+     *
+     * @throws IllegalStateException when the run is not terminal
+     * @throws RuntimeException      when the record could not be saved; nothing has changed
      */
-    public RunInfo resetDebugRun(RunInfo existing, RunInfo prepared) {
+    public void saveDebugReset(RunInfo existing, RunInfo prepared) {
+        requireSameRun(existing, prepared);
+        synchronized (existing) {
+            requireTerminal(existing);
+            if (existing.transientDebug) {
+                return;   // never in a file
+            }
+            RunInfo reset = existing.copy();
+            applyDebugReset(reset, prepared);
+            runStore.save(reset);
+        }
+    }
+
+    /**
+     * Second step: the run in memory becomes the record {@link #saveDebugReset} wrote, and its
+     * next {@link RunInfo#attempt} begins. Returns the registry-owned run.
+     *
+     * <p>Nothing is written here, so nothing can fail on the disk. The file already holds this
+     * record — unless something wrote it in between (a flush or an archive of the ended record)
+     * or deleted it (a purge), which is why the run is left marked for the next flush: the file
+     * comes to say what memory holds, as after every change. The first thing the new attempt does
+     * (its start, or its being called off) saves the run anyway.
+     *
+     * @throws IllegalStateException when the run is no longer terminal
+     */
+    public RunInfo completeDebugReset(RunInfo existing, RunInfo prepared) {
+        requireSameRun(existing, prepared);
+        synchronized (existing) {
+            requireTerminal(existing);
+            applyDebugReset(existing, prepared);
+            existing.attempt++;
+            // A maintenance purge may have removed this terminal candidate after findDebugRun()
+            // returned it: the run is registered again.
+            runs.put(existing.runId, existing);
+            markDirty(existing.runId);
+            return existing;
+        }
+    }
+
+    /**
+     * Instead of the second step: the attempt {@link #saveDebugReset} wrote down is not going to
+     * begin, and the run's file has to say again what the run still is in memory. A save that
+     * fails here is retried by the flush like any other. (An archived run's input comes back from
+     * the record being replaced, which holds the same input: a debug attempt runs on the input of
+     * its source Run, every time.) Does not throw.
+     */
+    public void abandonDebugReset(RunInfo existing) {
+        if (existing == null || existing.runId == null) {
+            return;
+        }
+        synchronized (existing) {
+            if (existing.transientDebug) {
+                return;
+            }
+            if (runs.get(existing.runId) != existing) {
+                // Purged while the reset was on its way: the reset record is all the disk has of
+                // this run, and nothing in memory is left to put in its place.
+                try {
+                    runStore.delete(existing.runId);
+                } catch (RuntimeException e) {
+                    TeeBoxLog.warn("RunRegistry", "Run " + existing.runId + " was purged while a debug"
+                            + " re-run of it was refused, and the record of that re-run could not be"
+                            + " deleted: " + e.getMessage());
+                }
+                return;
+            }
+            persistOrRetryLater(existing);
+        }
+    }
+
+    private static void requireSameRun(RunInfo existing, RunInfo prepared) {
         if (existing == null || prepared == null || existing.runId == null
                 || !existing.runId.equals(prepared.runId)) {
             throw new IllegalArgumentException("Debug run reset requires the same runId");
         }
-        synchronized (existing) {
-            if (!isTerminal(existing.status)) {
-                throw new IllegalStateException("Debug run " + existing.runId + " is still "
-                    + existing.status + " and cannot be re-used yet");
-            }
-            existing.scriptPath = prepared.scriptPath;
-            existing.scriptId = prepared.scriptId;
-            existing.version = prepared.version;
-            existing.scriptAbsolutePath = prepared.scriptAbsolutePath;
-            existing.imports = new ArrayList<ResolvedModuleInfo>();
-            existing.status = RunStatus.QUEUED;
-            existing.archived = false;
-            existing.immediate = false;
-            existing.submittedBy = prepared.submittedBy;
-            existing.origin = "debug";
-            existing.submittedFrom = null;
-            existing.debug = true;
-            existing.debugOf = prepared.debugOf;
-            existing.startedAt = null;
-            existing.endedAt = null;
-            existing.maxIterations = prepared.maxIterations;
-            existing.iterationLimitBehavior = prepared.iterationLimitBehavior;
-            existing.timeoutMs = 0;
-            existing.stdoutTotalLines = 0;
-            existing.stderrTotalLines = 0;
-            existing.hasExplicitReturn = false;
-            existing.resultData = null;
-            existing.resultSummary = null;
-            existing.errorMessage = null;
-            existing.properties = prepared.properties;
-            existing.threads = new ArrayList<RunThreadInfo>();
-            existing.stdoutLines = new ArrayList<String>();
-            existing.stderrLines = new ArrayList<String>();
-            existing.published = null;
-            existing.callback = null;
-            // A maintenance purge may have removed this terminal candidate after findDebugRun()
-            // returned it. Re-publish the canonical object before saving the reset record.
-            runs.put(existing.runId, existing);
-            persistRun(existing);
-            return existing;
+    }
+
+    /** The caller holds the run's monitor. */
+    private void requireTerminal(RunInfo existing) {
+        if (!isTerminal(existing.status)) {
+            throw new IllegalStateException("Debug run " + existing.runId + " is still "
+                + existing.status + " and cannot be re-used yet");
         }
+    }
+
+    /** Makes {@code run} the record of a debug attempt that has not started: nothing of an earlier attempt stays. */
+    private static void applyDebugReset(RunInfo run, RunInfo prepared) {
+        run.scriptPath = prepared.scriptPath;
+        run.scriptId = prepared.scriptId;
+        run.version = prepared.version;
+        run.scriptAbsolutePath = prepared.scriptAbsolutePath;
+        run.imports = new ArrayList<ResolvedModuleInfo>();
+        run.status = RunStatus.QUEUED;
+        run.archived = false;
+        run.immediate = false;
+        run.submittedBy = prepared.submittedBy;
+        run.origin = "debug";
+        run.submittedFrom = null;
+        run.debug = true;
+        run.debugOf = prepared.debugOf;
+        run.startedAt = null;
+        run.endedAt = null;
+        run.maxIterations = prepared.maxIterations;
+        run.iterationLimitBehavior = prepared.iterationLimitBehavior;
+        run.timeoutMs = 0;
+        run.stdoutTotalLines = 0;
+        run.stderrTotalLines = 0;
+        run.hasExplicitReturn = false;
+        run.resultData = null;
+        run.resultSummary = null;
+        run.errorMessage = null;
+        run.properties = prepared.properties;
+        run.threads = new ArrayList<RunThreadInfo>();
+        run.stdoutLines = new ArrayList<String>();
+        run.stderrLines = new ArrayList<String>();
+        run.published = null;
+        run.callback = null;
     }
 
     public void markDirty(RunInfo run) {
@@ -386,14 +502,14 @@ public class RunRegistry {
     public void markPending(RunInfo run) {
         synchronized (run) {
             run.status = RunStatus.PENDING;
-            persistRun(run);
+            persistOrRetryLater(run);
         }
     }
 
     public void markQueued(RunInfo run) {
         synchronized (run) {
             run.status = RunStatus.QUEUED;
-            persistRun(run);
+            persistOrRetryLater(run);
         }
     }
 
@@ -472,7 +588,7 @@ public class RunRegistry {
             // carry that result into its own save.
             run.resultData = null;
             run.resultSummary = null;
-            persistRun(run);
+            persistOrRetryLater(run);
         }
     }
 
@@ -532,13 +648,45 @@ public class RunRegistry {
             runIds = new ArrayList<String>(dirtyRunIds);
             dirtyRunIds.clear();
         }
-        for (String runId : runIds) {
-            RunInfo run = runs.get(runId);
-            if (run != null) {
+        int next = 0;
+        try {
+            for (; next < runIds.size(); next++) {
+                String runId = runIds.get(next);
+                RunInfo run = runs.get(runId);
+                if (run == null) {
+                    unsavedRunIds.remove(runId);
+                    continue;
+                }
                 synchronized (run) {
-                    if (!run.transientDebug) {
-                        runStore.save(storedForm(run));
+                    if (run.transientDebug) {
+                        continue;
                     }
+                    if (runs.get(runId) != run) {
+                        // Purged while this pass waited for the run: there is no run to save any
+                        // more. (A save here once put the deleted file back, for a run no sweep
+                        // looked at again. It no longer could — an archived run is not saved
+                        // without the input its file holds — but it would still be tried, fail,
+                        // and be reported as a run waiting to be saved.)
+                        unsavedRunIds.remove(runId);
+                        continue;
+                    }
+                    try {
+                        runStore.save(storedForm(run));
+                        saveSucceeded(runId);
+                    } catch (RuntimeException e) {
+                        // The file keeps what it has and the run waits for the next flush. Nothing
+                        // is thrown: one run that cannot be saved (or whose file cannot be read for
+                        // the input it holds) must not cost the others their save, nor fail the run
+                        // whose worker happened to call this.
+                        saveFailed(runId, e);
+                    }
+                }
+            }
+        } finally {
+            if (next < runIds.size()) {
+                // An Error cut the pass short: what it did not reach still waits to be saved.
+                synchronized (dirtyLock) {
+                    dirtyRunIds.addAll(runIds.subList(next, runIds.size()));
                 }
             }
         }
@@ -557,11 +705,16 @@ public class RunRegistry {
                 long ageMs = now - terminalAt;
                 if (!run.archived) {
                     if (runRetentionMs >= 0 && ageMs >= runRetentionMs) {
-                        archiveRunLocked(run);
-                        // Saved with the input still in the record: the file keeps it until
-                        // purge. Only then does memory let it go — a save that fails leaves it.
-                        saveAsIs(run);
-                        run.properties = new LinkedHashMap<String, Object>();
+                        try {
+                            archiveLocked(run);
+                        } catch (RuntimeException e) {
+                            // Nothing has changed: the run is as it was, the next sweep takes it
+                            // again, and this sweep goes on to the other runs.
+                            if (unsavedRunIds.add(run.runId)) {
+                                TeeBoxLog.warn("RunRegistry", "Run " + run.runId
+                                        + " could not be archived; the next sweep tries again: " + e.getMessage());
+                            }
+                        }
                     }
                     continue;
                 }
@@ -570,6 +723,7 @@ public class RunRegistry {
                 }
             }
         }
+        List<String> purged = new ArrayList<String>();
         for (String runId : purgeIds) {
             RunInfo run = runs.get(runId);
             if (run == null) {
@@ -581,13 +735,30 @@ public class RunRegistry {
                 long terminalAt = run.endedAt != null ? run.endedAt.longValue() : run.createdAt;
                 long ageMs = System.currentTimeMillis() - terminalAt;
                 if (!isTerminal(run.status) || !run.archived || runArchiveRetentionMs < 0
-                        || ageMs < runArchiveRetentionMs || !runs.remove(runId, run)) {
+                        || ageMs < runArchiveRetentionMs || runs.get(runId) != run) {
                     continue;
                 }
-                runStore.delete(runId);
+                // The file first: a run whose file cannot be deleted stays registered, so the
+                // next sweep tries again and the sweep goes on. (Taken out of memory first, it
+                // left its file behind until a restart, and the failure ended the sweep.)
+                try {
+                    runStore.delete(runId);
+                } catch (RuntimeException e) {
+                    if (unsavedRunIds.add(runId)) {
+                        TeeBoxLog.warn("RunRegistry", "Run " + runId
+                                + " could not be purged; the next sweep tries again: " + e.getMessage());
+                    }
+                    continue;
+                }
+                // Out of memory while this thread still holds the run's monitor: a flush that picked
+                // the run up before this and waits for the monitor finds it gone (flushDirty).
+                runs.remove(runId, run);
+                unsavedRunIds.remove(runId);
+                unreadableInputRunIds.remove(runId);
+                purged.add(runId);
             }
         }
-        return purgeIds;
+        return purged;
     }
 
     private void loadPersistedRuns() {
@@ -602,35 +773,70 @@ public class RunRegistry {
                 if (run.errorMessage == null || run.errorMessage.length() == 0) {
                     run.errorMessage = "Server restarted before run finished";
                 }
-                runStore.save(run);
+                // storedForm: should the run be archived (no step here writes that beside a
+                // status that is not terminal, but a file can say it), its input is in the file
+                // only and this save must carry it over.
+                RunInfo stored;
+                try {
+                    stored = storedForm(run);
+                } catch (RuntimeException e) {
+                    // What the file holds cannot be made into a record to save (the input of an
+                    // archived run that its file does not give, say). One file must not keep the
+                    // server from starting: it is left as it is, and is no run of this server.
+                    TeeBoxLog.warn("RunRegistry", "Skipping run " + run.runId + ": it was not finished"
+                            + " when the server stopped, and its record cannot be saved as ended: "
+                            + e.getMessage());
+                    continue;
+                }
+                runStore.save(stored);
             }
-            if (run.archived) {
-                // An archived run's input stays in its file (see archiveRunLocked); memory does
-                // not take it back on a restart.
-                run.properties = new LinkedHashMap<String, Object>();
-            }
+            // An archived run comes without its input: that stays in its file (see archiveLocked),
+            // and RunStore.loadAll does not hand it over.
             runs.put(run.runId, run);
         }
     }
 
-    private void archiveRunLocked(RunInfo run) {
-        if (run.archived) {
-            return;
+    /**
+     * Archives a run; the caller holds its monitor. The archived record goes to the run's file
+     * first, and only when that is written does the record in memory change — so a save that fails
+     * leaves the run exactly as it was, not archived, for the next sweep to take again. (The flag
+     * used to be set first: a failed save then left the run archived in memory and not in its
+     * file, and no later sweep looked at it.)
+     *
+     * <p>Archiving trims the bulky diagnostics but keeps resultData intact: the result is the
+     * run's product, and callers must be able to fetch it any time before purge (it used to be
+     * dropped here, leaving only the 300-char resultSummary). The heap cost of archived results
+     * staying resident for the archive window is accepted — scripts with large payloads should
+     * return STREAM_FILE (tiny descriptor; bytes stream from disk). published stays (small
+     * captured key-values). The input properties can be as large as a result and nothing reads
+     * them but a detail view, so they move out of memory — not away: the file is written with
+     * them, and from then on it is where they live (getRunWithInput reads them back; storedForm
+     * carries them through a later save).
+     */
+    private void archiveLocked(RunInfo run) {
+        RunInfo archived = run.copy();
+        archived.archived = true;
+        archived.threads = new ArrayList<RunThreadInfo>();
+        archived.stdoutLines = trimTail(run.stdoutLines, archivedStdoutLines);
+        archived.stderrLines = trimTail(run.stderrLines, archivedStderrLines);
+        boolean wasDirty;
+        synchronized (dirtyLock) {
+            wasDirty = dirtyRunIds.remove(run.runId);
         }
+        try {
+            runStore.save(archived);   // with the input
+        } catch (RuntimeException e) {
+            if (wasDirty) {
+                markDirty(run.runId);   // what was waiting to be saved still waits
+            }
+            throw e;
+        }
+        saveSucceeded(run.runId);
         run.archived = true;
-        run.threads = new ArrayList<RunThreadInfo>();
-        run.stdoutLines = trimTail(run.stdoutLines, archivedStdoutLines);
-        run.stderrLines = trimTail(run.stderrLines, archivedStderrLines);
-        // Trim the bulky diagnostics but keep resultData intact: the result is the run's product,
-        // and callers must be able to fetch it any time before purge (it used to be dropped here,
-        // leaving only the 300-char resultSummary). The heap cost of archived results staying
-        // resident for the archive window is accepted — scripts with large payloads should return
-        // STREAM_FILE (tiny descriptor; bytes stream from disk). published stays (small captured
-        // key-values). The input properties can be as large as a result and nothing reads them
-        // but a detail view, so they move out of memory — not away: the caller saves this record
-        // with them, then clears them from the in-memory record, and from then on the run's file
-        // is where they live (getRunWithInput reads them back; storedForm carries them through
-        // a later save).
+        run.threads = archived.threads;
+        run.stdoutLines = archived.stdoutLines;
+        run.stderrLines = archived.stderrLines;
+        run.properties = new LinkedHashMap<String, Object>();
     }
 
     private List<String> trimTail(List<String> lines, int maxLines) {
@@ -686,7 +892,36 @@ public class RunRegistry {
         }
     }
 
+    /**
+     * Saves a run whose record in memory has just changed. A save that fails is reported to the
+     * caller, and the run is left waiting for the next flush: what memory holds is what the file
+     * must come to say, whether or not the caller does anything about the failure.
+     */
     private void persistRun(RunInfo run) {
+        try {
+            writeRun(run);
+        } catch (RuntimeException e) {
+            saveFailed(run.runId, e);
+            throw e;
+        }
+    }
+
+    /**
+     * As {@link #persistRun}, for a step that queue and slot bookkeeping hangs on — a cancel, a
+     * hand-over to the next run of a script. The record in memory is what decides such a step, so
+     * a save that fails must not stop the caller half-way through it (a place under a script's
+     * limit that is never given back keeps every later run of that script waiting). The failure
+     * is logged, and the flush saves the run when the disk takes it again.
+     */
+    private void persistOrRetryLater(RunInfo run) {
+        try {
+            persistRun(run);
+        } catch (RuntimeException e) {
+            // reported by persistRun; the run waits for the next flush
+        }
+    }
+
+    private void writeRun(RunInfo run) {
         synchronized (dirtyLock) {
             dirtyRunIds.remove(run.runId);
         }
@@ -694,19 +929,29 @@ public class RunRegistry {
             return;
         }
         runStore.save(storedForm(run));
+        saveSucceeded(run.runId);
     }
 
-    /** Saves the record exactly as it is in memory (the archive step: the input is still there). */
-    private void saveAsIs(RunInfo run) {
-        synchronized (dirtyLock) {
-            dirtyRunIds.remove(run.runId);
+    private void saveFailed(String runId, RuntimeException e) {
+        markDirty(runId);
+        if (unsavedRunIds.add(runId)) {
+            TeeBoxLog.warn("RunRegistry", "Run " + runId
+                    + " could not be saved; it will be saved by a later flush: " + e.getMessage());
         }
-        runStore.save(run.copy());
+    }
+
+    private void saveSucceeded(String runId) {
+        if (unsavedRunIds.remove(runId)) {
+            TeeBoxLog.info("RunRegistry", "Run " + runId + " is saved again");
+        }
     }
 
     /**
      * The record to write for a run. An archived run's input is in its file only, so a save from
-     * the in-memory record would erase it: the stored input is carried over instead.
+     * the in-memory record would erase it: the stored input is carried over instead. When the file
+     * does not give it — gone, unreadable, not this run's record — there is nothing to carry over,
+     * and no record without the input may be written in its place either: the read's failure goes
+     * to the caller as the save's.
      */
     private RunInfo storedForm(RunInfo run) {
         RunInfo copy = run.copy();

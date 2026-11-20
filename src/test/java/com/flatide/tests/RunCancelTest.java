@@ -319,6 +319,98 @@ public class RunCancelTest {
         }
     }
 
+    /**
+     * A queued run is cancelled while its file cannot be written. The cancel stands in memory, so
+     * the run's place under its script's limit must go to the next run whatever the save did: the
+     * failed save used to end the cancel half-way, and with the place never given back every later
+     * run of that script waited for good.
+     */
+    @Test
+    public void aQueuedCancelThatCannotBeSavedStillGivesItsPlaceToTheNextRun() throws Exception {
+        assumePermissionsApply();
+        File dataDir = Files.createTempDirectory("propertee-teebox-cancel-unsaved").toFile();
+        File runsDir = new File(dataDir, "runs");
+        RunManager runManager = new RunManager(dataDir, 1);
+        String blockerId = null;
+        try {
+            runManager.registerScriptVersion("blocker", "1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
+            runManager.registerScriptVersion("limited", "1", "return 1\n", "quick", Arrays.asList("test"), true);
+            runManager.updateScriptSettings("limited", 1, false);
+
+            // The one worker is busy: the first "limited" run waits in the queue holding the
+            // script's only place, the second waits for that place.
+            blockerId = runManager.submit(request("blocker")).runId;
+            waitForManagerStatus(runManager, blockerId, RunStatus.RUNNING, 8000L);
+            RunInfo queued = runManager.submit(request("limited"));
+            RunInfo pending = runManager.submit(request("limited"));
+            Assert.assertEquals(RunStatus.QUEUED, runManager.getRun(queued.runId).status);
+            Assert.assertEquals(RunStatus.PENDING, runManager.getRun(pending.runId).status);
+
+            Assert.assertTrue(runsDir.setWritable(false));
+            try {
+                Assert.assertTrue(runManager.cancelRun(queued.runId, "Cancelled by test"));
+            } finally {
+                runsDir.setWritable(true);
+            }
+            Assert.assertEquals(RunStatus.CANCELLED, runManager.getRun(queued.runId).status);
+
+            Assert.assertTrue(runManager.cancelRun(blockerId, "Cancelled by test"));
+            waitForManagerStatus(runManager, pending.runId, RunStatus.COMPLETED, 10000L);
+            // The cancel reaches the file once the disk takes it.
+            waitForFileText(new File(runsDir, queued.runId + ".json"), "\"status\": \"CANCELLED\"", 8000L);
+        } finally {
+            runsDir.setWritable(true);
+            if (blockerId != null) {
+                runManager.cancelRun(blockerId, "cleanup");
+            }
+            runManager.shutdown();
+        }
+    }
+
+    /**
+     * A run ends while run files cannot be written, and the next run of its script takes its
+     * place. That hand-over used to stop at the save of the new status: the next run was out of
+     * the waiting line and never given to a worker, and the place stayed taken for good.
+     */
+    @Test
+    public void aHandOverThatCannotBeSavedStillStartsTheNextRun() throws Exception {
+        assumePermissionsApply();
+        File dataDir = Files.createTempDirectory("propertee-teebox-handover-unsaved").toFile();
+        File runsDir = new File(dataDir, "runs");
+        RunManager runManager = new RunManager(dataDir, 4);
+        try {
+            runManager.registerScriptVersion("limited", "1", SPIN_SCRIPT, "spin", Arrays.asList("test"), true);
+            runManager.updateScriptSettings("limited", 1, false);
+            RunInfo first = runManager.submit(request("limited"));
+            waitForManagerStatus(runManager, first.runId, RunStatus.RUNNING, 8000L);
+            RunInfo second = runManager.submit(request("limited"));
+            Assert.assertEquals(RunStatus.PENDING, runManager.getRun(second.runId).status);
+
+            Assert.assertTrue(runsDir.setWritable(false));
+            try {
+                Assert.assertTrue(runManager.cancelRun(first.runId, "Cancelled by test"));
+                waitForManagerStatus(runManager, first.runId, RunStatus.CANCELLED, 10000L);
+                // The second run reaches a worker. It cannot be recorded as started, so it is
+                // not started: it fails, and gives the place back.
+                waitForManagerStatus(runManager, second.runId, RunStatus.FAILED, 10000L);
+            } finally {
+                runsDir.setWritable(true);
+            }
+            String reason = runManager.getRun(second.runId).errorMessage;
+            Assert.assertTrue(reason, reason.contains("Failed to save run"));
+
+            runManager.registerScriptVersion("limited", "2", "return 1\n", "quick", Arrays.asList("test"), true);
+            RunInfo third = runManager.submit(request("limited"));
+            waitForManagerStatus(runManager, third.runId, RunStatus.COMPLETED, 10000L);
+            // What could not be written then is written once the disk takes it.
+            waitForFileText(new File(runsDir, first.runId + ".json"), "\"status\": \"CANCELLED\"", 8000L);
+            waitForFileText(new File(runsDir, second.runId + ".json"), "\"status\": \"FAILED\"", 8000L);
+        } finally {
+            runsDir.setWritable(true);
+            runManager.shutdown();
+        }
+    }
+
     @Test
     public void outputCapIsConfigurableAndTruncationIsSignalled() throws Exception {
         TeeBoxConfig overrides = new TeeBoxConfig();
@@ -490,6 +582,26 @@ public class RunCancelTest {
     }
 
     // ===================== helpers =====================
+
+    /** Taking a permission away is how these tests make the disk refuse a write. */
+    private static void assumePermissionsApply() {
+        org.junit.Assume.assumeFalse("needs POSIX permission semantics",
+            System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win"));
+        org.junit.Assume.assumeFalse("root bypasses permissions", "root".equals(System.getProperty("user.name")));
+    }
+
+    private static void waitForFileText(File file, String expected, long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        String text = null;
+        while (System.currentTimeMillis() < deadline) {
+            text = new String(Files.readAllBytes(file.toPath()), "UTF-8");
+            if (text.contains(expected)) {
+                return;
+            }
+            Thread.sleep(100L);
+        }
+        Assert.fail(file.getName() + " did not come to hold " + expected + " within " + timeoutMs + "ms:\n" + text);
+    }
 
     private static RunRequest request(String scriptId) {
         RunRequest request = new RunRequest();

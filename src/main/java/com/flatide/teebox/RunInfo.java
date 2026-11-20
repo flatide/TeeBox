@@ -41,6 +41,12 @@ public class RunInfo {
      *  deliberately excluded from persistence/listing; DebugSessionManager keeps the terminal
      *  snapshot needed by the console, then removes the live registry entry. */
     public boolean transientDebug;
+    /** Which execution under this run id the record describes. A debug run is executed again
+     *  under the id it has, and each reset for another execution starts the next attempt
+     *  ({@code RunRegistry.completeDebugReset}); every other run has attempt 0 only. A cancel is
+     *  asked of one attempt and must not reach the next one. Not saved: nothing that is asked of
+     *  an attempt outlives the server that runs it. */
+    public transient long attempt;
     public long createdAt;
     public Long startedAt;
     public Long endedAt;
@@ -89,6 +95,7 @@ public class RunInfo {
         copy.debug = debug;
         copy.debugOf = debugOf;
         copy.transientDebug = transientDebug;
+        copy.attempt = attempt;
         copy.createdAt = createdAt;
         copy.startedAt = startedAt;
         copy.endedAt = endedAt;

@@ -55,6 +55,7 @@ public class ManagedTaskEngine implements TaskRunner {
     private final CommandGuard commandGuard;
     private final File taskBaseDir;
     private final File tasksDir;
+    private final DataDirectory tasksDirectory;
     private final String hostInstanceId;
 
     public File getTaskDir(String taskId) {
@@ -89,17 +90,29 @@ public class ManagedTaskEngine implements TaskRunner {
 
     /** Explicit per-instance values, already resolved from the server's config file / -D options. */
     public ManagedTaskEngine(String baseDir, String hostInstanceId, long retentionMs, long archiveRetentionMs) {
+        this(baseDir, hostInstanceId, retentionMs, archiveRetentionMs, null);
+    }
+
+    /** As above, over the runner that is given (null: this platform's) — for a test over another platform's runner. */
+    ManagedTaskEngine(String baseDir, String hostInstanceId, long retentionMs, long archiveRetentionMs,
+                      TaskRunner givenRunner) {
         this.retentionMs = retentionMs;
         this.archiveRetentionMs = archiveRetentionMs;
         this.taskBaseDir = new File(baseDir);
         this.tasksDir = new File(taskBaseDir, "tasks");
+        this.tasksDirectory = new DataDirectory(tasksDir, "tasks", "the tasks in it would be missing"
+                + " from this server as if there were none, with their files still on the disk.");
         this.hostInstanceId = hostInstanceId;
         this.commandGuard = new CommandGuard();
         if (!tasksDir.exists() && !tasksDir.mkdirs()) {
             throw new IllegalStateException("Failed to create tasks directory: " + tasksDir.getAbsolutePath());
         }
+        // A tasks directory that cannot be listed or searched reads as an empty one (see
+        // DataDirectory): the engine is not made over it. Asked before the engine touches
+        // anything in it.
+        tasksDirectory.requireReadable();
         deleteLegacyIndexFiles();
-        this.runner = createRunner(baseDir);
+        this.runner = givenRunner != null ? givenRunner : createRunner(baseDir);
     }
 
     private TaskRunner createRunner(String baseDir) {
@@ -608,7 +621,7 @@ public class ManagedTaskEngine implements TaskRunner {
     // ---- Additional methods (not in TaskRunner) ----
 
     public void init() {
-        List<Task> all = loadAllTasks();
+        List<Task> all = loadAllTasks(true);
         // Prime the in-memory index from the scan recovery is about to walk (one scan per start);
         // the per-task saveMeta below then refreshes entries with the recovered state.
         synchronized (indexLock) {
@@ -787,6 +800,25 @@ public class ManagedTaskEngine implements TaskRunner {
     }
 
     /**
+     * The ids of the tasks a run has at this moment, from the in-memory index alone: no disk, no
+     * task lock. For a caller that has to fix the set of tasks while it holds a lock of its own —
+     * what it then does with each task ({@link #killTask}) goes by the task id, which no other
+     * task ever gets.
+     */
+    public List<String> taskIdsOfRun(String runId) {
+        List<String> taskIds = new ArrayList<>();
+        if (runId == null) {
+            return taskIds;
+        }
+        for (TaskIndexEntry entry : snapshotIndexEntries()) {
+            if (runId.equals(entry.runId)) {
+                taskIds.add(entry.taskId);
+            }
+        }
+        return taskIds;
+    }
+
+    /**
      * Remove every task owned by a terminal Run before that same runId is executed again by the
      * debugger. Reusing the Run record without this reset would mix old and new task rows (and a
      * detached process from the previous attempt could keep running under the shared identity).
@@ -795,13 +827,7 @@ public class ManagedTaskEngine implements TaskRunner {
         if (runId == null) {
             return;
         }
-        List<String> taskIds = new ArrayList<>();
-        for (TaskIndexEntry entry : snapshotIndexEntries()) {
-            if (runId.equals(entry.runId)) {
-                taskIds.add(entry.taskId);
-            }
-        }
-        for (String taskId : taskIds) {
+        for (String taskId : taskIdsOfRun(runId)) {
             // killTask is also the restored-process path. A terminal task simply returns false
             // (or true when already KILLED), after which it is safe to remove its persisted row.
             killTask(taskId);
@@ -839,6 +865,12 @@ public class ManagedTaskEngine implements TaskRunner {
      * unrelated processes.
      */
     private void terminateRestoredTask(Task task) {
+        if (runner instanceof SimulatedTaskRunner) {
+            // A simulated task (the runner of a platform without a Unix shell) has no process:
+            // the pid it carries is a number its runner made up, and whatever process has that
+            // number is somebody else's. Nothing is signalled by it.
+            return;
+        }
         if (!isProcessAlive(task.pid)) {
             return;
         }
@@ -847,10 +879,15 @@ public class ManagedTaskEngine implements TaskRunner {
         // This is safe because the process group contains only the task's tree.
         if (task.pgid > 0 && task.pgid == task.pid) {
             sendSignalToGroup(task.pgid, "TERM");
-            waitForProcessExit(task.pid, 1000L);
-            if (isProcessAlive(task.pid)) {
+            // The second it is given is the group's, and so is the verdict — not its first
+            // process's alone. That one, the shell that runs the command, ends at once on being
+            // asked. A child that ignores SIGTERM was then never made to end, and went on running
+            // under a task recorded as killed; and a child that only needs a moment to finish
+            // must get that moment before it is made to.
+            waitForGroupExit(task.pgid, 1000L);
+            if (isGroupAlive(task.pgid)) {
                 sendSignalToGroup(task.pgid, "KILL");
-                waitForProcessExit(task.pid, 1000L);
+                waitForGroupExit(task.pgid, 1000L);
             }
             return;
         }
@@ -878,6 +915,23 @@ public class ManagedTaskEngine implements TaskRunner {
         }
         try {
             Process process = new ProcessBuilder("kill", "-0", String.valueOf(pid)).start();
+            boolean alive = process.waitFor() == 0;
+            process.getInputStream().close();
+            process.getErrorStream().close();
+            process.getOutputStream().close();
+            return alive;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Whether a signal reaches any process of the group ({@code kill -0}): whether the group has a member left. */
+    private boolean isGroupAlive(int pgid) {
+        if (IS_WINDOWS) {
+            return false;
+        }
+        try {
+            Process process = new ProcessBuilder("kill", "-0", "--", "-" + pgid).start();
             boolean alive = process.waitFor() == 0;
             process.getInputStream().close();
             process.getErrorStream().close();
@@ -937,6 +991,18 @@ public class ManagedTaskEngine implements TaskRunner {
             process.getOutputStream().close();
         } catch (Exception e) {
             TeeBoxLog.warn("TaskEngine", "Failed to signal process group " + pgid, e);
+        }
+    }
+
+    private void waitForGroupExit(int pgid, long timeoutMs) {
+        long start = System.currentTimeMillis();
+        while (isGroupAlive(pgid) && (System.currentTimeMillis() - start) < timeoutMs) {
+            try {
+                Thread.sleep(100L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
@@ -1041,7 +1107,7 @@ public class ManagedTaskEngine implements TaskRunner {
         if (indexLoaded) {
             return;
         }
-        for (Task task : loadAllTasks()) {
+        for (Task task : loadAllTasks(false)) {
             indexEntries.put(task.taskId, TaskIndexEntry.fromTask(task, lifecycles.get(task.taskId)));
         }
         indexLoaded = true;
@@ -1128,9 +1194,21 @@ public class ManagedTaskEngine implements TaskRunner {
 
     // ---- Task loading ----
 
-    private List<Task> loadAllTasks() {
+    /**
+     * @param atStart true for the scan of a start ({@link #init}): a directory that does not give
+     *                up what is in it is then refused (see {@link DataDirectory}), not read as
+     *                empty. False for an engine that was never started and reads its directory
+     *                when it first needs to: that happens in the middle of other work — a command
+     *                has just been launched — and is as it always was.
+     */
+    private List<Task> loadAllTasks(boolean atStart) {
         File[] dirs = tasksDir.listFiles();
-        if (dirs == null) return new ArrayList<>();
+        if (dirs == null) {
+            if (atStart) {
+                throw tasksDirectory.unlisted();
+            }
+            return new ArrayList<>();
+        }
 
         Arrays.sort(dirs, new Comparator<File>() {
             @Override
@@ -1146,6 +1224,12 @@ public class ManagedTaskEngine implements TaskRunner {
             if (task != null) {
                 tasks.add(task);
             }
+        }
+        if (atStart) {
+            // A directory that cannot be searched answers every look above with "no directory",
+            // and what was found is then not all there is. Asked now that the looks are done, so
+            // that this also tells of a directory that was closed while the scan went.
+            tasksDirectory.requireReadable();
         }
         return tasks;
     }
@@ -1226,6 +1310,12 @@ public class ManagedTaskEngine implements TaskRunner {
         if (task == null || task.archived) {
             return;
         }
+        if (task.taskDir != null && java.nio.file.Files.isSymbolicLink(task.taskDir.toPath())) {
+            // The task's directory is a link: archive.json would be written, and the task's
+            // files deleted by name, in the directory it leads to. The task is left as it is —
+            // not archived, and so never purged (see deleteArchivedTask for one made a link later).
+            return;
+        }
         task.archived = true;
         task.alive = false;
         // Read only the tail of each file to avoid OOM on huge outputs.
@@ -1265,6 +1355,12 @@ public class ManagedTaskEngine implements TaskRunner {
         lifecycles.remove(task.taskId);
         taskLocks.remove(task.taskId);
         removeRunnerTask(task.taskId);
+        if (java.nio.file.Files.isSymbolicLink(task.taskDir.toPath())) {
+            // The task's directory is a link: the files below would be deleted in the directory
+            // it leads to. Only the link is the server's to remove.
+            deleteQuietly(task.taskDir);
+            return;
+        }
         deleteQuietly(task.archiveFile);
         deleteQuietly(task.metaFile);
         deleteQuietly(task.stdoutFile);
@@ -1594,21 +1690,9 @@ public class ManagedTaskEngine implements TaskRunner {
         return baos.toString("UTF-8");
     }
 
+    /** Best effort, and never through a link (see {@link FileTrees}). */
     private void deleteQuietly(File file) {
-        if (file == null || !file.exists()) {
-            return;
-        }
-        if (file.isDirectory()) {
-            File[] children = file.listFiles();
-            if (children != null) {
-                for (File child : children) {
-                    deleteQuietly(child);
-                }
-            }
-        }
-        if (!file.delete() && file.exists()) {
-            // ignore best-effort cleanup
-        }
+        FileTrees.delete(file);
     }
 
     private void closeQuietly(Closeable closeable) {

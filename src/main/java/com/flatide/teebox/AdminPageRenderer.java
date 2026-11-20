@@ -681,9 +681,20 @@ public class AdminPageRenderer {
         sb.append("if(el)el.innerHTML=xhr.responseText;");
         sb.append("if(cb)cb();");
         sb.append("}};xhr.send();}");
+        // A run's input does not change, and for an archived run it is read from the run's file:
+        // the refresh asks for the fragment without it and puts the card it already shows back.
+        // Only a card that holds the input (data-loaded) is kept. Without one — the input could
+        // not be read, or the content was replaced by something else, such as the login page
+        // after the session ended — the refresh asks for the whole fragment again.
         sb.append("window.refreshPage=function(){");
         sb.append("var ss=saveScrollState();");
-        sb.append("fetchFragment('/admin/fragments/run-detail/").append(urlPath(runId)).append("','run-detail-content',function(){restoreScrollState(ss);});");
+        sb.append("var shown=document.getElementById('run-input');");
+        sb.append("var keep=!!shown&&shown.getAttribute('data-loaded')==='1';");
+        sb.append("var input=keep?shown.innerHTML:null;");
+        sb.append("fetchFragment('/admin/fragments/run-detail/").append(urlPath(runId)).append("'+(keep?'?input=keep':''),'run-detail-content',function(){");
+        sb.append("var card=document.getElementById('run-input');");
+        sb.append("if(keep&&card){card.innerHTML=input;card.setAttribute('data-loaded','1');}");
+        sb.append("restoreScrollState(ss);});");
         sb.append("fetchFragment('/admin/fragments/nav-counts','nav-counts');");
         sb.append("};");
         sb.append("})();");
@@ -707,8 +718,33 @@ public class AdminPageRenderer {
                 "Status updates automatically; it becomes CANCELLED once the engine unwinds.</div>";
     }
 
+    /** Shown where a run's input would be when its file could not be read (also the API's {@code inputError}). */
+    static final String INPUT_UNREADABLE = "The input could not be read from the run's file";
+
     public String renderRunDetailFragment(String runId) {
-        RunInfo run = runManager.getRunDetail(runId);   // with an archived run's input, from its file
+        return renderRunDetailFragment(runId, true);
+    }
+
+    /**
+     * The run detail. {@code withInput} false leaves the Input Properties card empty for the page
+     * to fill with the one it already shows: the input cannot change, and reading it means
+     * reading and parsing the whole file of an archived run — which the auto-refresh of every open
+     * tab used to do every five seconds, under the lock every run save needs.
+     */
+    public String renderRunDetailFragment(String runId, boolean withInput) {
+        RunInfo run;
+        boolean inputUnreadable = false;
+        if (withInput) {
+            try {
+                run = runManager.getRunDetail(runId);   // with an archived run's input, from its file
+            } catch (RunStore.RunFileUnreadableException e) {
+                // (reported by the registry, once: this page asks again at every refresh)
+                run = runManager.getRun(runId);
+                inputUnreadable = true;
+            }
+        } else {
+            run = runManager.getRun(runId);
+        }
         if (run == null) return "<p class='empty'>Run not found</p>";
         List<RunThreadInfo> threads = runManager.listThreads(runId);
         List<TaskInfo> tasks = runManager.listTasksForRun(runId);
@@ -786,11 +822,17 @@ public class AdminPageRenderer {
         sb.append("<div class='detail-item'><div class='detail-label'>Explicit Return</div><div class='detail-value'>").append(run.hasExplicitReturn ? statusBadge("YES") : statusBadge("NO")).append("</div></div>");
         sb.append("</div></div>");
 
-        sb.append("<div class='card'><h2>Input Properties</h2>");
-        if (run.properties != null && !run.properties.isEmpty()) {
-            sb.append("<pre>").append(escape(gson.toJson(run.properties))).append("</pre>");
-        } else {
-            sb.append("<p class='empty'>No properties</p>");
+        // data-loaded marks a card that holds the input, which the page's refresh may keep.
+        sb.append("<div class='card' id='run-input'").append(withInput && !inputUnreadable ? " data-loaded='1'" : "").append(">");
+        if (withInput) {
+            sb.append("<h2>Input Properties</h2>");
+            if (inputUnreadable) {
+                sb.append("<p class='empty'>").append(escape(INPUT_UNREADABLE)).append("</p>");
+            } else if (run.properties != null && !run.properties.isEmpty()) {
+                sb.append("<pre>").append(escape(gson.toJson(run.properties))).append("</pre>");
+            } else {
+                sb.append("<p class='empty'>No properties</p>");
+            }
         }
         sb.append("</div>");
 

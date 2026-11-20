@@ -1,5 +1,6 @@
 package com.flatide.teebox.webhook;
 
+import com.flatide.teebox.DataDirectory;
 import com.flatide.teebox.TeeBoxLog;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -32,6 +33,10 @@ public class WebhookStore {
         if (!dir.exists() && !dir.mkdirs()) {
             throw new IllegalStateException("Failed to create webhooks directory: " + dir.getAbsolutePath());
         }
+        // An outbox that cannot be listed or searched reads as an empty one (see DataDirectory):
+        // the deliveries waiting in it would never be sent. The store is not made over it.
+        new DataDirectory(dir, "webhooks", "the deliveries waiting in it would not be seen, and"
+                + " not be sent.").requireReadable();
     }
 
     public synchronized void save(WebhookDelivery delivery) {

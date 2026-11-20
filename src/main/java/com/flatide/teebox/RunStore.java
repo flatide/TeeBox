@@ -1,13 +1,12 @@
 package com.flatide.teebox;
 
+import com.flatide.propertee2.value.TeeFormat;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -26,6 +25,7 @@ import java.util.Map;
  */
 public class RunStore {
     private final File runsDir;
+    private final DataDirectory directory;
     // The engine's first-class null (JsonNull.NULL) must persist as JSON null, not reflect into {} —
     // same boundary rule as the API Gson. See JsonNullGsonAdapter and parseRun for the load side.
     private final Gson gson = new GsonBuilder()
@@ -35,11 +35,34 @@ public class RunStore {
 
     private static final String LEGACY_INDEX_FILE = "index.json";
 
+    /**
+     * A run's file does not give what was asked of it: it is not there, the read failed, or what
+     * it holds is not this run's record — cut short, another run's, or with something else than
+     * an object where the input belongs. What was asked for is then unknown, which is not the
+     * same as empty: a caller must neither show it as empty nor write over the file.
+     */
+    public static class RunFileUnreadableException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        public RunFileUnreadableException(String runId, IOException cause) {
+            super("Failed to read run " + runId + ": " + cause, cause);
+        }
+
+        public RunFileUnreadableException(String runId, String reason) {
+            super("Failed to read run " + runId + ": " + reason);
+        }
+    }
+
     public RunStore(File dataDir) {
         this.runsDir = new File(dataDir, "runs");
+        this.directory = new DataDirectory(runsDir, "runs", "the runs in it would be missing from"
+                + " this server as if there were none, with their files still on the disk.");
         if (!runsDir.exists() && !runsDir.mkdirs()) {
             throw new IllegalStateException("Failed to create runs directory: " + runsDir.getAbsolutePath());
         }
+        // Asked before the store touches anything in it: a start refused here has changed nothing
+        // in this directory, not even the legacy index below.
+        directory.requireReadable();
         deleteLegacyIndexFiles();
     }
 
@@ -131,88 +154,140 @@ public class RunStore {
         }
     }
 
-    public synchronized RunInfo load(String runId) {
-        File file = fileFor(runId);
-        if (!file.exists()) return null;
-        FileInputStream fis = null;
-        try {
-            fis = new FileInputStream(file);
-            String json = readAll(fis);
-            return parseRun(json);
-        } catch (IOException e) {
-            return null;
-        } finally {
-            if (fis != null) {
-                try {
-                    fis.close();
-                } catch (IOException ignore) {
-                }
-            }
-        }
-    }
-
-    /**
-     * The input properties in a run's file; empty when the file, or the input, is not there. An
-     * archived run keeps its input in the file only — the registry's in-memory record lets it go —
-     * so this is how a detail view, or a later save of that run, gets it back. The values are
-     * engine-shaped by literal, as {@link #parseRun} does for the result: an input that was the
-     * integer 5 reads back as 5, not as Gson's 5.0.
-     */
-    @SuppressWarnings("unchecked")
-    public synchronized Map<String, Object> loadProperties(String runId) {
-        File file = fileFor(runId);
-        if (!file.exists()) {
-            return new LinkedHashMap<String, Object>();
-        }
+    /** The run in a file; null when there is no such file, or it cannot be read or is not a run. */
+    public RunInfo load(String runId) {
         String json;
-        FileInputStream fis = null;
         try {
-            fis = new FileInputStream(file);
-            json = readAll(fis);
-        } catch (IOException e) {
-            return new LinkedHashMap<String, Object>();
-        } finally {
-            if (fis != null) {
-                try {
-                    fis.close();
-                } catch (IOException ignore) {
-                }
-            }
+            json = readFile(runId);
+        } catch (RunFileUnreadableException e) {
+            return null;
         }
-        try {
-            com.google.gson.JsonElement tree = com.google.gson.JsonParser.parseString(json);
-            com.google.gson.JsonElement properties = tree.isJsonObject()
-                    ? tree.getAsJsonObject().get("properties") : null;
-            if (properties != null && properties.isJsonObject()) {
-                Object parsed = com.flatide.propertee2.value.JsonParser.parse(properties.toString());
-                if (parsed instanceof Map) {
-                    return (Map<String, Object>) parsed;
-                }
-            }
-        } catch (RuntimeException e) {
-            // not engine-readable (or not JSON at all): fall back to the shape a restart loads
-        }
-        RunInfo run = parseRun(json);
-        return run != null && run.properties != null ? run.properties : new LinkedHashMap<String, Object>();
+        return json != null ? parseRun(json, true) : null;
     }
 
     /**
-     * Deserialize a run file, reconstructing {@code resultData} as the engine-shaped value tree it was
-     * saved from. Gson's generic {@code Object} mapping corrupts the result on reload: JSON {@code null}
-     * becomes a Java null (so the engine's first-class {@code null} vanishes when the run is served
-     * again) and every number becomes a {@code Double} ({@code "n": 1} would be served as {@code 1.0}
-     * after a restart). Re-parsing the {@code resultData} subtree with the engine's own
-     * {@code JsonParser} restores exactly the shapes the engine produced — {@code Integer} vs
-     * {@code Double} by literal, {@code JsonNull.NULL}, {@code LinkedHashMap}/{@code ArrayList} — so a
-     * run's result reads back identical across restarts. A run file with no {@code resultData} key is a
-     * value-less legacy run (Gson omits Java-null fields on write) and stays null.
+     * The input properties in a run's file. An archived run keeps its input in the file only — the
+     * registry's in-memory record lets it go — so this is how a detail view, or a later save of
+     * that run, gets it back. The values are engine-shaped by literal, as {@link #parseRun} reads
+     * them.
+     *
+     * <p>An empty answer is what the run's own record says: its input is {@code {}}, or it has
+     * none (a record written before runs kept their input). A file that does not give the input
+     * is not answered with an empty one — the input is then unknown, and the two must be told
+     * apart: a later save would write the empty one into the file, and a detail view would show
+     * it as what the run was given.
+     *
+     * @throws RunFileUnreadableException when the file is not there, cannot be read, is not JSON,
+     *         holds another run's record (the record's {@code runId} is not this run's), has
+     *         something else than an object under {@code properties}, or has a number there that
+     *         is out of range (see {@link #parseRun})
      */
-    private RunInfo parseRun(String json) {
+    public Map<String, Object> loadProperties(String runId) {
+        String json = readFile(runId);
+        if (json == null) {
+            throw new RunFileUnreadableException(runId, "the file is not there");
+        }
+        com.google.gson.JsonElement tree;
+        try {
+            tree = com.google.gson.JsonParser.parseString(json);
+        } catch (RuntimeException malformed) {
+            throw new RunFileUnreadableException(runId, "the file is not JSON");
+        }
+        if (!tree.isJsonObject()) {
+            throw new RunFileUnreadableException(runId, "the file is not a run record");
+        }
+        com.google.gson.JsonObject record = tree.getAsJsonObject();
+        // Whose record it is, read as loadAll reads it when it takes the file for this run: Gson
+        // maps a number or a boolean under "runId" to its text. (A stricter reading here refused
+        // the input of a run the start had accepted.)
+        com.google.gson.JsonElement recordRunId = record.get("runId");
+        if (recordRunId == null || !recordRunId.isJsonPrimitive()
+                || !recordRunId.getAsString().equals(runId)) {
+            throw new RunFileUnreadableException(runId, "the file holds the record of another run");
+        }
+        com.google.gson.JsonElement properties = record.get("properties");
+        if (!isInput(properties)) {
+            throw new RunFileUnreadableException(runId, "the input in the file is not an object");
+        }
+        if (ValueDepth.exceeds(properties)) {
+            throw new RunFileUnreadableException(runId, "the input in the file is " + ValueDepth.tooDeep());
+        }
+        Map<String, Object> input = inputFrom(properties);
+        TeeFormat.NonFinite outOfRange = TeeFormat.firstNonFinite(input, "properties");
+        if (outOfRange != null) {
+            throw new RunFileUnreadableException(runId, "the input in the file has a number out of range ("
+                    + outOfRange.path() + ")");
+        }
+        return input;
+    }
+
+    /**
+     * The text of a run's file; null when there is no such file. Decoded once, from all the
+     * bytes: decoding each 4 KB chunk on its own broke every multi-byte character (Korean, for
+     * one) that straddled a chunk boundary into U+FFFD.
+     *
+     * <p>Only the read holds the store's lock — so that the store never has a file open while it
+     * replaces it, which Windows refuses. Decoding and parsing happen outside it: a detail view of
+     * a large archived run must not keep every save waiting.
+     */
+    private String readFile(String runId) {
+        byte[] bytes;
+        synchronized (this) {
+            try {
+                bytes = Files.readAllBytes(fileFor(runId).toPath());
+            } catch (java.nio.file.NoSuchFileException e) {
+                return null;
+            } catch (IOException e) {
+                throw new RunFileUnreadableException(runId, e);
+            }
+        }
+        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Deserialize a run file, reconstructing {@code resultData} and the input {@code properties}
+     * as the engine-shaped value trees they were saved from. Gson's generic {@code Object} mapping
+     * corrupts both on reload: JSON {@code null} becomes a Java null (so the engine's first-class
+     * {@code null} vanishes when the run is served again) and every number becomes a {@code Double}
+     * ({@code "n": 1} would be served as {@code 1.0} after a restart, and a debug re-run would be
+     * given {@code 1.0} where the run itself had {@code 1}). Re-parsing those subtrees with the
+     * engine's own {@code JsonParser} restores exactly the shapes the engine produced —
+     * {@code Integer} vs {@code Double} by literal, {@code JsonNull.NULL},
+     * {@code LinkedHashMap}/{@code ArrayList} — so a run reads back identical across restarts. A
+     * run file with no {@code resultData} key is a value-less legacy run (Gson omits Java-null
+     * fields on write) and stays null.
+     *
+     * @param withArchivedInput false leaves the input of an archived run where it is, in the file:
+     *                          the run then comes with empty {@code properties}. (The input is in
+     *                          the parsed text of this one file for as long as this call lasts; it
+     *                          is not turned into values and not kept.)
+     */
+    private RunInfo parseRun(String json, boolean withArchivedInput) {
         com.google.gson.JsonElement tree;
         try {
             tree = com.google.gson.JsonParser.parseString(json);
         } catch (RuntimeException malformed) {
             return null;   // a corrupt run file is skipped (callers already handle a null load)
+        }
+        // Taken out before Gson maps the rest: its generic mapping would build the whole input
+        // once more, in the wrong shapes, only for it to be replaced (or let go) below.
+        com.google.gson.JsonElement properties = tree.isJsonObject()
+                ? tree.getAsJsonObject().remove("properties") : null;
+        if (!isInput(properties)) {
+            // Something else than an object where the input belongs: the file is no run record.
+            // (Gson's mapping below refuses the same of the other fields — a list where a text
+            // belongs, an object where a number does.) Taken for a run without input instead, it
+            // was written over as one by the first save: at a start, for every run the server
+            // had stopped on.
+            return null;
+        }
+        if (ValueDepth.exceeds(properties) || (tree.isJsonObject()
+                && (ValueDepth.exceeds(tree.getAsJsonObject().get("resultData"))
+                    || ValueDepth.exceeds(tree.getAsJsonObject().get("published"))))) {
+            // An input or a result nested deeper than a run's values may be (see ValueDepth): no
+            // run of this server ends with one or is given one. Not a run record; looked at
+            // before the mapping below, which goes down one call per level.
+            return null;
         }
         RunInfo run;
         try {
@@ -222,6 +297,24 @@ public class RunStore {
         }
         if (run == null || !tree.isJsonObject()) {
             return run;
+        }
+        // A null where a list belongs is a list of nothing. Gson puts the null into the field,
+        // and the record then failed wherever it was copied — at a start, in the save of a run
+        // the server had stopped on, which kept the server from starting.
+        if (run.imports == null) {
+            run.imports = new ArrayList<ResolvedModuleInfo>();
+        }
+        if (run.threads == null) {
+            run.threads = new ArrayList<RunThreadInfo>();
+        }
+        if (run.stdoutLines == null) {
+            run.stdoutLines = new ArrayList<String>();
+        }
+        if (run.stderrLines == null) {
+            run.stderrLines = new ArrayList<String>();
+        }
+        if (withArchivedInput || !run.archived) {
+            run.properties = inputFrom(properties);
         }
         com.google.gson.JsonElement resultData = tree.getAsJsonObject().get("resultData");
         if (resultData != null) {
@@ -233,7 +326,47 @@ public class RunStore {
             }
         }
         normalizePublishedNumbers(run.published);
+        if (TeeFormat.firstNonFinite(run.properties, "properties") != null
+                || TeeFormat.firstNonFinite(run.resultData, "resultData") != null
+                || TeeFormat.firstNonFinite(run.published, "published") != null) {
+            // A number past the double range: a literal such as 1e999 reads as Infinity, which no
+            // JSON writer takes back. Such a record can be neither saved again nor sent in an
+            // answer — and a start saves every run it finds unfinished, so one file like that
+            // kept the server from starting. No run writes one (a result or an input with such a
+            // number is refused before it is saved); the file is not a run record.
+            return null;
+        }
         return run;
+    }
+
+    /**
+     * Whether what a run file has under {@code "properties"} can be a run's input: an object, or
+     * no value at all — the field left out, or JSON's {@code null} in its place.
+     */
+    private static boolean isInput(com.google.gson.JsonElement properties) {
+        return properties == null || properties.isJsonNull() || properties.isJsonObject();
+    }
+
+    /**
+     * A run's input from the {@code "properties"} of its file, engine-shaped; empty when the
+     * record has none. The caller has checked {@link #isInput}.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> inputFrom(com.google.gson.JsonElement properties) {
+        if (properties == null || !properties.isJsonObject()) {
+            return new LinkedHashMap<String, Object>();
+        }
+        try {
+            Object parsed = com.flatide.propertee2.value.JsonParser.parse(properties.toString());
+            if (parsed instanceof Map) {
+                return (Map<String, Object>) parsed;
+            }
+        } catch (RuntimeException e) {
+            // not engine-readable: keep Gson's best-effort shape rather than dropping the input
+        }
+        Map<String, Object> bestEffort = gson.fromJson(properties,
+                new com.google.gson.reflect.TypeToken<Map<String, Object>>() {}.getType());
+        return bestEffort != null ? bestEffort : new LinkedHashMap<String, Object>();
     }
 
     /**
@@ -262,20 +395,42 @@ public class RunStore {
      * reused as the write path (see {@link #fileFor}), so a crafted file ({@code "runId":
      * "../outside"}) could otherwise make startup recovery write outside the runs directory, and
      * a duplicate runId in a second file could silently shadow the real run.
+     *
+     * <p>The directory is another matter than a file in it. When it cannot be listed, or cannot
+     * be searched — and then no file in it is found to be a file — the scan has not all the runs
+     * to give, and does not hand over what it has as if it were all: it is refused, and with it
+     * the start (see {@link DataDirectory}).
+     *
+     * <p>An archived run comes without its input ({@code properties} empty): that stays in its
+     * file, where {@link #loadProperties} finds it. Each file is read, parsed and let go before
+     * the next, so a start holds one run's archived input at a time, and only while that file is
+     * parsed — collecting the runs first and dropping those inputs afterwards needed the heap for
+     * all of them at once, and with enough archived input on disk the server could not start.
+     *
+     * @throws IllegalStateException when the runs directory is no directory, cannot be listed, or
+     *         cannot be searched
      */
     public synchronized List<RunInfo> loadAll() {
         File[] files = runsDir.listFiles();
-        List<RunInfo> runs = new ArrayList<RunInfo>();
         if (files == null) {
-            return runs;
+            throw directory.unlisted();
         }
+        List<RunInfo> runs = new ArrayList<RunInfo>();
         for (File file : files) {
             if (!file.isFile() || !file.getName().endsWith(".json")
                     || LEGACY_INDEX_FILE.equals(file.getName())) {
                 continue;
             }
             String fileRunId = stripSuffix(file.getName(), ".json");
-            RunInfo run = load(fileRunId);
+            String json;
+            try {
+                json = readFile(fileRunId);
+            } catch (RunFileUnreadableException e) {
+                TeeBoxLog.warn("RunStore", "Skipping run file that cannot be read: "
+                        + file.getAbsolutePath() + " (" + e.getCause() + ")");
+                continue;
+            }
+            RunInfo run = json != null ? parseRun(json, false) : null;
             if (run == null) {
                 TeeBoxLog.warn("RunStore", "Skipping run file that is not a parseable run: "
                         + file.getAbsolutePath());
@@ -288,16 +443,30 @@ public class RunStore {
             }
             runs.add(run);
         }
+        // A directory that cannot be searched answers every look above with "no file", and what
+        // was found is then not all there is. Asked now that the looks are done, so that this
+        // also tells of a directory that was closed while the scan went.
+        directory.requireReadable();
         return runs;
     }
 
+    /**
+     * Deletes a run's file; a file that is not there is deleted already.
+     *
+     * <p>"Not there" is what the delete itself finds, not what a look beforehand says: a file
+     * that cannot be looked at — its directory closed to searching — answers such a look with "no
+     * such file", and was then counted as deleted while it stayed on the disk.
+     *
+     * @throws RuntimeException when the file is there, or may be, and could not be deleted
+     */
     public synchronized void delete(String runId) {
         if (runId == null) {
             return;
         }
-        File file = fileFor(runId);
-        if (file.exists() && !file.delete() && file.exists()) {
-            throw new RuntimeException("Failed to delete run " + runId);
+        try {
+            Files.deleteIfExists(fileFor(runId).toPath());
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to delete run " + runId + ": " + e, e);
         }
     }
 
@@ -351,17 +520,5 @@ public class RunStore {
         } catch (AtomicMoveNotSupportedException e) {
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
-    }
-
-    // Decoded once, from all the bytes: decoding each 4 KB chunk on its own broke every
-    // multi-byte character (Korean, for one) that straddled a chunk boundary into U+FFFD.
-    private String readAll(InputStream input) throws IOException {
-        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-        byte[] buffer = new byte[4096];
-        int len;
-        while ((len = input.read(buffer)) != -1) {
-            bytes.write(buffer, 0, len);
-        }
-        return bytes.toString("UTF-8");
     }
 }

@@ -29,6 +29,10 @@ public class ScriptRegistry {
         if (!registryDir.exists() && !registryDir.mkdirs()) {
             throw new IllegalStateException("Failed to create script registry directory: " + registryDir.getAbsolutePath());
         }
+        // A registry directory that cannot be listed or searched reads as one with no scripts in
+        // it (see DataDirectory): the registry is not made over it.
+        new DataDirectory(registryDir, "script registry", "the scripts in it would be missing from"
+                + " this server as if none were registered.").requireReadable();
     }
 
     public synchronized List<ScriptInfo> listScripts() {
@@ -559,16 +563,9 @@ public class ScriptRegistry {
         return true;
     }
 
+    /** With everything in it, and nothing through a link (see {@link FileTrees}). */
     private void deleteRecursive(File file) {
-        if (file.isDirectory()) {
-            File[] children = file.listFiles();
-            if (children != null) {
-                for (File child : children) {
-                    deleteRecursive(child);
-                }
-            }
-        }
-        file.delete();
+        FileTrees.delete(file);
     }
 
     private ScriptInfo requireScript(String scriptId) {

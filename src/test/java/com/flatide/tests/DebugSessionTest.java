@@ -5,6 +5,7 @@ import com.google.gson.reflect.TypeToken;
 import com.flatide.propertee2.task.TaskInfo;
 import com.flatide.teebox.DebugSessionManager;
 import com.flatide.teebox.RunInfo;
+import com.flatide.teebox.RunManager;
 import com.flatide.teebox.RunStatus;
 import com.flatide.teebox.TeeBoxClient;
 import com.flatide.teebox.TeeBoxConfig;
@@ -732,6 +733,163 @@ public class DebugSessionTest {
         }
     }
 
+    /**
+     * A Restart that cannot be saved is refused, and what it was to replace stays: the ended
+     * attempt keeps its result — in memory and in the run's file — and its tasks with their
+     * output, and a later Restart is accepted. The ended attempt's tasks used to be cleared and
+     * the run's record reset before the save was tried. The refused Restart then left a QUEUED run
+     * with no result, no tasks and nothing to execute it — every later Restart was refused as
+     * "still QUEUED" — and the next flush wrote that over the result the file still held.
+     * (The save is made to fail by taking write permission away: POSIX, and a user other than root.)
+     */
+    @Test
+    public void aRestartThatCouldNotBeSavedLeavesTheEndedAttemptAsItWas() throws Exception {
+        assumePermissionsApply();
+        File dataDir = Files.createTempDirectory("propertee-teebox-debug-unsaved-restart").toFile();
+        File runsDir = new File(dataDir, "runs");
+        TestServer testServer = createServer(dataDir, null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("dbg_unsaved_restart", "1",
+                "r = SHELL(\"echo kept-output\")\nreturn 42\n",
+                "unsaved restart", Arrays.asList("test"), true);
+            String sourceRunId = (String) client.submitRun("dbg_unsaved_restart", null,
+                new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(client, sourceRunId, "COMPLETED", 10000L);
+
+            Map<String, Object> opened = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            String sessionId = (String) opened.get("sessionId");
+            String debugRunId = (String) opened.get("runId");
+            waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            command(testServer, sessionId, "continue", null, 200);
+            waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+            File file = new File(runsDir, debugRunId + ".json");
+            String asItEnded = new String(Files.readAllBytes(file.toPath()), "UTF-8");
+            Assert.assertTrue(asItEnded, asItEnded.contains("\"status\": \"COMPLETED\""));
+            Assert.assertTrue(asItEnded, asItEnded.contains("\"resultData\": 42"));
+            RunManager runManager = testServer.server.getRunManager();
+            List<TaskInfo> tasks = runManager.listTasksForRun(debugRunId);
+            Assert.assertEquals(1, tasks.size());
+            String taskId = tasks.get(0).taskId;
+            Assert.assertEquals("kept-output\n", runManager.getTaskStdout(taskId));
+
+            Assert.assertTrue(runsDir.setWritable(false));
+            try {
+                Map<String, Object> refused = postJson(testServer.baseUrl + "/api/admin/debug/"
+                    + sessionId + "/restart", "{}", 500);
+                Assert.assertTrue(String.valueOf(refused),
+                    String.valueOf(refused.get("error")).contains("Failed to save run"));
+                // The console's own route says why as well (it used to answer with an error page,
+                // of which the console showed "HTTP 500").
+                Map<String, Object> refusedInConsole = postJson(testServer.baseUrl + "/admin/debug/"
+                    + sessionId + "/restart", "{}", 500);
+                Assert.assertTrue(String.valueOf(refusedInConsole),
+                    String.valueOf(refusedInConsole.get("error")).contains("Failed to save run"));
+            } finally {
+                runsDir.setWritable(true);
+            }
+
+            RunInfo kept = runManager.getRun(debugRunId);
+            Assert.assertEquals("the ended attempt is still what the run shows",
+                RunStatus.COMPLETED, kept.status);
+            Assert.assertEquals(Integer.valueOf(42), kept.resultData);
+            List<TaskInfo> keptTasks = runManager.listTasksForRun(debugRunId);
+            Assert.assertEquals("the ended attempt still has its task", 1, keptTasks.size());
+            Assert.assertEquals(taskId, keptTasks.get(0).taskId);
+            Assert.assertEquals("and what the task printed", "kept-output\n", runManager.getTaskStdout(taskId));
+            Thread.sleep(2600L);   // past a flush tick: nothing was left waiting to go over the file
+            Assert.assertEquals("the file is as the ended attempt left it",
+                asItEnded, new String(Files.readAllBytes(file.toPath()), "UTF-8"));
+
+            Map<String, Object> restarted = postJson(testServer.baseUrl + "/api/admin/debug/"
+                + sessionId + "/restart", "{}", 201);
+            Assert.assertEquals(debugRunId, restarted.get("runId"));
+            String restartedId = (String) restarted.get("sessionId");
+            waitForSessionState(testServer, restartedId, "PAUSED", 10000L);
+            Assert.assertTrue("the Restart that is accepted takes the ended attempt's tasks away",
+                runManager.listTasksForRun(debugRunId).isEmpty());
+            command(testServer, restartedId, "continue", null, 200);
+            Map<String, Object> ended = waitForSessionState(testServer, restartedId, "ENDED", 10000L);
+            Assert.assertEquals("COMPLETED", ended.get("runStatus"));
+            List<TaskInfo> newTasks = runManager.listTasksForRun(debugRunId);
+            Assert.assertEquals(1, newTasks.size());
+            Assert.assertNotEquals(taskId, newTasks.get(0).taskId);
+        } finally {
+            runsDir.setWritable(true);
+            testServer.close();
+        }
+    }
+
+    /**
+     * A Restart is also refused when the ended attempt's tasks cannot be cleared — here because a
+     * task's directory cannot be removed. By then the record of the next attempt is in the run's
+     * file; the refusal has to put the ended attempt's record back there, where it still is in
+     * memory.
+     */
+    @Test
+    public void aRestartWhoseTasksCouldNotBeClearedLeavesTheRunsRecordAsItWas() throws Exception {
+        assumePermissionsApply();
+        File dataDir = Files.createTempDirectory("propertee-teebox-debug-uncleared-restart").toFile();
+        File tasksDir = new File(dataDir, "tasks");
+        TestServer testServer = createServer(dataDir, null);
+        try {
+            TeeBoxClient client = new TeeBoxClient(testServer.baseUrl, null);
+            client.registerScript("dbg_uncleared_restart", "1",
+                "r = SHELL(\"echo kept-output\")\nreturn 42\n",
+                "uncleared restart", Arrays.asList("test"), true);
+            String sourceRunId = (String) client.submitRun("dbg_uncleared_restart", null,
+                new LinkedHashMap<String, Object>()).get("runId");
+            waitForRunStatus(client, sourceRunId, "COMPLETED", 10000L);
+
+            Map<String, Object> opened = postJson(
+                testServer.baseUrl + "/api/admin/runs/" + sourceRunId + "/debug", "{}", 201);
+            String sessionId = (String) opened.get("sessionId");
+            String debugRunId = (String) opened.get("runId");
+            waitForSessionState(testServer, sessionId, "PAUSED", 10000L);
+            command(testServer, sessionId, "continue", null, 200);
+            waitForSessionState(testServer, sessionId, "ENDED", 10000L);
+            File file = new File(new File(dataDir, "runs"), debugRunId + ".json");
+            String asItEnded = new String(Files.readAllBytes(file.toPath()), "UTF-8");
+            RunManager runManager = testServer.server.getRunManager();
+            Assert.assertEquals(1, runManager.listTasksForRun(debugRunId).size());
+
+            Assert.assertTrue(tasksDir.setWritable(false));   // a task's directory cannot be removed from it
+            try {
+                Map<String, Object> refused = postJson(testServer.baseUrl + "/api/admin/debug/"
+                    + sessionId + "/restart", "{}", 409);
+                Assert.assertTrue(String.valueOf(refused),
+                    String.valueOf(refused.get("error")).contains("Failed to clear task"));
+            } finally {
+                tasksDir.setWritable(true);
+            }
+
+            RunInfo kept = runManager.getRun(debugRunId);
+            Assert.assertEquals(RunStatus.COMPLETED, kept.status);
+            Assert.assertEquals(Integer.valueOf(42), kept.resultData);
+            Assert.assertEquals("the file says again what the run is",
+                asItEnded, new String(Files.readAllBytes(file.toPath()), "UTF-8"));
+
+            Map<String, Object> restarted = postJson(testServer.baseUrl + "/api/admin/debug/"
+                + sessionId + "/restart", "{}", 201);
+            Assert.assertEquals(debugRunId, restarted.get("runId"));
+            String restartedId = (String) restarted.get("sessionId");
+            waitForSessionState(testServer, restartedId, "PAUSED", 10000L);
+            command(testServer, restartedId, "continue", null, 200);
+            Map<String, Object> ended = waitForSessionState(testServer, restartedId, "ENDED", 10000L);
+            Assert.assertEquals("COMPLETED", ended.get("runStatus"));
+        } finally {
+            tasksDir.setWritable(true);
+            testServer.close();
+        }
+    }
+
+    private static void assumePermissionsApply() {
+        org.junit.Assume.assumeFalse("needs POSIX permission semantics",
+            System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win"));
+        org.junit.Assume.assumeFalse("root bypasses permissions", "root".equals(System.getProperty("user.name")));
+    }
+
     @Test
     public void reusedDebugRunDoesNotAccumulateTasksFromEarlierAttempts() throws Exception {
         TestServer testServer = createServer(null);
@@ -1068,6 +1226,13 @@ public class DebugSessionTest {
             Assert.assertEquals("COMPLETED", ended.get("runStatus"));
             Assert.assertTrue("eval-updated _PROPS was not used by the script",
                 ((List<?>) ended.get("stdoutLines")).contains("draft-debug"));
+            // The session says ENDED a moment before it removes its Run (finalizeSession): the
+            // removal is waited for, not expected to have happened by the time ENDED is read.
+            long removedBy = System.currentTimeMillis() + 5000L;
+            while (testServer.server.getRunManager().getRun(transientRunId) != null
+                    && System.currentTimeMillis() < removedBy) {
+                Thread.sleep(20L);
+            }
             Assert.assertNull("terminal transient Run was not removed",
                 testServer.server.getRunManager().getRun(transientRunId));
             Assert.assertFalse("terminal transient Run was persisted",

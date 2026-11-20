@@ -654,6 +654,99 @@ Operational notes:
   foreign file is skipped with a warning (a run file's `runId` must match its filename), never
   blocking startup.
 
+### Known limitations and operating cautions
+
+The situations below are rare, or arise only from an operating mistake. They are not prevented in
+code; they are operating rules.
+
+**Do not run two servers over the same dataDir.**
+
+- Same port: a start asks for its port before anything else. If a server is already running, the
+  start ends with a `BindException` and has not touched the data. The check catches a server that
+  is **already running** only: two servers started on the same port at the same moment can both
+  pass it and both do their recovery before one of them gets the port — start one at a time
+  (serialize starts in the service manager or the deploy script).
+- Another port: not prevented. The second server saves the runs that were in progress as
+  `SERVER_RESTARTED`, and runs its own sweeps (archive/purge) and webhook deliveries. The same
+  holds for starting a new server while the old one is still shutting down (it has closed its
+  listener and is waiting for its runs) — start only after the previous process has ended.
+
+**Let only the server write inside dataDir** (no hand edits, partial restores, or changes of
+owner/permissions).
+
+- **Run files**: broken JSON, or a `runId` that differs from the file name, is skipped. A file
+  that is valid JSON with contents that do not fit (for example `"threads": [null]`) makes that
+  run fail to load in listings and, with webhooks enabled, can fail the start. Move the file named
+  in the log out of dataDir and restart.
+- **Task directories**: a `meta.json`/`archive.json` without a task id (`{}`), or with one that
+  differs from the directory name (`task-<id>`), can fail the start or show up as another run's
+  task. Remove that directory.
+- **script-registry**: a broken `script.json` fails the script list, and the work that follows the
+  scripts in a maintenance round (session clean-up, webhook reconcile, debug-session sweep) is
+  skipped. Registering a version for a script whose `script.json` cannot be read or is empty
+  treats it as a new script and **overwrites the source of version 1.** Do not keep a record whose
+  `scriptId` differs from its directory name either (the purge of deleted scripts may delete that
+  directory). Restore `script.json` from a backup before using the script.
+- **Symbolic links**: deletes of a whole directory (task purge, deleting a whole script, the task
+  clean-up of a debug Restart) do not follow links. The link is removed and what it points to
+  stays. When a task directory itself was replaced by a link: before its archive, the task is
+  neither archived nor purged and stays as it is; after its archive, the purge removes the link
+  only. Either way the real directory that was moved away is yours to clean up. Other reads and
+  writes do follow links — deleting a single version, for example, deletes the `<version>.tee`
+  file behind a `versions/` that is a link. Keeping links out of dataDir is the safe choice.
+- **Permissions changed while running**: at start, a `runs/`, `tasks/`, `script-registry/`,
+  `webhooks/` or `users/` that cannot be read refuses the start. While running, the server cannot
+  tell "not there" from "cannot be read": lists may come up empty, task rows may disappear until
+  the next restart, and a debug Restart may go ahead without having cleared the previous tasks.
+
+**Admin UI login (`users/`)**
+
+- The UI is open without a login only when the `users/` directory is there and has no
+  `users.json` in it. If `users/` becomes unreadable while the server runs, or the directory
+  itself is gone (dataDir moved, a file system unmounted), login stays required and nobody can log
+  in (logged once). Restore the directory and its permissions.
+- A `users.json` that cannot be read (permissions, a symbolic link whose target is not there) or
+  does not parse as JSON (a hand-edit mistake) lets nobody log in, and the admin seed at start
+  does not overwrite it — repair the permissions or the file. A roster that reads fine and has no valid user (`[]`, an empty file) counts as an
+  empty roster: with `adminUser` configured it is filled with that one admin at start.
+- Emptying or deleting `credentials.json` puts every account back to "set the password at first
+  login". Leave it alone unless that reset is what you want.
+
+**Debug Restart**
+
+- When the previous attempt's task directories cannot be deleted (permissions, a locked file), the
+  Restart is refused. The task records and output deleted up to that point do not come back. The
+  previous run stays in memory and its run file is saved again with the previous contents; if
+  that save fails too, it is retried at the next save round. If the server process ends before
+  then, the disk holds the new attempt's empty record, and the previous result is not guaranteed
+  to be kept.
+- If the server stops in the middle of a Restart, the debug run may come back as
+  `SERVER_RESTARTED` showing the previous attempt's tasks. Another Restart clears them.
+
+**Task kill**
+
+- Killing a task that was recovered after a restart sends SIGTERM to its whole process group,
+  waits up to one second for the group to empty, and sends SIGKILL if a process is still there.
+  Without `setsid` (tasks have no process group of their own) a child that ignores SIGTERM can be
+  left behind.
+- Processes that a command left in the background after it ended are not tracked by the task (see
+  §5). Killing such a task records it as KILLED and does not clean those processes up.
+- Windows is for development and does not actually run tasks (simulated tasks). A simulated
+  task's PID is an arbitrary number, and killing or clearing a simulated task sends no signal to
+  any OS process.
+
+**Nesting depth of values**
+
+- A run's result and input nest at most **1000 levels** of objects and arrays (the depth
+  `JSON_PARSE` reads). A deeper result fails the run with `The result is nested more than 1000
+  levels deep`; a deeper input is refused at submit with 400 (`props is nested more than 1000
+  levels deep`). A run file holding a deeper value is skipped at start.
+- The Result that `JSON_PARSE` returns wraps what it read in one more level. After parsing a
+  document of exactly 1000 levels, return its `value`, not the Result itself.
+- Values built inside a script are not bounded. A value nested some thousand levels deep, or an
+  expression of some thousand terms, can exhaust the engine's stack and fail the run without a
+  reason (`Unknown error`).
+
 ---
 
 ## 7. Monitoring

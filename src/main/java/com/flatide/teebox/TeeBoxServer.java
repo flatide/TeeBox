@@ -55,25 +55,65 @@ public class TeeBoxServer {
     public TeeBoxServer(TeeBoxConfig config) throws IOException {
         this.config = config;
         this.sessionCookieName = config.sessionCookieName();
-        this.runManager = new RunManager(config.dataDir, config.maxConcurrentRuns, config);
-        this.debugSessionManager = new DebugSessionManager(runManager,
-            config.debugMaxSessions, config.debugIdleTimeoutMs);
+        if (config.dataDir == null) {
+            // Said here, before the first store is made: a store made over no data directory
+            // would make its directory wherever the process happens to stand.
+            throw new IllegalArgumentException("TeeBox setting propertee.teebox.dataDir is required");
+        }
+        // The port is asked for first, before anything is done to the data directory: a start
+        // that cannot have it — it is taken, as when this server is already running — is refused
+        // here, with nothing changed. (It was found out last, after the runs the server had
+        // stopped on were saved as SERVER_RESTARTED and the first sweep had purged what was due:
+        // a server started twice by mistake did that to the data of the one that was running.)
+        // Only asked: the listener itself is made at the end, as before.
+        requirePortFree(config.bindAddress, config.port);
+        // The users before the run manager: its directory is asked, like every other, before
+        // anything is loaded or recovered (see RunManager), and a roster that cannot be seeded is
+        // found out before any background work is started.
         this.userStore = new UserStore(config.dataDir);
         this.userStore.seedAdminIfEmpty(config.adminUser, config.adminPassword);
-        this.sessionManager = new AdminSessionManager(userStore);
-        // Periodic session cleanup
-        runManager.addMaintenanceTask(new Runnable() {
-            @Override
-            public void run() {
-                sessionManager.cleanExpired();
+        this.runManager = new RunManager(config.dataDir, config.maxConcurrentRuns, config);
+        try {
+            this.debugSessionManager = new DebugSessionManager(runManager,
+                config.debugMaxSessions, config.debugIdleTimeoutMs);
+            this.sessionManager = new AdminSessionManager(userStore);
+            // Periodic session cleanup
+            runManager.addMaintenanceTask(new Runnable() {
+                @Override
+                public void run() {
+                    sessionManager.cleanExpired();
+                }
+            });
+            this.pageRenderer = new AdminPageRenderer(config, runManager, userStore, gson);
+            this.pageRenderer.setDebugSessionManager(debugSessionManager);
+            this.server = HttpServer.create(new InetSocketAddress(config.bindAddress, config.port), 0);
+            this.httpExecutor = Executors.newCachedThreadPool();
+            this.server.setExecutor(this.httpExecutor);
+            registerContexts();
+        } catch (IOException | RuntimeException | Error failure) {
+            // The run manager's threads have been running since it was made, and the port can
+            // still turn out to be taken. A server that is not made must not leave those threads
+            // behind — its caller has nothing to stop. They kept a process that had failed to
+            // start alive: it listened nowhere, and went on sweeping and flushing the data
+            // directory. (Nothing else has threads of its own yet: no debug session is open, and
+            // a listener is made in the last steps only, and not started.)
+            try {
+                runManager.shutdown();
+            } catch (RuntimeException | Error stopFailed) {
+                failure.addSuppressed(stopFailed);   // the failure of the start stays the one that is reported
             }
-        });
-        this.pageRenderer = new AdminPageRenderer(config, runManager, userStore, gson);
-        this.pageRenderer.setDebugSessionManager(debugSessionManager);
-        this.server = HttpServer.create(new InetSocketAddress(config.bindAddress, config.port), 0);
-        this.httpExecutor = Executors.newCachedThreadPool();
-        this.server.setExecutor(this.httpExecutor);
-        registerContexts();
+            throw failure;
+        }
+    }
+
+    /** Fails as the listener's own bind would — BindException for a port that is taken — and holds nothing. */
+    private static void requirePortFree(String bindAddress, int port) throws IOException {
+        java.net.ServerSocket probe = new java.net.ServerSocket();
+        try {
+            probe.bind(new InetSocketAddress(bindAddress, port));
+        } finally {
+            probe.close();
+        }
     }
 
     public void start() {
@@ -797,6 +837,12 @@ public class TeeBoxServer {
                         } catch (IllegalStateException e) {
                             writeJson(exchange, HttpURLConnection.HTTP_CONFLICT,
                                 errorMap(e.getMessage()));
+                        } catch (RuntimeException e) {
+                            // A restart that could not be saved, for one. The console reads JSON:
+                            // the error page of the catch-all left it with "HTTP 500" and no reason.
+                            TeeBoxLog.error("AdminUI", "Debug restart failed: " + path, e);
+                            writeJson(exchange, HttpURLConnection.HTTP_INTERNAL_ERROR,
+                                errorMap(e.getMessage()));
                         }
                         return;
                     }
@@ -1087,7 +1133,10 @@ public class TeeBoxServer {
                 forbidden(exchange);
                 return;
             }
-            html = pageRenderer.renderRunDetailFragment(runId);
+            // The run page's refresh asks with input=keep: the input cannot change, so the page
+            // keeps the card it already shows and this answer does not read it again.
+            boolean keepInput = "keep".equals(parseQuery(exchange).get("input"));
+            html = pageRenderer.renderRunDetailFragment(runId, !keepInput);
         } else if (fragment.startsWith("task-detail/")) {
             String taskId = fragment.substring("task-detail/".length());
             if (!canViewTask(session, taskId)) {
@@ -1805,7 +1854,8 @@ public class TeeBoxServer {
         if (props instanceof Map) {
             @SuppressWarnings("unchecked")
             Map<String, Object> propsMap = (Map<String, Object>) props;
-            request.props = normalizeNumbers(propsMap);
+            RunManager.requireNotTooDeep(propsMap);   // before it is walked (see ValueDepth)
+            request.props = engineShaped(propsMap);
         }
         Object maxIterations = raw.get("maxIterations");
         if (maxIterations instanceof Number) {
@@ -2034,25 +2084,45 @@ public class TeeBoxServer {
         if (props == null) {
             return new LinkedHashMap<String, Object>();
         }
-        return normalizeNumbers(props);
+        RunManager.requireNotTooDeep(props);   // before it is walked (see ValueDepth)
+        return engineShaped(props);
+    }
+
+    /**
+     * A run's input as the engine holds values, from what Gson's generic mapping read: numbers as
+     * {@link #normalizeNumber} boxes them, and a JSON {@code null} as the language's {@code null}
+     * value (spec v0.8.0 — it enters a script through data). Left a Java null it was no value of
+     * the language at all: a script saw it as a nameless "object" that was not equal to
+     * {@code null}, and the run's file left the key out.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> engineShaped(Map<String, Object> source) {
+        Map<String, Object> shaped = new LinkedHashMap<String, Object>();
+        for (Map.Entry<String, Object> entry : source.entrySet()) {
+            shaped.put(entry.getKey(), engineShapedValue(entry.getValue()));
+        }
+        return shaped;
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> normalizeNumbers(Map<String, Object> source) {
-        Map<String, Object> normalized = new LinkedHashMap<String, Object>();
-        for (Map.Entry<String, Object> entry : source.entrySet()) {
-            Object value = entry.getValue();
-            if (value instanceof Double) {
-                normalized.put(entry.getKey(), normalizeNumber((Double) value));
-            } else if (value instanceof Map) {
-                normalized.put(entry.getKey(), normalizeNumbers((Map<String, Object>) value));
-            } else if (value instanceof List) {
-                normalized.put(entry.getKey(), normalizeList((List<Object>) value));
-            } else {
-                normalized.put(entry.getKey(), value);
-            }
+    private Object engineShapedValue(Object value) {
+        if (value == null) {
+            return com.flatide.propertee2.value.JsonNull.NULL;
         }
-        return normalized;
+        if (value instanceof Double) {
+            return normalizeNumber((Double) value);
+        }
+        if (value instanceof Map) {
+            return engineShaped((Map<String, Object>) value);
+        }
+        if (value instanceof List) {
+            List<Object> shaped = new ArrayList<Object>();
+            for (Object item : (List<Object>) value) {
+                shaped.add(engineShapedValue(item));
+            }
+            return shaped;
+        }
+        return value;
     }
 
     /**
@@ -2069,30 +2139,25 @@ public class TeeBoxServer {
         return value;
     }
 
-    @SuppressWarnings("unchecked")
-    private List<Object> normalizeList(List<Object> list) {
-        List<Object> normalized = new ArrayList<Object>();
-        for (Object value : list) {
-            if (value instanceof Double) {
-                normalized.add(normalizeNumber((Double) value));
-            } else if (value instanceof Map) {
-                normalized.add(normalizeNumbers((Map<String, Object>) value));
-            } else if (value instanceof List) {
-                normalized.add(normalizeList((List<Object>) value));
-            } else {
-                normalized.add(value);
-            }
-        }
-        return normalized;
-    }
-
     private Map<String, Object> buildRunDetailMap(String runId) {
-        RunInfo run = runManager.getRunDetail(runId);   // with an archived run's input, from its file
+        RunInfo run;
+        String inputError = null;
+        try {
+            run = runManager.getRunDetail(runId);   // with an archived run's input, from its file
+        } catch (RunStore.RunFileUnreadableException e) {
+            // The rest of the run is in memory. Its input is unknown, which the empty
+            // "properties" beside this must not be read as. (Reported by the registry, once.)
+            run = runManager.getRun(runId);
+            inputError = AdminPageRenderer.INPUT_UNREADABLE;
+        }
         if (run == null) {
             return null;
         }
         Map<String, Object> detail = new LinkedHashMap<String, Object>();
         detail.put("run", run);
+        if (inputError != null) {
+            detail.put("inputError", inputError);
+        }
         detail.put("threads", runManager.listThreads(runId));
         detail.put("tasks", runManager.listTasksForRun(runId));
         return detail;

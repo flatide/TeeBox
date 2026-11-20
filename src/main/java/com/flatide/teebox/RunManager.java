@@ -43,12 +43,16 @@ public class RunManager {
     private final long scriptRetentionMs;
     private final WebhookDispatcher webhookDispatcher;   // null when webhooks are disabled
     private final java.util.concurrent.ConcurrentHashMap<String, Future<?>> activeRuns = new java.util.concurrent.ConcurrentHashMap<String, Future<?>>();
-    // --- run cancel/timeout state (per runId; entries live only while the run is active) ---
+    // --- run cancel/timeout state (entries live only while the run is active) ---
+    //
+    // The abort handle and the cancel latch belong to one execution of a run and are kept under
+    // that execution's key (attemptKey), not under the run id: a debug run is executed again under
+    // the id it has, and what was asked of one attempt must not be found by the next.
     /** Engine abort handles, registered by executeRun's onCancelHandle once the engine exists. */
     private final java.util.concurrent.ConcurrentHashMap<String, Runnable> abortHandles = new java.util.concurrent.ConcurrentHashMap<String, Runnable>();
-    /** Cancel-latch: reason keyed by runId. Set by cancelRun BEFORE acting, re-checked at handle
+    /** Cancel-latch, by attempt. Set by cancelRun BEFORE acting, re-checked at handle
      *  registration and at run completion — closes every register/complete race. */
-    private final java.util.concurrent.ConcurrentHashMap<String, String> cancelReasons = new java.util.concurrent.ConcurrentHashMap<String, String>();
+    private final java.util.concurrent.ConcurrentHashMap<String, CancelLatch> cancelLatches = new java.util.concurrent.ConcurrentHashMap<String, CancelLatch>();
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>> timeoutTasks = new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>>();
     private final ScheduledExecutorService timeoutScheduler;
     private final long defaultRunTimeoutMs;
@@ -66,6 +70,26 @@ public class RunManager {
     private final Object lifecycleLock = new Object();
     private volatile boolean draining = false;
     private volatile long drainStartedAt = 0;
+
+    /** A cancel asked of one execution of a run: its reason, and whether that execution ended on it. */
+    private static final class CancelLatch {
+        final String reason;
+        volatile boolean carriedOut;
+        CancelLatch(String reason) {
+            this.reason = reason;
+        }
+    }
+
+    /** The key of one execution of a run, for the state that is kept per execution. */
+    private static String attemptKey(String runId, long attempt) {
+        return runId + "#" + attempt;
+    }
+
+    private static long attemptOf(RunInfo run) {
+        synchronized (run) {
+            return run.attempt;
+        }
+    }
 
     private static class PendingRun {
         final RunInfo run;
@@ -107,10 +131,16 @@ public class RunManager {
             ? teeBoxConfig.runOutputMaxLines : MAX_LOG_LINES;
         this.defaultRunTimeoutMs = (teeBoxConfig != null && teeBoxConfig.runTimeoutMs > 0)
             ? teeBoxConfig.runTimeoutMs : 0L;
-        this.runRegistry = new RunRegistry(this.dataDir, maxLogLines, ARCHIVED_STDOUT_LINES, ARCHIVED_STDERR_LINES, runRetentionMs, runArchiveRetentionMs);
+        // Every store is made before any of them loads, recovers or sweeps. Each asks its
+        // directory when it is made (see DataDirectory), so a start that is refused over one of
+        // them has not acted on the others. The run registry comes last: it saves the runs the
+        // server had stopped on as soon as it has loaded them.
         this.scriptRegistry = new ScriptRegistry(this.dataDir);
         this.managedTaskEngine = new ManagedTaskEngine(this.dataDir.getAbsolutePath(), createHostInstanceId(),
                 taskRetentionMs, taskArchiveRetentionMs);
+        boolean webhooks = teeBoxConfig != null && teeBoxConfig.webhookEnabled;
+        WebhookStore webhookStore = webhooks ? new WebhookStore(this.dataDir) : null;
+        this.runRegistry = new RunRegistry(this.dataDir, maxLogLines, ARCHIVED_STDOUT_LINES, ARCHIVED_STDERR_LINES, runRetentionMs, runArchiveRetentionMs);
         this.managedTaskEngine.init();
         this.managedTaskEngine.archiveExpiredTasks();
         String streamRootsSetting = teeBoxConfig != null ? teeBoxConfig.streamRoots : null;
@@ -129,7 +159,7 @@ public class RunManager {
                 return t;
             }
         });
-        if (teeBoxConfig != null && teeBoxConfig.webhookEnabled) {
+        if (webhooks) {
             // Purge only handles archived runs, so either disabled stage makes the retention
             // horizon unbounded; otherwise use the longer age (archive may be later than purge).
             // Archive and purge need separate sweeps: allow up to two normal scheduling delays,
@@ -143,25 +173,40 @@ public class RunManager {
             long tombstoneRetentionMs = runPurgeHorizonMs > Long.MAX_VALUE - tombstoneMarginMs
                     ? Long.MAX_VALUE : runPurgeHorizonMs + tombstoneMarginMs;
             this.webhookDispatcher = new WebhookDispatcher(
-                new WebhookStore(this.dataDir), new WebhookHttpClient(),
+                webhookStore, new WebhookHttpClient(),
                 teeBoxConfig.webhookUrlAllowlist, teeBoxConfig.webhookTimeoutMs, 4, tombstoneRetentionMs);
-            this.webhookDispatcher.start();
-            // Startup reconcile: consider ALL non-purged terminal runs (incl. SERVER_RESTARTED) so a
-            // crash in the enqueue gap is recovered no matter how long TeeBox was down (within run
-            // retention). Periodic reconcile only needs a recent slice (runtime gaps end "just now").
-            this.webhookDispatcher.reconcile(runRegistry.listCachedTerminalRuns());
-            addMaintenanceTask(new Runnable() {
-                @Override
-                public void run() {
-                    reconcileWebhooksRecent();
-                }
-            });
-            TeeBoxLog.info("RunManager", "Webhook delivery enabled");
         } else {
             this.webhookDispatcher = null;
         }
-        startMaintenanceScheduler();
-        maintainRuns();
+        // From here on background work is started, and what follows can still fail. A run manager
+        // that is not made stops what it started: its caller has nothing to stop, and the threads
+        // would go on scanning the outbox and sweeping the data directory of a server that never
+        // came up.
+        try {
+            if (this.webhookDispatcher != null) {
+                this.webhookDispatcher.start();
+                // Startup reconcile: consider ALL non-purged terminal runs (incl. SERVER_RESTARTED) so a
+                // crash in the enqueue gap is recovered no matter how long TeeBox was down (within run
+                // retention). Periodic reconcile only needs a recent slice (runtime gaps end "just now").
+                this.webhookDispatcher.reconcile(runRegistry.listCachedTerminalRuns());
+                addMaintenanceTask(new Runnable() {
+                    @Override
+                    public void run() {
+                        reconcileWebhooksRecent();
+                    }
+                });
+                TeeBoxLog.info("RunManager", "Webhook delivery enabled");
+            }
+            startMaintenanceScheduler();
+            maintainRuns();
+        } catch (RuntimeException | Error failure) {
+            try {
+                shutdown();
+            } catch (RuntimeException | Error stopFailed) {
+                failure.addSuppressed(stopFailed);   // the failure of the start stays the one that is reported
+            }
+            throw failure;
+        }
     }
 
     /** The webhook dispatcher, or null when webhooks are disabled (used for submit-time validation). */
@@ -186,6 +231,7 @@ public class RunManager {
             throw new IllegalStateException("Server is shutting down; new runs are rejected");
         }
         final ResolvedRunTarget target = resolveRunTarget(request);
+        requireNotTooDeep(request.props);
         // An input number past the double range, such as 1e999, reads as Infinity, which JSON has
         // no form for: the run could not be saved, so the request is refused before it exists.
         TeeFormat.NonFinite outOfRange = TeeFormat.firstNonFinite(request.props, "props");
@@ -537,6 +583,9 @@ public class RunManager {
     /**
      * The run for a detail view: as {@link #getRun}, plus the input properties of an archived run,
      * read from its file (archiving keeps them on disk only). Not for polling or listings.
+     *
+     * @throws RunStore.RunFileUnreadableException when that file cannot be read; {@link #getRun}
+     *         still answers, without the input
      */
     public RunInfo getRunDetail(String runId) {
         return runRegistry.getRunWithInput(runId);
@@ -609,9 +658,33 @@ public class RunManager {
      * to its next state (pending→queued promotion, executor pickup, engine-handle registration),
      * so a failed arm re-reads the status and retries instead of giving up.
      *
+     * <p>A status that cannot be saved does not undo a cancel: the run is cancelled in memory,
+     * everything that ends it (its place under the script's limit, the webhook) happens here all
+     * the same, and the registry saves the status once the disk takes it.
+     *
      * @return true if a cancel was applied or requested; false if the run is unknown or already terminal.
      */
     public boolean cancelRun(String runId, String reason) {
+        return cancel(runId, ANY_ATTEMPT, reason);
+    }
+
+    /**
+     * As {@link #cancelRun}, asked of one execution of the run: {@code attempt} is the
+     * {@link RunInfo#attempt} the caller means. A debug session's Stop is for the attempt that
+     * session runs. Once the run has been reset for another one — a Restart does that, under the
+     * same run id — the attempt it was asked of is over, and nothing of the new one is touched.
+     *
+     * @return as {@link #cancelRun}. For an attempt that was over before the request: false. For
+     *         one that ended while the request was on its way: whether it ended on the request.
+     */
+    public boolean cancelRunAttempt(String runId, long attempt, String reason) {
+        return cancel(runId, attempt, reason);
+    }
+
+    /** For {@link #cancel}: whichever attempt the run is at when the request first looks at it. */
+    private static final long ANY_ATTEMPT = -1L;
+
+    private boolean cancel(String runId, long asked, String reason) {
         final RunInfo run = runRegistry.getRawRun(runId);
         if (run == null) {
             return false;
@@ -619,18 +692,57 @@ public class RunManager {
         String cancelReason = reason != null ? reason : "Cancelled";
         // Latch FIRST: executeRun re-checks this map when it registers the abort handle and again
         // when the engine returns, so a cancel that races either point still lands.
-        cancelReasons.putIfAbsent(runId, cancelReason);
+        //
+        // The latch and the first look at the run are one step under the run's monitor, where
+        // every status change happens. A run that is terminal here had finished before this
+        // request, and no latch is left behind for it. A run that is not can only end after the
+        // reason is in place — so when it is then found CANCELLED, the request was carried out,
+        // whoever did the carrying. (The latch used to be set before the first look: a worker
+        // that picked the run up in between ended it on this very reason, and the request was
+        // answered "already finished".)
+        //
+        // The same step settles which execution of the run the request is for, and all that
+        // follows goes by it: the latch and the abort handle are that attempt's, and every later
+        // look makes sure the run is still at it. (Everything used to go by the run id alone. A
+        // debug run keeps its id across a Restart, so a Stop that came back to the run after one
+        // found the next attempt there and aborted it.)
+        final long attempt;
+        final CancelLatch latch;
+        synchronized (run) {
+            if (asked != ANY_ATTEMPT && run.attempt != asked) {
+                return false;   // the attempt this was asked of is over
+            }
+            if (run.status != RunStatus.PENDING && run.status != RunStatus.QUEUED
+                    && run.status != RunStatus.RUNNING) {
+                return false;
+            }
+            attempt = run.attempt;
+            CancelLatch mine = new CancelLatch(cancelReason);
+            CancelLatch earlier = cancelLatches.putIfAbsent(attemptKey(runId, attempt), mine);
+            latch = earlier != null ? earlier : mine;
+        }
+        final String key = attemptKey(runId, attempt);
+        afterCancelLatched(runId);
         long deadline = System.currentTimeMillis() + 5000L;
-        boolean sawActive = false;   // an earlier look found the run PENDING or QUEUED
         while (true) {
             RunStatus status;
+            boolean replaced;
             synchronized (run) {
                 status = run.status;
+                replaced = run.attempt != attempt;
+            }
+            if (replaced) {
+                // The run has been reset for its next attempt, so the one this request was
+                // latched for has ended, and what the run shows now is not about it. Nothing of
+                // the new attempt is this request's to touch. Whether the request was carried out
+                // is what the worker left on the latch when it ended the attempt.
+                cancelLatches.remove(key, latch);
+                return latch.carriedOut;
             }
             if (status == RunStatus.PENDING) {
                 if (removeFromPendingQueue(run)) {
                     runRegistry.markCancelled(run, cancelReason);
-                    cancelReasons.remove(runId);
+                    cancelLatches.remove(key);
                     if (webhookDispatcher != null) {
                         webhookDispatcher.onRunTerminal(run);
                     }
@@ -644,11 +756,13 @@ public class RunManager {
                 // worker's own claim (markStarted): exactly one of the two wins. Future.cancel
                 // cannot decide it — it also answers true for a task a worker has already
                 // started, and that run then executed to its end with the cancel latch gone.
+                // (Only a run of the run pool has a future here. A debug run, the one kind that
+                // is executed again under its id, never does: this arm cannot meet a later attempt.)
                 if (future != null && runRegistry.markCancelledIfQueued(run, cancelReason)) {
                     // Not started: the executor drops it. Started in this instant: executeRun
                     // finds the run CANCELLED and returns without running or cleaning up.
                     future.cancel(false);
-                    cancelReasons.remove(runId);
+                    cancelLatches.remove(key);
                     activeRuns.remove(runId);
                     // The run took a per-script slot at submit and executeRun will not release it.
                     dequeueNextRun(run.scriptId);
@@ -660,25 +774,24 @@ public class RunManager {
                 }
                 // future not yet published, or a worker has just started the run — re-judge
             } else if (status == RunStatus.RUNNING) {
-                Runnable handle = abortHandles.get(runId);
+                Runnable handle = abortHandles.get(key);
                 if (handle != null) {
                     handle.run();
                 }
-                // handle == null ⇒ executeRun hasn't registered it yet; the cancelReasons latch
-                // makes onCancelHandle self-abort the moment it does. Either way the run unwinds.
-                killRunTasksInBackground(runId);   // unblocks SHELL waits + kills children
+                // handle == null ⇒ executeRun hasn't registered it yet; the cancel latch makes
+                // onCancelHandle self-abort the moment it does. Either way the run unwinds.
+                killRunTasksInBackground(run, attempt);   // unblocks SHELL waits + kills children
                 TeeBoxLog.info("RunManager", "Cancel requested for running run " + runId);
                 return true;
             } else {
-                // Terminal (or the run completed while we were latching): drop the latch so it
-                // doesn't leak into a later state, and report "nothing to cancel" — unless this
-                // call found the run alive and it then ended CANCELLED: a worker started it
-                // between two looks and executeRun applied the latch before the next one, so
-                // the request was carried out, not refused.
-                cancelReasons.remove(runId);
-                return sawActive && status == RunStatus.CANCELLED;
+                // The run ended after the reason was latched. CANCELLED: a worker took it between
+                // two looks and executeRun applied the latch, so the request was carried out.
+                // Anything else: the run finished first (a completion wins over a late cancel),
+                // and there was nothing left to cancel. Either way the latch must not outlive
+                // this run.
+                cancelLatches.remove(key);
+                return status == RunStatus.CANCELLED;
             }
-            sawActive = true;
             if (System.currentTimeMillis() >= deadline) {
                 // States normally settle in milliseconds; if we are still losing races after 5s,
                 // fall back on the latch (the run WILL be cancelled at handle registration or at
@@ -693,6 +806,14 @@ public class RunManager {
                 return true;   // latch is set; the run will still be cancelled
             }
         }
+    }
+
+    /**
+     * Called by {@link #cancelRun} once the reason is latched, before it looks at the run again.
+     * From here on a worker can carry the cancel out by itself. Nothing happens here; a test
+     * overrides it to hold the caller in this window.
+     */
+    void afterCancelLatched(String runId) {
     }
 
     /** Remove a PENDING run from its script's pending queue; false if it was already promoted. */
@@ -717,14 +838,25 @@ public class RunManager {
         }
     }
 
-    /** Kill a run's SHELL tasks off the caller's thread — a kill holds per-task locks through
-     *  bounded waits (seconds per task, serial), which must not stall cancel endpoints. */
-    private void killRunTasksInBackground(final String runId) {
+    /**
+     * Kill the SHELL tasks of one execution of a run off the caller's thread — a kill holds
+     * per-task locks through bounded waits (seconds per task, serial), which must not stall cancel
+     * endpoints.
+     *
+     * <p>Tasks go by the run id, which a debug run's attempts share, and this thread runs when it
+     * gets to. So the tasks are listed under the run's monitor, while the run is still at
+     * {@code attempt}: the reset for the next attempt takes the same monitor, and only after it
+     * can that attempt start a task. Whatever is in the list is this attempt's. For a run that has
+     * moved on nothing is killed: this attempt's tasks were cleared before the run was reset
+     * ({@link #prepareDebugRun}).
+     */
+    private void killRunTasksInBackground(final RunInfo run, final long attempt) {
+        final String runId = run.runId;
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    int killed = managedTaskEngine.killRun(runId);
+                    int killed = killTasksOfAttempt(run, attempt);
                     if (killed > 0) {
                         TeeBoxLog.info("RunManager", "Cancel killed " + killed + " task(s) for run " + runId);
                     }
@@ -735,6 +867,33 @@ public class RunManager {
         }, "run-cancel-kill");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    /** What {@link #killRunTasksInBackground} does on its thread; the number of tasks killed. */
+    private int killTasksOfAttempt(RunInfo run, long attempt) {
+        List<String> taskIds;
+        synchronized (run) {
+            if (run.attempt != attempt) {
+                return 0;
+            }
+            taskIds = managedTaskEngine.taskIdsOfRun(run.runId);
+        }
+        int killed = 0;
+        for (String taskId : taskIds) {
+            if (managedTaskEngine.killTask(taskId)) {
+                killed++;
+            }
+        }
+        return killed;
+    }
+
+    /**
+     * {@link #killTasksOfAttempt} by run id, for a test: the kill of an attempt's tasks as it
+     * runs when its thread gets to it only after the run has gone on to another attempt.
+     */
+    int killTasksOfAttempt(String runId, long attempt) {
+        RunInfo run = runRegistry.getRawRun(runId);
+        return run != null ? killTasksOfAttempt(run, attempt) : 0;
     }
 
     /** Schedule the wall-clock execution timeout (per-run value, else the server default; 0 = off).
@@ -992,10 +1151,14 @@ public class RunManager {
         public final File scriptFile;
         /** Immutable content used by both the debug editor and the engine for this attempt. */
         public final String sourceCode;
+        /** Which execution of {@code run} this is ({@link RunInfo#attempt}): what a cancel of
+         *  this attempt, and of no later one under the same run id, is asked of. */
+        public final long attempt;
         DebugTarget(RunInfo run, File scriptFile, String sourceCode) {
             this.run = run;
             this.scriptFile = scriptFile;
             this.sourceCode = sourceCode;
+            this.attempt = attemptOf(run);
         }
     }
 
@@ -1089,10 +1252,29 @@ public class RunManager {
                         + previous.status + " and cannot be re-used yet");
                 }
             }
-            // A debug run may have spawned detached tasks that outlived the interpreter. Kill and
-            // remove the complete previous task set before the shared runId becomes QUEUED again.
-            managedTaskEngine.clearRunTasks(run.runId);
-            run = runRegistry.resetDebugRun(previous, run);
+            // In this order:
+            //  1. The record of the next attempt is written to the run's file. A re-run that
+            //     cannot be saved is refused here, and nothing of the ended attempt has been
+            //     touched: not its record, not its tasks.
+            //  2. The ended attempt's tasks are killed and removed. A debug run may have spawned
+            //     detached tasks that outlived the interpreter, and none of them may be left
+            //     under the run id when it is executed again. If that fails the re-run is
+            //     refused too, and the file is made to say again what the run still is.
+            //  3. The run itself becomes the new attempt.
+            // (The tasks used to be cleared first, and the record reset in memory before it was
+            // saved: a save that failed left the ended attempt without its tasks and without its
+            // result, as a QUEUED run nothing would execute.)
+            runRegistry.saveDebugReset(previous, run);
+            boolean cleared = false;
+            try {
+                managedTaskEngine.clearRunTasks(run.runId);
+                cleared = true;
+            } finally {
+                if (!cleared) {
+                    runRegistry.abandonDebugReset(previous);
+                }
+            }
+            run = runRegistry.completeDebugReset(previous, run);
             TeeBoxLog.info("RunManager", "Reset debug run " + run.runId
                 + " for source Run " + sourceRunId);
         } else {
@@ -1183,6 +1365,11 @@ public class RunManager {
     private void executeRun(final RunInfo run, File scriptFile, final DebugAttach debugAttach,
                             String sourceSnapshot) {
         final List<OutputPublishRule> outputRules = getOutputRulesForScript(run.scriptId, run.version);
+        // Which execution of the run this is. A run is reset for another attempt only once it has
+        // ended, so the attempt cannot change before this worker has started it; and what is kept
+        // per attempt — the abort handle, a cancel's latch — is this worker's under this key only.
+        final long attempt = attemptOf(run);
+        final String attemptKey = attemptKey(run.runId, attempt);
         // True when a cancel made the run terminal while it was still queued: cancelRun has done
         // everything that ends a queued run (slot, webhook, activeRuns), so nothing is left here.
         boolean cancelledWhileQueued = false;
@@ -1279,10 +1466,10 @@ public class RunManager {
                                 }
                             };
                         }
-                        abortHandles.put(run.runId, handle);
+                        abortHandles.put(attemptKey, handle);
                         // A cancel that arrived before the engine existed latched a reason;
                         // apply it now that there is something to abort.
-                        if (cancelReasons.containsKey(run.runId)) {
+                        if (cancelLatches.containsKey(attemptKey)) {
                             handle.run();
                         }
                     }
@@ -1293,51 +1480,65 @@ public class RunManager {
             // Flush watchers for this run before marking complete
             flushWatchersForRun(run.runId);
             runRegistry.flushDirty();
-            if (result.cancelled || (!result.success && !result.scriptFailure && cancelReasons.containsKey(run.runId))) {
+            if (result.cancelled || (!result.success && !result.scriptFailure && cancelLatches.containsKey(attemptKey))) {
                 // Cancelled — the engine unwound with ProperTeeAborted, or a failure outside the
                 // script raced the cancel. The engine settles a script failure itself, when the
                 // error happens (spec v0.37.0): a stop asked for before it makes the run stopped,
                 // so a failure the stop caused (the task kill made SHELL error out) is not one. A
                 // successful completion always wins over a late cancel.
-                runRegistry.markCancelled(run, cancelReasons.get(run.runId));
+                markCancelledOnLatch(run, attemptKey);
                 // Final sweep: a SHELL statement that had already passed its abort checkpoint may
                 // have spawned a process after cancelRun's kill — close the orphan window.
-                killRunTasksInBackground(run.runId);
+                killRunTasksInBackground(run, attempt);
             } else if (result.success) {
                 runRegistry.markCompleted(run, result.hasExplicitReturn, result.resultData);
             } else {
                 // A failed run keeps what its `on error` handler returned (spec v0.37.0).
                 runRegistry.markFailed(run, result.errorMessage, result.resultData);
-                if (cancelReasons.containsKey(run.runId)) {
+                if (cancelLatches.containsKey(attemptKey)) {
                     // A stop asked for after the error ended the handler; the run stays failed,
                     // and its processes are killed as after a cancel.
-                    killRunTasksInBackground(run.runId);
+                    killRunTasksInBackground(run, attempt);
                 }
             }
         } catch (Throwable error) {
             flushWatchersForRun(run.runId);
-            if (cancelReasons.containsKey(run.runId)) {
-                runRegistry.markCancelled(run, cancelReasons.get(run.runId));
-                killRunTasksInBackground(run.runId);
+            if (cancelLatches.containsKey(attemptKey)) {
+                markCancelledOnLatch(run, attemptKey);
+                killRunTasksInBackground(run, attempt);
             } else {
                 TeeBoxLog.error("RunManager", "Run failed: " + run.runId, error);
                 runRegistry.markFailed(run, error != null ? error.getMessage() : "Unknown error");
             }
         } finally {
             if (!cancelledWhileQueued) {
-                finishRun(run);
+                finishRun(run, attemptKey);
             }
         }
     }
 
+    /**
+     * Ends the run as cancelled, on the reason latched for this attempt, and leaves on the latch
+     * that it was carried out — for a request that finds the run reset for its next attempt by
+     * the time it looks again (see {@link #cancel}). Without a latch the engine was stopped by
+     * something other than a cancel request (a debug session torn down with its executor).
+     */
+    private void markCancelledOnLatch(RunInfo run, String attemptKey) {
+        CancelLatch latch = cancelLatches.get(attemptKey);
+        runRegistry.markCancelled(run, latch != null ? latch.reason : null);
+        if (latch != null) {
+            latch.carriedOut = true;
+        }
+    }
+
     /** What ends every run that executeRun started, however it ended. */
-    private void finishRun(RunInfo run) {
+    private void finishRun(RunInfo run, String attemptKey) {
         java.util.concurrent.ScheduledFuture<?> timeout = timeoutTasks.remove(run.runId);
         if (timeout != null) {
             timeout.cancel(false);
         }
-        abortHandles.remove(run.runId);
-        cancelReasons.remove(run.runId);
+        abortHandles.remove(attemptKey);
+        cancelLatches.remove(attemptKey);
         if (webhookDispatcher != null) {
             webhookDispatcher.onRunTerminal(run);
         }
@@ -1450,7 +1651,15 @@ public class RunManager {
         if (props == null) {
             return new LinkedHashMap<String, Object>();
         }
+        requireNotTooDeep(props);
         return (Map<String, Object>) TypeChecker.deepCopy(props);
+    }
+
+    /** @throws IllegalArgumentException when the input nests deeper than a run's values may ({@link ValueDepth}) */
+    static void requireNotTooDeep(Map<String, Object> props) {
+        if (ValueDepth.exceeds(props)) {
+            throw new IllegalArgumentException("props is " + ValueDepth.tooDeep());
+        }
     }
 
     /**

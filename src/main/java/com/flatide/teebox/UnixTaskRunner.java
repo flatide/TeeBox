@@ -34,6 +34,34 @@ public class UnixTaskRunner implements TaskRunner {
     private static final long WAIT_POLL_MAX_MS = 1000L;
     private static final long START_READY_WAIT_MS = 2000L;
 
+    /**
+     * What a task's process runs: the command, in a shell of its own, and then that shell's exit
+     * status into the exit code file. {@code $1} is the command file, {@code $2} the exit code
+     * file.
+     *
+     * <p>The command is no part of this text. Its {@code exit}, its {@code exec}, a failure under
+     * its {@code set -e} and a line of it that cannot be parsed end the command's shell and not
+     * this one, and what the command's shell exits with is the task's exit code — 128 plus the
+     * signal when a signal killed it. (Written into one script with these lines, such a command
+     * ended that script before the exit code was written, {@code exit 0} included.) A command can
+     * still go after this shell on purpose, by {@code kill -9 $PPID}; the task is then lost.
+     *
+     * <p>This shell outlives TERM, INT and HUP. It has nothing to do but wait for the command's
+     * shell, and while that one runs the task's process has to be there: it is how the task is
+     * known to be running, and what the kill of a restored task watches before it goes from TERM
+     * to KILL ({@code ManagedTaskEngine.terminateRestoredTask}). The trap is this shell's alone;
+     * the command's shell starts with those signals as they were.
+     *
+     * <p>What this shell says itself goes where the command's errors go, and so into what SHELL
+     * returns: that a signal ended the command's shell, or that the exit code could not be
+     * written — in which case it is the only account of a task that has none.
+     */
+    private static final String RECORD_EXIT_CODE =
+            "trap : TERM INT HUP; /bin/sh \"$1\"; status=$?; printf '%s\\n' \"$status\" > \"$2\"; exit \"$status\"";
+
+    /** The name the recording shell gives itself in what it says ({@code $0}). */
+    private static final String RECORDING_SHELL_NAME = "teebox-task";
+
     private final File taskBaseDir;
     private final File tasksDir;
     private final AtomicInteger taskCounter = new AtomicInteger(0);
@@ -95,12 +123,21 @@ public class UnixTaskRunner implements TaskRunner {
         task.bindFiles(taskDir);
         writeCommandFiles(task, request);
         task.pid = launchDetached(task, request);
+        afterLaunch(task);
         task.pgid = getProcessGroupId(task.pid);
         task.status = TaskStatus.RUNNING;
         awaitStartReady(task);
         refreshOutputTimestamps(task);
         tasks.put(taskId, task);
         return task;
+    }
+
+    /**
+     * Called by {@link #execute} once the task's process is started, before the first look at it.
+     * Whether that look finds the process running or already gone is a race the command decides.
+     * Nothing happens here; a test overrides it to wait for the process to end.
+     */
+    void afterLaunch(Task task) {
     }
 
     /** Remove an in-memory task entry. Used to release memory after archive. */
@@ -382,17 +419,12 @@ public class UnixTaskRunner implements TaskRunner {
     }
 
     private void writeCommandFiles(Task task, TaskRequest request) {
-        StringBuilder command = new StringBuilder();
-        command.append("#!/bin/sh\n");
+        // The command and nothing else: RECORD_EXIT_CODE runs this file in a shell of its own.
+        writeFile(task.commandFile, request.command + "\n");
         if (request.mergeErrorToStdout) {
-            command.append(": > ").append(shellQuote(task.stderrFile.getAbsolutePath())).append("\n");
+            // Both streams go to the output file; the error file is there all the same, empty.
+            writeFile(task.stderrFile, "");
         }
-        command.append(request.command).append("\n");
-        command.append("status=$?\n");
-        command.append("printf '%s\\n' \"$status\" > ").append(shellQuote(task.exitCodeFile.getAbsolutePath())).append("\n");
-        command.append("exit \"$status\"\n");
-
-        writeFile(task.commandFile, command.toString());
     }
 
     private int launchDetached(Task task, TaskRequest request) {
@@ -403,7 +435,11 @@ public class UnixTaskRunner implements TaskRunner {
                 cmd.add("setsid");
             }
             cmd.add("/bin/sh");
-            cmd.add(task.commandFile.getAbsolutePath());
+            cmd.add("-c");
+            cmd.add(RECORD_EXIT_CODE);
+            cmd.add(RECORDING_SHELL_NAME);                   // $0
+            cmd.add(task.commandFile.getAbsolutePath());     // $1
+            cmd.add(task.exitCodeFile.getAbsolutePath());    // $2
             ProcessBuilder pb = new ProcessBuilder(cmd);
             if (request.cwd != null && request.cwd.length() > 0) {
                 pb.directory(new File(request.cwd));
@@ -474,15 +510,10 @@ public class UnixTaskRunner implements TaskRunner {
             return;
         }
 
-        Integer exitCode = readExitCodeWithGrace(task, 200L);
-        if (exitCode != null) {
-            finalizeExitedTask(task);
-            return;
-        }
-
-        throw new RuntimeException(
-            "Detached task did not reach a controllable running state (pid=" + task.pid + ")"
-        );
+        // Gone, and nothing more is coming. With an exit code the command ended on its own;
+        // without one the task is lost, as a task that goes missing later is (refreshTask). It is
+        // a task either way: recorded, with what it printed. (Refusing it here threw that away.)
+        finalizeExitedTask(task);
     }
 
     private void terminateTask(Task task) {
@@ -742,11 +773,6 @@ public class UnixTaskRunner implements TaskRunner {
             baos.write(buffer, 0, len);
         }
         return baos.toString("UTF-8");
-    }
-
-    private String shellQuote(String value) {
-        if (value == null) return "''";
-        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     private void closeQuietly(Closeable closeable) {

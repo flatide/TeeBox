@@ -95,6 +95,13 @@ public class UserStore {
         if (!usersDir.exists() && !usersDir.mkdirs()) {
             throw new IllegalStateException("Failed to create users directory: " + usersDir.getAbsolutePath());
         }
+        // A roster in a directory that cannot be searched is "not there" to every look at it, and
+        // no roster means nobody is asked to log in (see hasRoster): a server that started over
+        // such a directory served its admin UI to anyone. The store is not made over it. The
+        // directory is never listed — its two files are asked for by name — so that it can be
+        // searched is all that is asked.
+        new DataDirectory(usersDir, "users", "the login roster in it would not be seen, and without"
+                + " a roster the admin UI asks nobody to log in.").requireSearchable();
         this.rosterFile = new File(usersDir, "users.json");
         this.credentialsFile = new File(usersDir, "credentials.json");
         Map<String, Credential> loaded = new LinkedHashMap<String, Credential>();
@@ -124,10 +131,49 @@ public class UserStore {
 
     // ---- Roster (users.json, operator-managed, read fresh) ----
 
-    /** True when a roster file exists — i.e. the operator has opted into UI authentication. */
+    /**
+     * False when there is no roster file — i.e. the operator has not opted into UI authentication.
+     * Only when that is what a look found: a roster that cannot be looked for (the users
+     * directory closed to the server while it runs) is not "no roster". {@code File.exists()}
+     * answered no to both, and a server that had been asking for a login then served its admin
+     * UI to everyone. Login stays required in that case, and nobody can log in until the
+     * directory can be read again.
+     */
     public synchronized boolean hasRoster() {
-        return rosterFile.exists();
+        try {
+            java.nio.file.Files.readAttributes(rosterFile.toPath(),
+                    java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            rosterUnseen = false;
+            return true;
+        } catch (java.nio.file.NoSuchFileException notThere) {
+            // Not there — in a users directory that is. When the directory itself is gone (the
+            // data directory moved, its file system unmounted), "no such file" is what every
+            // name in it answers, and says nothing about the roster.
+            if (usersDir.isDirectory()) {
+                rosterUnseen = false;
+                return false;
+            }
+            return cannotTell("the users directory is not there");
+        } catch (IOException cannotTell) {
+            return cannotTell(cannotTell.toString());
+        }
     }
+
+    private boolean cannotTell(String why) {
+        if (!rosterUnseen) {   // said when it begins, not at every request
+            rosterUnseen = true;
+            TeeBoxLog.error("UserStore", "Whether there is a login roster cannot be told (" + why
+                    + ") — the admin UI asks for a login, and nobody can log in, until it can");
+        }
+        return true;
+    }
+
+    private boolean rosterUnseen;
+    /** Whether the last {@link #listUsers} got nothing read from users.json (it was not there,
+     *  led nowhere, or could not be read), and whether what it held at the last read could not
+     *  be parsed (see {@link #seedAdminIfEmpty}). */
+    private boolean rosterUnread;
+    private boolean rosterUnparseable;
 
     /** Parse cache over users.json, keyed by the file's CONTENT bytes — not mtime/length, which
      *  can miss a same-length edit within the timestamp granularity, and this is the permission
@@ -140,6 +186,7 @@ public class UserStore {
      *  file's current on-disk content; returns fresh copies — safe to mutate. */
     public synchronized List<User> listUsers() {
         if (!rosterFile.exists()) {
+            rosterUnread = true;   // nothing was read: no roster, or a link at its path that leads nowhere
             return new ArrayList<User>();
         }
         byte[] content;
@@ -148,8 +195,10 @@ public class UserStore {
         } catch (IOException e) {
             // Unreadable roster: fail closed (no valid users), same as the unparseable case.
             TeeBoxLog.warn("UserStore", "Failed to read users.json (treating as no valid users): " + e.getMessage());
+            rosterUnread = true;
             return new ArrayList<User>();
         }
+        rosterUnread = false;
         if (rosterCache == null || !java.util.Arrays.equals(content, rosterCacheContent)) {
             rosterCache = loadRoster(new String(content, java.nio.charset.StandardCharsets.UTF_8));
             rosterCacheContent = content;
@@ -175,10 +224,12 @@ public class UserStore {
                 }
                 out.add(new User(u.username.trim(), normalizeRole(u.role)));
             }
+            rosterUnparseable = false;
             return out;
         } catch (Exception e) {
             // Malformed roster: fail closed (no valid users) rather than silently opening access.
             TeeBoxLog.warn("UserStore", "Failed to parse users.json (treating as no valid users): " + e.getMessage());
+            rosterUnparseable = true;
             return new ArrayList<User>();
         }
     }
@@ -216,7 +267,23 @@ public class UserStore {
         if (adminUser == null || adminUser.trim().length() == 0) {
             return;
         }
-        if (rosterFile.exists() && !listUsers().isEmpty()) {
+        // Whether there is something at the roster's path — the path itself, as hasRoster() asks:
+        // a link counts wherever it leads. (Asked through the link, a link that leads nowhere
+        // was "no roster" here while it was a roster for the login, and was written over.)
+        boolean there = java.nio.file.Files.exists(rosterFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS);
+        // With something at the path, the roster is read once, and that read decides: only a
+        // roster that was read and is empty is seeded. (Looking a second time after the read
+        // could find a roster that had come back meanwhile — unread, and taken for empty.)
+        if (there && !listUsers().isEmpty()) {
+            return;
+        }
+        if (there && (rosterUnread || rosterUnparseable)) {
+            // A roster that is there and could not be read — no permission, a link that leads
+            // nowhere — or was edited by hand and no longer parses, is not an empty one: it is
+            // left for the operator to repair. (It was replaced by the one configured admin.)
+            TeeBoxLog.error("UserStore", "users.json cannot be read or parsed: the configured admin '"
+                    + adminUser.trim() + "' is not seeded over it, and nobody can log in until it is repaired: "
+                    + rosterFile.getAbsolutePath());
             return;
         }
         String user = adminUser.trim();

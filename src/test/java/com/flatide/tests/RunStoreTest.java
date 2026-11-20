@@ -111,7 +111,12 @@ public class RunStoreTest {
         Assert.assertEquals(text.toString(), loaded.stdoutLines.get(0));
         Assert.assertEquals(text.toString(), loaded.properties.get("memo"));
         Assert.assertEquals(text.toString(), reloaded.loadProperties("korean").get("memo"));
-        Assert.assertTrue(reloaded.loadProperties("missing").isEmpty());
+        try {
+            reloaded.loadProperties("missing");
+            Assert.fail("a run without a file has no known input, which is not an empty one");
+        } catch (RunStore.RunFileUnreadableException expected) {
+            Assert.assertTrue(expected.getMessage(), expected.getMessage().contains("missing"));
+        }
     }
 
     @Test
@@ -173,6 +178,39 @@ public class RunStoreTest {
         long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
         Assert.assertTrue("backoff sleeps (20+40+80+160ms) ran before the final failure, got "
                 + elapsedMs + "ms", elapsedMs >= 290);
+    }
+
+    /**
+     * The input properties read back as they were saved, like the result: Gson's generic mapping
+     * made every number of a reloaded input a Double and every null a Java null, so a debug re-run
+     * after a restart ran on {@code 5.0} where the run itself had been given {@code 5}.
+     */
+    @Test
+    public void inputValueShapesSurviveTheDiskRoundTrip() throws Exception {
+        File dataDir = tempDir();
+        List<Object> list = new ArrayList<Object>();
+        list.add(1);
+        list.add(JsonNull.NULL);
+        Map<String, Object> input = new LinkedHashMap<String, Object>();
+        input.put("n", 5);
+        input.put("big", 5000000000L);
+        input.put("ratio", 0.5);
+        input.put("nil", JsonNull.NULL);
+        input.put("list", list);
+        RunInfo run = terminalRun("r1", null);
+        run.properties = input;
+        new RunStore(dataDir).save(run);
+
+        RunStore reloaded = new RunStore(dataDir);   // fresh instance = a restarted server
+        for (Map<String, Object> read : java.util.Arrays.asList(
+                reloaded.load("r1").properties, reloaded.loadProperties("r1"))) {
+            Assert.assertEquals(input, read);
+            Assert.assertEquals(Integer.class, read.get("n").getClass());
+            Assert.assertEquals(Long.class, read.get("big").getClass());
+            Assert.assertEquals(Double.class, read.get("ratio").getClass());
+            Assert.assertSame(JsonNull.NULL, read.get("nil"));
+            Assert.assertSame(JsonNull.NULL, ((List<?>) read.get("list")).get(1));
+        }
     }
 
     /** Files written before the adapter existed carry {} where null was — they must still load. */
