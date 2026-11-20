@@ -2,7 +2,10 @@
 
 All notable changes to TeeBox are documented here.
 
-## Unreleased
+## 1.45.0
+
+**459 TeeBox tests (plus 26 admin UI script tests) green. Packaged with propertee2 0.47.0 at
+`53b0c2cf19f6`.**
 
 Fixes from reviews of 1.43.0 and 1.44.0. The embedded engine is unchanged (propertee2 0.47.0).
 What the reviews found and was left to operating rules rather than code is listed in the
